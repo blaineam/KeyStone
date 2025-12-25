@@ -191,14 +191,14 @@ struct LineNumbersGutter: View {
 #Preview("Keystone Editor") {
     struct PreviewWrapper: View {
         @State private var text = """
-        func hello() {
-            let message = "Hello, World!"
-            print(message)
-        }
+            func hello() {
+                let message = "Hello, World!"
+                print(message)
+            }
 
-        // Call the function
-        hello()
-        """
+            // Call the function
+            hello()
+            """
         @StateObject private var config = KeystoneConfiguration()
 
         var body: some View {
