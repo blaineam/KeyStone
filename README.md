@@ -1,10 +1,3 @@
-<p align="center">
-  <img src="https://img.shields.io/badge/Platform-iOS%2017.0%2B%20%7C%20macOS%2014.0%2B-blue?style=for-the-badge" alt="Platform">
-  <img src="https://img.shields.io/badge/Swift-5.9%2B-orange?style=for-the-badge&logo=swift" alt="Swift">
-  <img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License">
-  <img src="https://img.shields.io/badge/SPM-Compatible-brightgreen?style=for-the-badge&logo=swift" alt="SPM">
-</p>
-
 <h1 align="center">🗝️ Keystone</h1>
 
 <p align="center">
@@ -15,7 +8,9 @@
 <p align="center">
   <img src="https://img.shields.io/badge/iOS-17.0%2B-000000?style=flat&logo=apple" alt="iOS">
   <img src="https://img.shields.io/badge/macOS-14.0%2B-000000?style=flat&logo=apple" alt="macOS">
-  <img src="https://img.shields.io/github/v/release/blaineam/KeyStone?style=flat&color=blue" alt="Release">
+  <img src="https://img.shields.io/badge/Swift-5.9%2B-F05138?style=flat&logo=swift&logoColor=white" alt="Swift">
+  <img src="https://img.shields.io/badge/SPM-Compatible-brightgreen?style=flat" alt="SPM">
+  <img src="https://img.shields.io/badge/License-MIT-blue?style=flat" alt="License">
   <img src="https://github.com/blaineam/KeyStone/workflows/CI/badge.svg" alt="CI">
 </p>
 
