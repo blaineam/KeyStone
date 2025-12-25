@@ -1,43 +1,73 @@
-# Keystone
+<p align="center">
+  <img src="https://img.shields.io/badge/Platform-iOS%2017.0%2B%20%7C%20macOS%2014.0%2B-blue?style=for-the-badge" alt="Platform">
+  <img src="https://img.shields.io/badge/Swift-5.9%2B-orange?style=for-the-badge&logo=swift" alt="Swift">
+  <img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License">
+  <img src="https://img.shields.io/badge/SPM-Compatible-brightgreen?style=for-the-badge&logo=swift" alt="SPM">
+</p>
 
-A powerful, cross-platform code editor component for SwiftUI with syntax highlighting, line numbers, bracket matching, and many more features expected in a modern code editor.
+<h1 align="center">🗝️ Keystone</h1>
 
-Keystone works seamlessly on both **iOS** and **macOS**, providing a consistent editing experience across Apple platforms.
+<p align="center">
+  <strong>A powerful, cross-platform code editor component for SwiftUI</strong><br>
+  <em>Syntax highlighting • Line numbers • Bracket matching • Find & Replace • And more!</em>
+</p>
 
-## Features
+<p align="center">
+  <img src="https://img.shields.io/badge/iOS-17.0%2B-000000?style=flat&logo=apple" alt="iOS">
+  <img src="https://img.shields.io/badge/macOS-14.0%2B-000000?style=flat&logo=apple" alt="macOS">
+  <img src="https://img.shields.io/github/v/release/blaineam/KeyStone?style=flat&color=blue" alt="Release">
+  <img src="https://github.com/blaineam/KeyStone/workflows/CI/badge.svg" alt="CI">
+</p>
 
-### Core Editor Features
-- **Syntax Highlighting** — Regex-based highlighting for 20+ programming languages including Swift, Python, JavaScript, TypeScript, HTML, CSS, JSON, and more
-- **Line Numbers** — Configurable line number gutter with current line highlighting
-- **Bracket Matching** — Automatic detection and highlighting of matching brackets, parentheses, and braces
-- **Character Pair Insertion** — Auto-insert closing quotes, brackets, and parentheses when typing opening characters
-- **Line Wrapping** — Toggle between wrapped and horizontal scrolling modes
-- **Current Line Highlighting** — Visual indicator for the line containing the cursor
+---
 
-### Text Intelligence
-- **Line Ending Detection** — Automatically detects LF, CRLF, CR, or mixed line endings
-- **Line Ending Conversion** — Convert between different line ending formats
-- **Indentation Detection** — Detects whether the file uses tabs or spaces for indentation
-- **Tab Key Support** — Configurable tab behavior (insert tab or spaces)
+## ✨ Features
 
-### Visual Customization
-- **Multiple Themes** — Built-in themes including Default, Monokai, Solarized (Dark/Light), GitHub, and Xcode
-- **Configurable Font Size** — Adjustable editor font size (8-32pt)
-- **Line Height** — Adjustable line spacing multiplier (1.0x to 2.0x)
-- **Invisible Characters** — Optional display of tabs, spaces, and line breaks
+### 📝 Core Editor Features
+- 🎨 **Syntax Highlighting** — Regex-based highlighting for 20+ programming languages including Swift, Python, JavaScript, TypeScript, HTML, CSS, JSON, and more
+- 🔢 **Line Numbers** — Configurable line number gutter with current line highlighting
+- 🔗 **Bracket Matching** — Automatic detection and highlighting of matching brackets, parentheses, and braces
+- ⌨️ **Character Pair Insertion** — Auto-insert closing quotes, brackets, and parentheses
+- 📏 **Line Wrapping** — Toggle between wrapped and horizontal scrolling modes
+- 💡 **Current Line Highlighting** — Visual indicator for the line containing the cursor
 
-### UI Components
-- **Status Bar** — Shows cursor position, line count, line ending type, and indentation settings
-- **Settings View** — Pre-built settings UI for all editor configuration options
-- **Symbol Keyboard** (iOS) — Accessory keyboard with programming symbols and a Tab key
+### 🧠 Text Intelligence
+- 📄 **Line Ending Detection** — Automatically detects LF, CRLF, CR, or mixed line endings
+- 🔄 **Line Ending Conversion** — Convert between different line ending formats
+- ⇥ **Indentation Detection** — Detects whether the file uses tabs or spaces
+- 🎹 **Tab Key Support** — Configurable tab behavior (insert tab or spaces)
 
-## Requirements
+### 🎨 Visual Customization
+- 🌙 **Multiple Themes** — Built-in themes including Default, Monokai, Solarized (Dark/Light), GitHub, and Xcode
+- 🔠 **Configurable Font Size** — Adjustable editor font size (8-32pt)
+- 📐 **Line Height** — Adjustable line spacing multiplier (1.0x to 2.0x)
+- 👁️ **Invisible Characters** — Optional display of tabs, spaces, and line breaks
 
-- iOS 17.0+ / macOS 14.0+
-- Swift 5.9+
-- Xcode 15.0+
+### 🧩 Advanced Features
+- 🔍 **Find & Replace** — Full-featured find and replace with regex support, case sensitivity, and whole word matching
+- 📁 **Code Folding** — Collapse and expand code regions based on syntax structure
+- ↩️ **Undo/Redo History** — Persistent undo/redo with optional disk persistence
+- 🌳 **TreeSitter Ready** — Optional TreeSitter integration for advanced syntax analysis
 
-## Installation
+### 🖥️ UI Components
+- 📊 **Status Bar** — Shows cursor position, line count, line ending type, and indentation settings
+- ⚙️ **Settings View** — Pre-built settings UI for all editor configuration options
+- 🎹 **Symbol Keyboard** (iOS) — Accessory keyboard with programming symbols and a Tab key
+
+---
+
+## 📦 Requirements
+
+| Requirement | Version |
+|-------------|---------|
+| 📱 iOS | 17.0+ |
+| 💻 macOS | 14.0+ |
+| 🐦 Swift | 5.9+ |
+| 🔨 Xcode | 15.0+ |
+
+---
+
+## 🚀 Installation
 
 ### Swift Package Manager
 
@@ -46,7 +76,7 @@ Add Keystone to your project using Swift Package Manager:
 1. In Xcode, go to **File → Add Package Dependencies...**
 2. Enter the repository URL:
    ```
-   https://github.com/yourusername/Keystone
+   https://github.com/blaineam/KeyStone
    ```
 3. Select your version rules and click **Add Package**
 
@@ -54,7 +84,7 @@ Or add it to your `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/yourusername/Keystone", from: "1.0.0")
+    .package(url: "https://github.com/blaineam/KeyStone", from: "1.1.0")
 ]
 ```
 
@@ -67,7 +97,9 @@ Then add "Keystone" as a dependency to your target:
 )
 ```
 
-## Quick Start
+---
+
+## ⚡ Quick Start
 
 ### Basic Usage
 
@@ -95,7 +127,7 @@ struct ContentView: View {
 }
 ```
 
-### With Status Bar
+### 📊 With Status Bar
 
 ```swift
 import SwiftUI
@@ -128,7 +160,7 @@ struct EditorWithStatusBar: View {
 }
 ```
 
-### With Settings Panel
+### ⚙️ With Settings Panel
 
 ```swift
 import SwiftUI
@@ -168,7 +200,7 @@ struct EditorWithSettings: View {
 }
 ```
 
-### Auto-Detect Language and Settings
+### 🔍 Auto-Detect Language and Settings
 
 ```swift
 import SwiftUI
@@ -208,7 +240,7 @@ struct SmartEditor: View {
 }
 ```
 
-### iOS Symbol Keyboard
+### 🎹 iOS Symbol Keyboard
 
 ```swift
 import SwiftUI
@@ -236,7 +268,9 @@ struct iOSEditor: View {
 }
 ```
 
-## Configuration
+---
+
+## ⚙️ Configuration
 
 ### KeystoneConfiguration
 
@@ -245,7 +279,7 @@ The main configuration object for the editor. It's an `ObservableObject` that ca
 ```swift
 let config = KeystoneConfiguration()
 
-// Appearance
+// 🎨 Appearance
 config.fontSize = 14.0                    // Font size in points (8-32)
 config.lineHeightMultiplier = 1.4         // Line spacing multiplier (1.0-2.0)
 config.showLineNumbers = true             // Show/hide line number gutter
@@ -253,33 +287,33 @@ config.highlightCurrentLine = true        // Highlight the current line
 config.showInvisibleCharacters = false    // Show tabs, spaces, line breaks
 config.lineWrapping = true                // Enable/disable line wrapping
 
-// Behavior
+// ⌨️ Behavior
 config.autoInsertPairs = true             // Auto-insert closing brackets/quotes
 config.highlightMatchingBrackets = true   // Highlight matching bracket pairs
 config.tabKeyInsertsTab = true            // Tab key inserts tab vs spaces
 
-// Indentation
+// ⇥ Indentation
 config.indentation = IndentationSettings(type: .spaces, width: 4)
 
-// Line Endings
+// 📄 Line Endings
 config.lineEnding = .lf                   // LF, CRLF, or CR
 
-// Theme
+// 🌙 Theme
 config.theme = .monokai                   // Syntax highlighting theme
 ```
 
-### Available Themes
+### 🎨 Available Themes
 
-```swift
-KeystoneTheme.default        // System-aware dark/light theme
-KeystoneTheme.monokai        // Classic Monokai dark theme
-KeystoneTheme.solarizedDark  // Solarized Dark
-KeystoneTheme.solarizedLight // Solarized Light
-KeystoneTheme.github         // GitHub-inspired light theme
-KeystoneTheme.xcode          // Xcode default colors
-```
+| Theme | Description |
+|-------|-------------|
+| `KeystoneTheme.default` | 🌗 System-aware dark/light theme |
+| `KeystoneTheme.monokai` | 🌙 Classic Monokai dark theme |
+| `KeystoneTheme.solarizedDark` | 🌑 Solarized Dark |
+| `KeystoneTheme.solarizedLight` | ☀️ Solarized Light |
+| `KeystoneTheme.github` | 📝 GitHub-inspired light theme |
+| `KeystoneTheme.xcode` | 🔨 Xcode default colors |
 
-### Creating Custom Themes
+### 🎨 Creating Custom Themes
 
 ```swift
 let customTheme = KeystoneTheme(
@@ -305,37 +339,39 @@ let customTheme = KeystoneTheme(
 )
 ```
 
-## Supported Languages
+---
 
-Keystone includes syntax highlighting for:
+## 🌐 Supported Languages
 
-| Language | Extension | Keywords |
-|----------|-----------|----------|
-| Swift | `.swift` | func, let, var, class, struct... |
-| Python | `.py` | def, class, import, if, for... |
-| JavaScript | `.js` | function, const, let, class... |
-| TypeScript | `.ts`, `.tsx` | interface, type, async, await... |
-| Java | `.java` | public, class, interface, void... |
-| C | `.c`, `.h` | int, char, void, struct, typedef... |
-| C++ | `.cpp`, `.hpp` | class, template, namespace, virtual... |
-| C# | `.cs` | class, interface, async, await... |
-| Go | `.go` | func, package, import, defer... |
-| Rust | `.rs` | fn, let, mut, impl, trait... |
-| Ruby | `.rb` | def, class, module, require... |
-| PHP | `.php` | function, class, public, private... |
-| HTML | `.html`, `.htm` | Tags, attributes, nested CSS/JS |
-| CSS | `.css` | Selectors, properties, values |
-| JSON | `.json` | Keys, strings, numbers, booleans |
-| YAML | `.yaml`, `.yml` | Keys, strings, numbers |
-| Markdown | `.md` | Headers, bold, italic, code blocks |
-| Shell | `.sh`, `.bash` | if, then, else, fi, for... |
-| SQL | `.sql` | SELECT, FROM, WHERE, JOIN... |
-| Config | `.conf`, `.ini` | Sections, keys, values, comments |
-| Plain Text | `.txt` | No highlighting |
+| Language | Extensions | Highlights |
+|----------|------------|------------|
+| 🍎 Swift | `.swift` | Keywords, types, attributes |
+| 🐍 Python | `.py` | Keywords, decorators, builtins |
+| 🟨 JavaScript | `.js`, `.jsx` | Keywords, functions, classes |
+| 🔷 TypeScript | `.ts`, `.tsx` | Types, interfaces, generics |
+| ☕ Java | `.java` | Keywords, annotations, types |
+| ⚡ C | `.c`, `.h` | Keywords, types, preprocessor |
+| 🔧 C++ | `.cpp`, `.hpp` | Templates, namespaces, types |
+| 💜 C# | `.cs` | Keywords, attributes, LINQ |
+| 🐹 Go | `.go` | Keywords, types, functions |
+| 🦀 Rust | `.rs` | Keywords, macros, lifetimes |
+| 💎 Ruby | `.rb` | Keywords, symbols, blocks |
+| 🐘 PHP | `.php` | Keywords, variables, types |
+| 📄 HTML | `.html`, `.htm` | Tags, attributes, entities |
+| 🎨 CSS | `.css`, `.scss` | Selectors, properties, values |
+| 📦 JSON | `.json` | Keys, strings, numbers |
+| 📋 YAML | `.yaml`, `.yml` | Keys, values, anchors |
+| 📝 Markdown | `.md` | Headers, emphasis, code |
+| 🐚 Shell | `.sh`, `.bash` | Keywords, variables, commands |
+| 🗄️ SQL | `.sql` | Keywords, functions, operators |
+| ⚙️ Config | `.conf`, `.ini` | Sections, keys, comments |
+| 📄 Plain Text | `.txt` | No highlighting |
 
-## API Reference
+---
 
-### KeystoneEditor
+## 📚 API Reference
+
+### 📝 KeystoneEditor
 
 The main editor view component.
 
@@ -351,7 +387,7 @@ public struct KeystoneEditor: View {
 }
 ```
 
-### EditorStatusBar
+### 📊 EditorStatusBar
 
 A status bar showing cursor position and file settings.
 
@@ -367,7 +403,7 @@ public struct EditorStatusBar: View {
 }
 ```
 
-### EditorSettingsView
+### ⚙️ EditorSettingsView
 
 A pre-built settings panel for editor configuration.
 
@@ -381,7 +417,7 @@ public struct EditorSettingsView: View {
 }
 ```
 
-### SymbolKeyboard (iOS only)
+### 🎹 SymbolKeyboard (iOS only)
 
 A keyboard accessory with programming symbols.
 
@@ -394,10 +430,64 @@ public struct SymbolKeyboard: View {
 }
 ```
 
-### Utility Types
+### 🔍 FindReplaceManager
+
+Manages find and replace operations.
 
 ```swift
-// Cursor position information
+@MainActor
+public class FindReplaceManager: ObservableObject {
+    public var searchQuery: String
+    public var replaceText: String
+    public var options: SearchOptions
+    public var matches: [SearchMatch]
+
+    public func search(in text: String)
+    public func findNext()
+    public func findPrevious()
+    public func replaceCurrent(in text: String) -> String?
+    public func replaceAll(in text: String) -> String
+}
+```
+
+### 📁 CodeFoldingManager
+
+Manages code folding regions.
+
+```swift
+@MainActor
+public class CodeFoldingManager: ObservableObject {
+    public var regions: [FoldableRegion]
+
+    public func analyze(_ text: String)
+    public func toggleFold(_ region: FoldableRegion)
+    public func foldAll()
+    public func unfoldAll()
+    public func isLineHidden(_ lineNumber: Int) -> Bool
+}
+```
+
+### ↩️ UndoHistoryManager
+
+Manages undo/redo with optional persistence.
+
+```swift
+@MainActor
+public class UndoHistoryManager: ObservableObject {
+    public var canUndo: Bool
+    public var canRedo: Bool
+
+    public func recordEdit(_ operation: EditOperation)
+    public func undo() -> EditOperation?
+    public func redo() -> EditOperation?
+    public func clearHistory()
+}
+```
+
+### 🔧 Utility Types
+
+```swift
+// 📍 Cursor position information
 public struct CursorPosition {
     public var line: Int           // 1-based line number
     public var column: Int         // 1-based column number
@@ -405,7 +495,7 @@ public struct CursorPosition {
     public var selectionLength: Int // Number of selected characters
 }
 
-// Line ending types
+// 📄 Line ending types
 public enum LineEnding {
     case lf      // Unix/macOS (\n)
     case crlf    // Windows (\r\n)
@@ -416,7 +506,7 @@ public enum LineEnding {
     static func convert(_ text: String, to ending: LineEnding) -> String
 }
 
-// Indentation settings
+// ⇥ Indentation settings
 public struct IndentationSettings {
     public var type: IndentationType  // .tabs or .spaces
     public var width: Int             // Number of spaces (1-8)
@@ -426,26 +516,31 @@ public struct IndentationSettings {
 }
 ```
 
-## Architecture
+---
 
-Keystone is designed with a clean separation of concerns:
+## 🏗️ Architecture
 
 ```
 Keystone/
-├── Configuration/
+├── 📁 Configuration/
 │   ├── KeystoneConfiguration.swift  // Main config ObservableObject
 │   └── KeystoneTheme.swift          // Theme definitions
-├── Platform/
+├── 📁 Features/
+│   ├── CodeFolding.swift            // Code folding manager
+│   ├── FindReplace.swift            // Find & replace manager
+│   └── UndoHistory.swift            // Undo/redo with persistence
+├── 📁 Platform/
 │   └── PlatformTypes.swift          // Cross-platform type aliases
-├── Syntax/
+├── 📁 Syntax/
 │   ├── KeystoneLanguage.swift       // Language definitions
-│   └── SyntaxHighlighter.swift      // Highlighting engine
-├── Types/
+│   ├── SyntaxHighlighter.swift      // Highlighting engine
+│   └── TreeSitterHighlighter.swift  // TreeSitter integration
+├── 📁 Types/
 │   ├── BracketMatching.swift        // Bracket matching logic
 │   ├── CursorPosition.swift         // Cursor utilities
 │   ├── Indentation.swift            // Indentation detection
 │   └── LineEnding.swift             // Line ending utilities
-└── Views/
+└── 📁 Views/
     ├── KeystoneEditor.swift         // Main editor view
     ├── KeystoneTextView.swift       // Platform text views
     ├── EditorStatusBar.swift        // Status bar component
@@ -453,32 +548,34 @@ Keystone/
     └── SymbolKeyboard.swift         // iOS symbol keyboard
 ```
 
-## Future Roadmap
+---
 
-- [ ] TreeSitter integration for advanced syntax highlighting
-- [ ] Code folding based on syntax structure
-- [ ] Find and replace functionality
-- [ ] Undo/redo history persistence
-- [ ] Minimap view
-- [ ] Git diff indicators
-- [ ] Auto-completion support
-- [ ] Multiple cursor support
-
-## License
+## 📜 License
 
 Keystone is available under the MIT License. See the [LICENSE](LICENSE) file for more information.
 
-## Contributing
+---
+
+## 🤝 Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
 
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add some amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+1. 🍴 Fork the repository
+2. 🌿 Create your feature branch (`git checkout -b feature/amazing-feature`)
+3. 💾 Commit your changes (`git commit -m 'Add some amazing feature'`)
+4. 📤 Push to the branch (`git push origin feature/amazing-feature`)
+5. 🎉 Open a Pull Request
 
-## Acknowledgments
+---
 
-- Built with SwiftUI for modern Apple platforms
-- Inspired by great code editors like VS Code, Sublime Text, and Xcode
+## 🙏 Acknowledgments
+
+- 🛠️ Built with SwiftUI for modern Apple platforms
+- 💡 Inspired by great code editors like VS Code, Sublime Text, and Xcode
+- 🌳 TreeSitter integration for advanced syntax analysis
+
+---
+
+<p align="center">
+  Made with ❤️ for the Swift community
+</p>
