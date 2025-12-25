@@ -1,0 +1,88 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+jobs:
+  build-and-test:
+    name: Build & Test
+    runs-on: macos-14
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Setup Xcode
+      uses: maxim-lobanov/setup-xcode@v1
+      with:
+        xcode-version: '15.0'
+
+    - name: Build Package
+      run: swift build -c release -v
+
+    - name: Run Tests
+      run: swift test -v
+
+  create-release:
+    name: Create Release
+    needs: build-and-test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Get version from tag
+      id: get_version
+      run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+    - name: Generate Release Notes
+      id: release_notes
+      run: |
+        cat << 'EOF' > release_notes.md
+        ## Keystone ${{ steps.get_version.outputs.VERSION }}
+
+        A powerful, cross-platform code editor component for SwiftUI.
+
+        ### Installation
+
+        Add Keystone to your project using Swift Package Manager:
+
+        ```swift
+        dependencies: [
+            .package(url: "https://github.com/blaineam/KeyStone", from: "${{ steps.get_version.outputs.VERSION }}")
+        ]
+        ```
+
+        ### Features
+        - Syntax highlighting for 20+ languages
+        - Line numbers with current line highlighting
+        - Bracket matching and auto-pair insertion
+        - Line wrapping toggle
+        - Multiple built-in themes
+        - Line ending detection and conversion
+        - Indentation detection
+        - Status bar and settings UI
+        - iOS symbol keyboard
+
+        ### Requirements
+        - iOS 17.0+ / macOS 14.0+
+        - Swift 5.9+
+        - Xcode 15.0+
+
+        See the [README](https://github.com/blaineam/KeyStone#readme) for full documentation.
+        EOF
+
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v1
+      with:
+        body_path: release_notes.md
+        draft: false
+        prerelease: false
+        generate_release_notes: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

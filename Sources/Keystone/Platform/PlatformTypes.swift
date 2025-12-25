@@ -29,9 +29,9 @@ extension PlatformColor {
     /// Creates a platform color from SwiftUI Color.
     public convenience init(_ color: Color) {
         #if os(iOS)
-        self.init(color)
+        self.init(cgColor: color.resolve(in: .init()).cgColor)
         #else
-        self.init(color)
+        self.init(cgColor: color.resolve(in: .init()).cgColor)!
         #endif
     }
 }
