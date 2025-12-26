@@ -27,11 +27,33 @@ public typealias PlatformImage = NSImage
 
 extension PlatformColor {
     /// Creates a platform color from SwiftUI Color.
+    /// Uses native initializers to preserve dynamic light/dark mode behavior.
     public convenience init(_ color: Color) {
         #if os(iOS)
-        self.init(cgColor: color.resolve(in: .init()).cgColor)
+        // Use UIColor's native Color initializer which preserves dynamic colors
+        let uiColor = UIColor(color)
+        self.init(cgColor: uiColor.cgColor)
         #else
-        self.init(cgColor: color.resolve(in: .init()).cgColor)!
+        // Use NSColor's native Color initializer which preserves dynamic colors
+        let nsColor = NSColor(color)
+        self.init(cgColor: nsColor.cgColor)!
+        #endif
+    }
+
+    /// Creates a dynamic platform color that adapts to light/dark mode.
+    public static func dynamicColor(light: Color, dark: Color) -> PlatformColor {
+        #if os(iOS)
+        return UIColor { traitCollection in
+            traitCollection.userInterfaceStyle == .dark
+                ? UIColor(dark)
+                : UIColor(light)
+        }
+        #else
+        return NSColor(name: nil) { appearance in
+            appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+                ? NSColor(dark)
+                : NSColor(light)
+        }
         #endif
     }
 }
@@ -61,15 +83,6 @@ extension Color {
     public static var keystoneGutter: Color {
         #if os(iOS)
         return Color(UIColor.secondarySystemBackground)
-        #else
-        return Color(NSColor.controlBackgroundColor)
-        #endif
-    }
-
-    /// The default status bar background color.
-    public static var keystoneStatusBar: Color {
-        #if os(iOS)
-        return Color(UIColor.tertiarySystemBackground)
         #else
         return Color(NSColor.controlBackgroundColor)
         #endif

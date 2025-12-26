@@ -10,15 +10,16 @@ import SwiftUI
 /// A full-featured code editor view for SwiftUI.
 ///
 /// KeystoneEditor provides syntax highlighting, line numbers, bracket matching,
-/// and many other features expected in a modern code editor.
+/// find/replace, symbol keyboard, and many other features expected in a modern code editor.
 ///
 /// Example usage:
 /// ```swift
 /// @State private var code = "func hello() {\n    print(\"Hello!\")\n}"
 /// @StateObject private var config = KeystoneConfiguration()
+/// @StateObject private var findReplace = FindReplaceManager()
 ///
 /// var body: some View {
-///     KeystoneEditor(text: $code, language: .swift, configuration: config)
+///     KeystoneEditor(text: $code, language: .swift, configuration: config, findReplaceManager: findReplace)
 /// }
 /// ```
 public struct KeystoneEditor: View {
@@ -33,18 +34,54 @@ public struct KeystoneEditor: View {
     /// The editor configuration.
     @ObservedObject public var configuration: KeystoneConfiguration
 
+    /// Find and replace manager.
+    @ObservedObject public var findReplaceManager: FindReplaceManager
+
     /// Callback when the cursor position changes.
     public var onCursorChange: ((CursorPosition) -> Void)?
 
     /// Callback when the scroll position changes.
     public var onScrollChange: ((CGFloat) -> Void)?
 
+    /// Callback when text changes.
+    public var onTextChange: ((String) -> Void)?
+
+    /// Optional external cursor position binding. When provided, allows external control of cursor position.
+    /// Useful for features like "scroll to end" in tail follow mode.
+    private var externalCursorPosition: Binding<CursorPosition>?
+
+    /// Whether tail follow is enabled. When provided, shows the follow button in the toolbar.
+    private var isTailFollowEnabled: Binding<Bool>?
+
+    /// Callback to toggle tail follow mode.
+    public var onToggleTailFollow: (() -> Void)?
+
+    /// Controller for undo/redo operations (bridges to native text view's undo manager).
+    @StateObject private var undoController = UndoController()
+
     // MARK: - Internal State
 
-    @State private var cursorPosition = CursorPosition()
+    @State private var internalCursorPosition = CursorPosition()
+
+    /// The effective cursor position (external if provided, otherwise internal)
+    private var cursorPosition: Binding<CursorPosition> {
+        externalCursorPosition ?? $internalCursorPosition
+    }
     @State private var scrollOffset: CGFloat = 0
     @State private var lineCount: Int = 1
     @State private var matchingBracket: BracketMatch?
+    @State private var showGoToLine = false
+    @State private var goToLineText = ""
+
+    #if os(iOS)
+    @State private var showSymbolKeyboard = false
+    /// Tracks whether the find/replace search field is focused (for symbol keyboard insertion)
+    @State private var isSearchFieldFocused = false
+    #endif
+
+    // MARK: - Environment
+
+    @FocusState private var isEditorFocused: Bool
 
     // MARK: - Initialization
 
@@ -53,58 +90,119 @@ public struct KeystoneEditor: View {
     ///   - text: Binding to the text content.
     ///   - language: The programming language for syntax highlighting.
     ///   - configuration: The editor configuration.
+    ///   - findReplaceManager: The find/replace manager.
+    ///   - cursorPosition: Optional binding for external cursor position control (e.g., for scroll-to-end).
+    ///   - isTailFollowEnabled: Optional binding for tail follow state (shows follow button when provided).
     ///   - onCursorChange: Optional callback when cursor position changes.
     ///   - onScrollChange: Optional callback when scroll position changes.
+    ///   - onTextChange: Optional callback when text changes.
+    ///   - onToggleTailFollow: Optional callback to toggle tail follow mode.
     public init(
         text: Binding<String>,
         language: KeystoneLanguage = .plainText,
         configuration: KeystoneConfiguration,
+        findReplaceManager: FindReplaceManager,
+        cursorPosition: Binding<CursorPosition>? = nil,
+        isTailFollowEnabled: Binding<Bool>? = nil,
         onCursorChange: ((CursorPosition) -> Void)? = nil,
-        onScrollChange: ((CGFloat) -> Void)? = nil
+        onScrollChange: ((CGFloat) -> Void)? = nil,
+        onTextChange: ((String) -> Void)? = nil,
+        onToggleTailFollow: (() -> Void)? = nil
     ) {
         self._text = text
         self.language = language
         self.configuration = configuration
+        self.findReplaceManager = findReplaceManager
+        self.externalCursorPosition = cursorPosition
+        self.isTailFollowEnabled = isTailFollowEnabled
         self.onCursorChange = onCursorChange
         self.onScrollChange = onScrollChange
+        self.onTextChange = onTextChange
+        self.onToggleTailFollow = onToggleTailFollow
     }
 
     // MARK: - Body
 
     public var body: some View {
-        GeometryReader { geometry in
-            HStack(spacing: 0) {
-                // Line numbers gutter
-                if configuration.showLineNumbers {
-                    LineNumbersGutter(
-                        lineCount: lineCount,
-                        currentLine: cursorPosition.line,
-                        scrollOffset: scrollOffset,
-                        fontSize: configuration.fontSize,
-                        lineHeight: configuration.fontSize * configuration.lineHeightMultiplier,
-                        theme: configuration.theme,
-                        highlightCurrentLine: configuration.highlightCurrentLine
-                    )
-                }
+        VStack(spacing: 0) {
+            #if os(iOS)
+            // Editor toolbar for iOS
+            KeystoneEditorToolbarBar(
+                configuration: configuration,
+                findReplaceManager: findReplaceManager,
+                showSymbolKeyboard: $showSymbolKeyboard,
+                undoController: undoController,
+                isTailFollowEnabled: isTailFollowEnabled,
+                onGoToLine: { showGoToLine = true },
+                onToggleTailFollow: onToggleTailFollow
+            )
+            #endif
 
-                // Main editor area
-                KeystoneTextView(
+            // Find/Replace bar
+            if findReplaceManager.isVisible {
+                #if os(iOS)
+                KeystoneFindReplaceBar(
+                    manager: findReplaceManager,
                     text: $text,
-                    language: language,
-                    configuration: configuration,
-                    cursorPosition: $cursorPosition,
-                    scrollOffset: $scrollOffset,
-                    matchingBracket: $matchingBracket
+                    undoController: undoController,
+                    isSearchFieldFocused: $isSearchFieldFocused,
+                    onNavigateToMatch: navigateToMatch
+                )
+                #else
+                KeystoneFindReplaceBar(
+                    manager: findReplaceManager,
+                    text: $text,
+                    undoController: undoController,
+                    onNavigateToMatch: navigateToMatch
+                )
+                #endif
+            }
+
+            // Main editor area (line numbers are integrated in KeystoneTextView)
+            KeystoneTextView(
+                text: $text,
+                language: language,
+                configuration: configuration,
+                cursorPosition: cursorPosition,
+                scrollOffset: $scrollOffset,
+                matchingBracket: $matchingBracket,
+                searchMatches: findReplaceManager.matches,
+                currentMatchIndex: findReplaceManager.currentMatchIndex,
+                undoController: undoController
+            )
+            .focused($isEditorFocused)
+
+            #if os(iOS)
+            // Symbol keyboard bar (always visible when enabled)
+            if showSymbolKeyboard {
+                SymbolKeyboard(
+                    indentString: configuration.indentation.indentString,
+                    onSymbol: insertSymbol
                 )
             }
+            #endif
+
+            // Status bar
+            EditorStatusBar(
+                cursorPosition: cursorPosition.wrappedValue,
+                lineCount: lineCount,
+                configuration: configuration
+            )
         }
+        .clipped() // Prevent content from extending beyond bounds
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(configuration.theme.background)
         .onChange(of: text) { _, newValue in
             updateLineCount(from: newValue)
-            updateMatchingBracket()
+            // Only search when find panel is visible (avoid expensive operation on every keystroke)
+            if findReplaceManager.isVisible && !findReplaceManager.searchQuery.isEmpty {
+                findReplaceManager.search(in: newValue)
+            }
+            onTextChange?(newValue)
         }
-        .onChange(of: cursorPosition) { _, newPosition in
+        .onChange(of: cursorPosition.wrappedValue) { _, newPosition in
             onCursorChange?(newPosition)
+            // Update bracket matching when cursor moves
             updateMatchingBracket()
         }
         .onChange(of: scrollOffset) { _, newOffset in
@@ -113,6 +211,75 @@ public struct KeystoneEditor: View {
         .onAppear {
             updateLineCount(from: text)
         }
+        .alert("Go to Line", isPresented: $showGoToLine) {
+            TextField("Line or Line:Column (e.g., 42 or 42:10)", text: $goToLineText)
+                #if os(iOS)
+                .keyboardType(.numbersAndPunctuation)
+                #endif
+            Button("Cancel", role: .cancel) { }
+            Button("Go") {
+                parseAndGoToLine(goToLineText)
+            }
+        } message: {
+            Text("Enter line number, or line:column")
+        }
+        #if os(macOS)
+        .onKeyPress(.escape) {
+            if findReplaceManager.isVisible {
+                findReplaceManager.hide()
+                return .handled
+            }
+            return .ignored
+        }
+        #endif
+    }
+
+    // MARK: - Public Methods
+
+    /// Shows the find bar.
+    public func showFind() {
+        findReplaceManager.show()
+    }
+
+    /// Shows the find and replace bar.
+    public func showFindReplace() {
+        findReplaceManager.showReplace = true
+        findReplaceManager.show()
+    }
+
+    /// Toggles the find bar visibility.
+    public func toggleFind() {
+        findReplaceManager.toggle()
+    }
+
+    /// Shows the go to line dialog.
+    public func showGoToLineDialog() {
+        goToLineText = ""
+        showGoToLine = true
+    }
+
+    #if os(iOS)
+    /// Toggles the symbol keyboard.
+    public func toggleSymbolKeyboard() {
+        withAnimation(.easeInOut(duration: 0.2)) {
+            showSymbolKeyboard.toggle()
+        }
+    }
+
+    /// Whether the symbol keyboard is currently visible.
+    public var isSymbolKeyboardVisible: Bool {
+        showSymbolKeyboard
+    }
+    #endif
+
+    /// The current cursor position.
+    public var currentCursorPosition: CursorPosition {
+        cursorPosition.wrappedValue
+    }
+
+    /// The current line count.
+    public var currentLineCount: Int {
+        lineCount
     }
 
     // MARK: - Private Methods
@@ -127,64 +294,595 @@ public struct KeystoneEditor: View {
             return
         }
 
-        if cursorPosition.offset > 0 {
-            // Check character before cursor
-            matchingBracket = BracketMatcher.findMatch(in: text, at: cursorPosition.offset - 1)
+        if cursorPosition.wrappedValue.offset > 0 {
+            matchingBracket = BracketMatcher.findMatch(in: text, at: cursorPosition.wrappedValue.offset - 1)
         } else {
             matchingBracket = nil
         }
     }
-}
 
-// MARK: - Line Numbers Gutter
+    private func insertSymbol(_ symbol: String) {
+        #if os(iOS)
+        // If find/replace is visible and search field is focused, insert into search query
+        if findReplaceManager.isVisible && isSearchFieldFocused {
+            findReplaceManager.searchQuery += symbol
+            return
+        }
+        #endif
 
-struct LineNumbersGutter: View {
-    let lineCount: Int
-    let currentLine: Int
-    let scrollOffset: CGFloat
-    let fontSize: CGFloat
-    let lineHeight: CGFloat
-    let theme: KeystoneTheme
-    let highlightCurrentLine: Bool
+        // Insert symbol at cursor position using undoController for proper undo support
+        let offset = cursorPosition.wrappedValue.offset
+        let insertRange = NSRange(location: offset, length: 0)
 
-    private var gutterWidth: CGFloat {
-        let digitCount = String(max(1, lineCount)).count
-        return CGFloat(max(3, digitCount)) * (fontSize * 0.6) + 16
+        // Try to use undoController for proper undo registration
+        if let newText = undoController.replaceText(in: insertRange, with: symbol) {
+            text = newText
+        } else {
+            // Fallback: direct insertion (no undo support)
+            let index = text.index(text.startIndex, offsetBy: min(offset, text.count))
+            text.insert(contentsOf: symbol, at: index)
+        }
+
+        // Update cursor position to after the inserted symbol
+        let newOffset = offset + symbol.count
+        cursorPosition.wrappedValue = CursorPosition.from(offset: newOffset, in: text, selectionLength: 0)
     }
 
-    var body: some View {
-        GeometryReader { geometry in
-            let topPadding: CGFloat = 8
-            let visibleHeight = geometry.size.height
-            let firstVisibleLine = max(1, Int((scrollOffset - topPadding) / lineHeight) + 1)
-            let visibleLineCount = Int(visibleHeight / lineHeight) + 4
-            let lastVisibleLine = min(lineCount, firstVisibleLine + visibleLineCount)
-            let offset = CGFloat(firstVisibleLine - 1) * lineHeight + topPadding - scrollOffset
+    /// Parses input in format "line" or "line:column" and navigates to that position.
+    private func parseAndGoToLine(_ input: String) {
+        let trimmed = input.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return }
 
-            if firstVisibleLine <= lastVisibleLine {
-                VStack(alignment: .trailing, spacing: 0) {
-                    ForEach(firstVisibleLine...lastVisibleLine, id: \.self) { lineNum in
-                        Text("\(lineNum)")
-                            .font(.system(size: fontSize, weight: .regular, design: .monospaced))
-                            .foregroundColor(lineNum == currentLine ? .accentColor : theme.lineNumber)
-                            .frame(height: lineHeight)
-                            .frame(maxWidth: .infinity, alignment: .trailing)
-                            .padding(.trailing, 4)
-                            .background(
-                                highlightCurrentLine && lineNum == currentLine
-                                    ? theme.currentLineHighlight
-                                    : Color.clear
-                            )
+        let parts = trimmed.split(separator: ":", maxSplits: 1)
+        guard let lineNumber = Int(parts[0]) else { return }
+
+        let column: Int
+        if parts.count > 1, let col = Int(parts[1]) {
+            column = max(1, col)
+        } else {
+            column = 1
+        }
+
+        goToLine(lineNumber, column: column)
+    }
+
+    private func goToLine(_ lineNumber: Int, column: Int = 1) {
+        guard lineNumber >= 1 && lineNumber <= lineCount else { return }
+
+        var currentLine = 1
+        var lineStartOffset = 0
+        var lineEndOffset = text.count
+
+        // Find the start of the target line
+        for (index, char) in text.enumerated() {
+            if currentLine == lineNumber {
+                lineStartOffset = index
+                // Now find the end of this line
+                for (endIndex, endChar) in text.enumerated().dropFirst(index) {
+                    if endChar == "\n" {
+                        lineEndOffset = endIndex
+                        break
                     }
                 }
-                .offset(y: offset)
+                break
+            }
+            if char == "\n" {
+                currentLine += 1
             }
         }
-        .frame(width: gutterWidth)
-        .clipped()
-        .background(theme.gutterBackground)
+
+        // Calculate final offset with column (clamped to line length)
+        let lineLength = lineEndOffset - lineStartOffset
+        let columnOffset = min(column - 1, lineLength)
+        let finalOffset = lineStartOffset + max(0, columnOffset)
+
+        // Update cursor position after a brief delay to ensure the alert has fully dismissed
+        Task { @MainActor in
+            // Small delay to allow the alert to dismiss
+            try? await Task.sleep(nanoseconds: 50_000_000) // 50ms
+
+            // Set the cursor position
+            cursorPosition.wrappedValue = CursorPosition.from(offset: finalOffset, in: text, selectionLength: 0)
+
+            // Focus the editor
+            isEditorFocused = true
+        }
+    }
+
+    private func navigateToMatch(_ match: SearchMatch) {
+        // Navigate to the match location
+        cursorPosition.wrappedValue = CursorPosition.from(
+            offset: text.distance(from: text.startIndex, to: match.range.lowerBound),
+            in: text,
+            selectionLength: match.matchedText.count
+        )
     }
 }
+
+// MARK: - Find/Replace Bar
+
+struct KeystoneFindReplaceBar: View {
+    @ObservedObject var manager: FindReplaceManager
+    @Binding var text: String
+    var undoController: UndoController?
+    #if os(iOS)
+    /// Binding to track search field focus state (for symbol keyboard integration)
+    var isSearchFieldFocused: Binding<Bool>?
+    #endif
+    var onNavigateToMatch: ((SearchMatch) -> Void)?
+    @FocusState private var isSearchFocused: Bool
+
+    #if os(iOS)
+    private let buttonSize: CGFloat = 44
+    private let fontSize: CGFloat = 16
+    private let smallFontSize: CGFloat = 14
+    private let iconSize: CGFloat = 18
+    #else
+    private let buttonSize: CGFloat = 24
+    private let fontSize: CGFloat = 13
+    private let smallFontSize: CGFloat = 11
+    private let iconSize: CGFloat = 12
+    #endif
+
+    var body: some View {
+        VStack(spacing: 6) {
+            // Top row: Options, navigation, and close button
+            HStack(spacing: 8) {
+                // Toggle replace chevron
+                Button(action: { withAnimation(.easeInOut(duration: 0.15)) { manager.showReplace.toggle() } }) {
+                    Image(systemName: manager.showReplace ? "chevron.down" : "chevron.right")
+                        .font(.system(size: iconSize, weight: .semibold))
+                        .frame(width: buttonSize, height: buttonSize)
+                        .foregroundColor(.secondary)
+                }
+                .buttonStyle(.plain)
+
+                // Option toggle buttons
+                HStack(spacing: 4) {
+                    toggleButtonWithLabel(
+                        text: "Aa",
+                        tooltip: "Match Case",
+                        isActive: manager.options.caseSensitive
+                    ) {
+                        manager.options.caseSensitive.toggle()
+                        manager.search(in: text)
+                    }
+
+                    toggleButtonWithLabel(
+                        text: "W",
+                        tooltip: "Whole Word",
+                        isActive: manager.options.wholeWord
+                    ) {
+                        manager.options.wholeWord.toggle()
+                        manager.search(in: text)
+                    }
+
+                    toggleButtonWithLabel(
+                        text: ".*",
+                        tooltip: "Regex",
+                        isActive: manager.options.useRegex
+                    ) {
+                        manager.options.useRegex.toggle()
+                        manager.search(in: text)
+                    }
+                }
+
+                Spacer()
+
+                // Match count
+                Text(manager.statusText)
+                    .font(.system(size: smallFontSize))
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+
+                // Navigation buttons
+                HStack(spacing: 4) {
+                    Button(action: {
+                        manager.findPrevious()
+                        if let match = manager.currentMatch {
+                            onNavigateToMatch?(match)
+                        }
+                    }) {
+                        Image(systemName: "chevron.up")
+                            .font(.system(size: iconSize, weight: .medium))
+                            .frame(width: buttonSize, height: buttonSize)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(manager.matches.isEmpty)
+
+                    Button(action: {
+                        manager.findNext()
+                        if let match = manager.currentMatch {
+                            onNavigateToMatch?(match)
+                        }
+                    }) {
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: iconSize, weight: .medium))
+                            .frame(width: buttonSize, height: buttonSize)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(manager.matches.isEmpty)
+                }
+
+                // Close button
+                Button(action: { manager.hide() }) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: iconSize, weight: .medium))
+                        .frame(width: buttonSize, height: buttonSize)
+                        .foregroundColor(.secondary)
+                }
+                .buttonStyle(.plain)
+            }
+
+            // Search field row - full width
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass")
+                    .foregroundColor(.secondary)
+                    .font(.system(size: iconSize))
+                TextField("Find", text: $manager.searchQuery)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: fontSize))
+                    .focused($isSearchFocused)
+                    #if os(iOS)
+                    .autocapitalization(.none)
+                    .autocorrectionDisabled()
+                    #endif
+                    .onSubmit {
+                        manager.findNext()
+                        if let match = manager.currentMatch {
+                            onNavigateToMatch?(match)
+                        }
+                    }
+                if !manager.searchQuery.isEmpty {
+                    Button(action: { manager.searchQuery = "" }) {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundColor(.secondary)
+                            .font(.system(size: iconSize))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .background(Color.secondary.opacity(0.12))
+            .cornerRadius(8)
+
+            // Replace row
+            if manager.showReplace {
+                HStack(spacing: 8) {
+                    // Replace field
+                    HStack(spacing: 6) {
+                        Image(systemName: "arrow.triangle.2.circlepath")
+                            .foregroundColor(.secondary)
+                            .font(.system(size: iconSize))
+                        TextField("Replace", text: $manager.replaceText)
+                            .textFieldStyle(.plain)
+                            .font(.system(size: fontSize))
+                            #if os(iOS)
+                            .autocapitalization(.none)
+                            .autocorrectionDisabled()
+                            #endif
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+                    .background(Color.secondary.opacity(0.12))
+                    .cornerRadius(8)
+
+                    // Replace buttons
+                    Button("Replace") {
+                        performReplaceCurrent()
+                    }
+                    .font(.system(size: smallFontSize, weight: .medium))
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(Color.accentColor.opacity(0.15))
+                    .cornerRadius(6)
+                    .disabled(manager.currentMatch == nil)
+
+                    Button("All") {
+                        performReplaceAll()
+                    }
+                    .font(.system(size: smallFontSize, weight: .medium))
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(Color.accentColor.opacity(0.15))
+                    .cornerRadius(6)
+                    .disabled(manager.matches.isEmpty)
+                }
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(Color.keystoneStatusBar)
+        .fixedSize(horizontal: false, vertical: true)
+        .onAppear {
+            isSearchFocused = true
+        }
+        .onChange(of: manager.searchQuery) { _, _ in
+            manager.search(in: text)
+        }
+        #if os(iOS)
+        .onChange(of: isSearchFocused) { _, newValue in
+            // Sync focus state to parent for symbol keyboard integration
+            isSearchFieldFocused?.wrappedValue = newValue
+        }
+        #endif
+    }
+
+    private func toggleButtonWithLabel(text: String, tooltip: String, isActive: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(text)
+                .font(.system(size: smallFontSize, weight: isActive ? .bold : .medium, design: .monospaced))
+                .frame(width: buttonSize, height: buttonSize)
+                .foregroundColor(isActive ? .accentColor : .secondary)
+                .background(isActive ? Color.accentColor.opacity(0.15) : Color.clear)
+                .cornerRadius(6)
+        }
+        .buttonStyle(.plain)
+        .help(tooltip)
+    }
+
+    // MARK: - Replace Operations
+
+    private func performReplaceCurrent() {
+        guard let match = manager.currentMatch else { return }
+
+        // Calculate NSRange from Swift Range
+        let nsRange = NSRange(match.range, in: text)
+        let replaceText = manager.replaceText
+
+        // Try to use undoController for proper undo support
+        if let undoController = undoController,
+           let newText = undoController.replaceText(in: nsRange, with: replaceText) {
+            text = newText
+            // Defer search to next run loop to allow UI to update first
+            Task { @MainActor in
+                manager.search(in: self.text)
+            }
+        } else {
+            // Fallback: direct replacement (no undo support)
+            if let newText = manager.replaceCurrent(in: text) {
+                text = newText
+            }
+        }
+    }
+
+    private func performReplaceAll() {
+        guard !manager.matches.isEmpty else { return }
+
+        // Capture search query to check if replacement might create new matches
+        let searchQuery = manager.searchQuery
+        let replacementText = manager.replaceText
+
+        // Compute the final text with all replacements in memory (fast)
+        let finalText = manager.replaceAll(in: text)
+
+        // Try to use undoController for proper undo support
+        if let undoController = undoController {
+            // Group all changes into a single undo operation
+            undoController.beginUndoGrouping()
+
+            // Replace entire content in one operation
+            let fullRange = NSRange(location: 0, length: (text as NSString).length)
+            if let newText = undoController.replaceText(in: fullRange, with: finalText) {
+                text = newText
+            } else {
+                text = finalText
+            }
+
+            undoController.endUndoGrouping()
+
+            // Only re-search if the replacement text contains the search query
+            // (meaning new matches might have been created by the replacement)
+            // Defer to next run loop to allow UI to update first
+            if replacementText.localizedCaseInsensitiveContains(searchQuery) {
+                Task { @MainActor in
+                    manager.search(in: self.text)
+                }
+            }
+        } else {
+            // Fallback: direct replacement (no undo support)
+            text = finalText
+        }
+    }
+}
+
+
+// MARK: - Toolbar Content
+
+/// Provides toolbar items for KeystoneEditor.
+public struct KeystoneEditorToolbar: View {
+    @ObservedObject var configuration: KeystoneConfiguration
+    @ObservedObject var findReplaceManager: FindReplaceManager
+    var onShowGoToLine: () -> Void
+    var onToggleSymbolKeyboard: (() -> Void)?
+    var onUndo: (() -> Void)?
+    var onRedo: (() -> Void)?
+    var canUndo: Bool
+    var canRedo: Bool
+
+    public var body: some View {
+        Group {
+            // Undo/Redo
+            if let onUndo = onUndo {
+                Button(action: onUndo) {
+                    Label("Undo", systemImage: "arrow.uturn.backward")
+                }
+                .disabled(!canUndo)
+                .keyboardShortcut("z", modifiers: .command)
+            }
+
+            if let onRedo = onRedo {
+                Button(action: onRedo) {
+                    Label("Redo", systemImage: "arrow.uturn.forward")
+                }
+                .disabled(!canRedo)
+                .keyboardShortcut("z", modifiers: [.command, .shift])
+            }
+
+            Divider()
+
+            // Find
+            Button(action: { findReplaceManager.toggle() }) {
+                Label("Find", systemImage: "magnifyingglass")
+            }
+            .keyboardShortcut("f", modifiers: .command)
+
+            // Go to Line
+            Button(action: onShowGoToLine) {
+                Label("Go to Line", systemImage: "arrow.right.to.line")
+            }
+            .keyboardShortcut("g", modifiers: .command)
+
+            Divider()
+
+            // Line Numbers
+            Button(action: {
+                configuration.showLineNumbers.toggle()
+                configuration.saveToUserDefaults()
+            }) {
+                Label("Line Numbers", systemImage: "list.number")
+            }
+
+            // Line Wrap
+            Button(action: {
+                configuration.lineWrapping.toggle()
+                configuration.saveToUserDefaults()
+            }) {
+                Label("Line Wrap", systemImage: "text.justify.left")
+            }
+
+            #if os(iOS)
+            if let onToggleSymbolKeyboard = onToggleSymbolKeyboard {
+                Button(action: onToggleSymbolKeyboard) {
+                    Label("Symbols", systemImage: "keyboard")
+                }
+            }
+            #endif
+        }
+    }
+
+    public init(
+        configuration: KeystoneConfiguration,
+        findReplaceManager: FindReplaceManager,
+        onShowGoToLine: @escaping () -> Void,
+        onToggleSymbolKeyboard: (() -> Void)? = nil,
+        onUndo: (() -> Void)? = nil,
+        onRedo: (() -> Void)? = nil,
+        canUndo: Bool = false,
+        canRedo: Bool = false
+    ) {
+        self.configuration = configuration
+        self.findReplaceManager = findReplaceManager
+        self.onShowGoToLine = onShowGoToLine
+        self.onToggleSymbolKeyboard = onToggleSymbolKeyboard
+        self.onUndo = onUndo
+        self.onRedo = onRedo
+        self.canUndo = canUndo
+        self.canRedo = canRedo
+    }
+}
+
+// MARK: - iOS Toolbar Bar
+
+#if os(iOS)
+/// A horizontal toolbar bar for the editor on iOS with touch-friendly buttons.
+struct KeystoneEditorToolbarBar: View {
+    @ObservedObject var configuration: KeystoneConfiguration
+    @ObservedObject var findReplaceManager: FindReplaceManager
+    @Binding var showSymbolKeyboard: Bool
+    @ObservedObject var undoController: UndoController
+    var isTailFollowEnabled: Binding<Bool>?
+    var onGoToLine: (() -> Void)?
+    var onToggleTailFollow: (() -> Void)?
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 12) {
+                // Undo
+                toolbarButton(icon: "arrow.uturn.backward", enabled: undoController.canUndo) {
+                    undoController.undo()
+                }
+
+                // Redo
+                toolbarButton(icon: "arrow.uturn.forward", enabled: undoController.canRedo) {
+                    undoController.redo()
+                }
+
+                Divider().frame(height: 24)
+
+                // Find
+                toolbarButton(icon: "magnifyingglass", enabled: true, isActive: findReplaceManager.isVisible) {
+                    findReplaceManager.toggle()
+                }
+
+                // Go to Line
+                toolbarButton(icon: "arrow.right.to.line", enabled: true) {
+                    onGoToLine?()
+                }
+
+                Divider().frame(height: 24)
+
+                // Line Numbers - use consistent icon, active state shows selection
+                toolbarButton(icon: "list.number", enabled: true, isActive: configuration.showLineNumbers) {
+                    configuration.showLineNumbers.toggle()
+                    configuration.saveToUserDefaults()
+                }
+
+                // Line Wrap - use consistent icon, active state shows selection
+                toolbarButton(icon: "text.justify.left", enabled: true, isActive: configuration.lineWrapping) {
+                    configuration.lineWrapping.toggle()
+                    configuration.saveToUserDefaults()
+                }
+
+                // Invisible Characters
+                toolbarButton(icon: "eye", enabled: true, isActive: configuration.showInvisibleCharacters) {
+                    configuration.showInvisibleCharacters.toggle()
+                    configuration.saveToUserDefaults()
+                }
+
+                Divider().frame(height: 24)
+
+                // Symbol Keyboard Toggle
+                toolbarButton(icon: "keyboard", enabled: true, isActive: showSymbolKeyboard) {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        showSymbolKeyboard.toggle()
+                    }
+                }
+
+                // Tail Follow (only show if callback is provided)
+                if let onToggleTailFollow = onToggleTailFollow {
+                    Divider().frame(height: 24)
+
+                    toolbarButton(
+                        icon: isTailFollowEnabled?.wrappedValue == true ? "stop.circle" : "play.circle",
+                        enabled: true,
+                        isActive: isTailFollowEnabled?.wrappedValue == true
+                    ) {
+                        onToggleTailFollow()
+                    }
+                }
+            }
+            .padding(.horizontal, 12)
+        }
+        .frame(height: 44)
+        .background(Color.keystoneStatusBar)
+    }
+
+    private func toolbarButton(icon: String, enabled: Bool, isActive: Bool = false, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.system(size: 20, weight: .medium))
+                .frame(width: 44, height: 36)
+                .foregroundColor(isActive ? .accentColor : (enabled ? .primary : .secondary.opacity(0.5)))
+                .background(isActive ? Color.accentColor.opacity(0.15) : Color.clear)
+                .cornerRadius(8)
+        }
+        .buttonStyle(.plain)
+        .disabled(!enabled)
+    }
+}
+#endif
 
 // MARK: - Preview
 
@@ -192,14 +890,16 @@ struct LineNumbersGutter: View {
     struct PreviewWrapper: View {
         @State private var text = "func hello() {\n    print(\"Hello, World!\")\n}\n\nhello()"
         @StateObject private var config = KeystoneConfiguration()
+        @StateObject private var findReplace = FindReplaceManager()
 
         var body: some View {
             KeystoneEditor(
                 text: $text,
                 language: .swift,
-                configuration: config
+                configuration: config,
+                findReplaceManager: findReplace
             )
-            .frame(minHeight: 300)
+            .frame(minHeight: 400)
         }
     }
 
