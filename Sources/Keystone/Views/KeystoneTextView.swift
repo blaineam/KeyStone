@@ -17,15 +17,93 @@ import UIKit
 /// By default, UITextView always scrolls to keep the cursor visible, which interferes with
 /// user scrolling. This subclass only scrolls when explicitly requested.
 class KeystoneUITextView: UITextView {
-    /// When true, allows scrollRangeToVisible to work. When false, prevents automatic scrolling.
+    /// When true, allows automatic scrolling. When false, prevents automatic scrolling.
     var allowScrollToCursor = false
 
+    /// Internal flag to prevent recursion when we're modifying content offset ourselves
+    private var isSettingContentOffsetInternally = false
+
+    /// The last user-initiated scroll position
+    private var lastUserContentOffset: CGPoint = .zero
+
+    /// Temporarily allows scrolling for the duration of the closure
+    func withScrollingAllowed(_ block: () -> Void) {
+        let wasAllowed = allowScrollToCursor
+        allowScrollToCursor = true
+        block()
+        allowScrollToCursor = wasAllowed
+    }
+
+    /// Scrolls to the given range, bypassing the scroll prevention
+    func scrollToRange(_ range: NSRange) {
+        allowScrollToCursor = true
+        isSettingContentOffsetInternally = true
+        super.scrollRangeToVisible(range)
+        isSettingContentOffsetInternally = false
+        allowScrollToCursor = false
+    }
+
     override func scrollRangeToVisible(_ range: NSRange) {
-        // Only scroll if explicitly allowed (e.g., during search navigation, go-to-line)
-        // This prevents UITextView's automatic scroll-to-cursor behavior from interfering
-        // with user scrolling
         guard allowScrollToCursor else { return }
         super.scrollRangeToVisible(range)
+    }
+
+    override func scrollRectToVisible(_ rect: CGRect, animated: Bool) {
+        guard allowScrollToCursor else { return }
+        super.scrollRectToVisible(rect, animated: animated)
+    }
+
+    override func setContentOffset(_ contentOffset: CGPoint, animated: Bool) {
+        // Allow internal programmatic scrolls
+        if isSettingContentOffsetInternally {
+            super.setContentOffset(contentOffset, animated: animated)
+            return
+        }
+
+        // Always allow if scrolling is explicitly permitted
+        if allowScrollToCursor {
+            super.setContentOffset(contentOffset, animated: animated)
+            lastUserContentOffset = contentOffset
+            return
+        }
+
+        // Always allow user-initiated scrolls (when tracking or decelerating)
+        if isTracking || isDecelerating || isDragging {
+            super.setContentOffset(contentOffset, animated: animated)
+            lastUserContentOffset = contentOffset
+            return
+        }
+
+        // Block automatic scrolls - this is likely UITextView trying to scroll to cursor
+        // Don't call super, effectively ignoring the scroll request
+    }
+
+    // Also intercept the non-animated content offset changes
+    override var contentOffset: CGPoint {
+        get { return super.contentOffset }
+        set {
+            // Allow internal programmatic scrolls
+            if isSettingContentOffsetInternally {
+                super.contentOffset = newValue
+                return
+            }
+
+            // Always allow if scrolling is explicitly permitted
+            if allowScrollToCursor {
+                super.contentOffset = newValue
+                lastUserContentOffset = newValue
+                return
+            }
+
+            // Always allow user-initiated scrolls
+            if isTracking || isDecelerating || isDragging {
+                super.contentOffset = newValue
+                lastUserContentOffset = newValue
+                return
+            }
+
+            // Block automatic scrolls
+        }
     }
 }
 
@@ -299,12 +377,10 @@ public struct KeystoneTextView: UIViewRepresentable {
             context.coordinator.isSettingCursorProgrammatically = true
             containerView.textView.selectedRange = newRange
 
-            // Temporarily allow scroll-to-cursor, then scroll
-            containerView.textView.allowScrollToCursor = true
+            // Use the new scrollToRange method which properly bypasses scroll prevention
             UIView.performWithoutAnimation {
-                containerView.textView.scrollRangeToVisible(newRange)
+                containerView.textView.scrollToRange(newRange)
             }
-            containerView.textView.allowScrollToCursor = false
 
             // Reset flag after a brief delay to ensure selection change notification has fired
             DispatchQueue.main.async {

@@ -59,7 +59,7 @@ extension PlatformColor {
                 blue: CGFloat(resolved.blue),
                 alpha: CGFloat(resolved.opacity)
             )
-        }!
+        }
         #endif
     }
 }
