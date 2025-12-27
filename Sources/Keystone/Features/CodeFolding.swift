@@ -6,6 +6,18 @@
 //
 
 import Foundation
+#if canImport(AppKit)
+import AppKit
+#endif
+#if canImport(UIKit)
+import UIKit
+#endif
+
+/// Custom attribute key for marking folded content
+public extension NSAttributedString.Key {
+    static let foldedContent = NSAttributedString.Key("KeystoneFoldedContent")
+    static let foldedRegionId = NSAttributedString.Key("KeystoneFoldedRegionId")
+}
 
 /// Represents a foldable region in the code.
 public struct FoldableRegion: Identifiable, Equatable, Sendable {
@@ -14,6 +26,10 @@ public struct FoldableRegion: Identifiable, Equatable, Sendable {
     public let startLine: Int
     /// The ending line number (1-based).
     public let endLine: Int
+    /// The character offset where the region starts.
+    public let startOffset: Int
+    /// The character offset where the region ends (exclusive).
+    public let endOffset: Int
     /// The type of foldable region.
     public let type: FoldType
     /// Whether this region is currently folded.
@@ -25,6 +41,8 @@ public struct FoldableRegion: Identifiable, Equatable, Sendable {
         id: UUID = UUID(),
         startLine: Int,
         endLine: Int,
+        startOffset: Int = 0,
+        endOffset: Int = 0,
         type: FoldType,
         isFolded: Bool = false,
         preview: String = "..."
@@ -32,6 +50,8 @@ public struct FoldableRegion: Identifiable, Equatable, Sendable {
         self.id = id
         self.startLine = startLine
         self.endLine = endLine
+        self.startOffset = startOffset
+        self.endOffset = endOffset
         self.type = type
         self.isFolded = isFolded
         self.preview = preview
@@ -40,6 +60,12 @@ public struct FoldableRegion: Identifiable, Equatable, Sendable {
     /// The number of lines this region spans.
     public var lineCount: Int {
         endLine - startLine + 1
+    }
+
+    /// The character range to hide when folded (from end of first line to end of region)
+    public var hiddenRange: NSRange {
+        // We hide from after the first line's newline to the end of the region
+        NSRange(location: startOffset, length: endOffset - startOffset)
     }
 }
 
@@ -65,95 +91,137 @@ public class CodeFoldingManager: ObservableObject {
     /// Currently folded region IDs.
     @Published public private(set) var foldedRegionIds: Set<UUID> = []
 
+    /// Whether folding is enabled (tied to showLineNumbers).
+    @Published public var isEnabled: Bool = true
+
+    /// Cache of line offsets for fast lookup.
+    private var lineOffsets: [Int] = []
+
+    /// The last analyzed text (to avoid re-analyzing unchanged text).
+    private var lastAnalyzedText: String = ""
+
     public init() {}
 
     /// Analyzes the text and detects foldable regions.
     /// - Parameter text: The source code to analyze.
     public func analyze(_ text: String) {
+        // Skip if text hasn't changed
+        guard text != lastAnalyzedText else { return }
+        lastAnalyzedText = text
+
         var newRegions: [FoldableRegion] = []
         let lines = text.components(separatedBy: .newlines)
 
-        // Track bracket pairs for folding
-        var braceStack: [(line: Int, column: Int)] = []
-        var bracketStack: [(line: Int, column: Int)] = []
-        var parenStack: [(line: Int, column: Int)] = []
+        // Build line offset cache for fast offset lookups
+        buildLineOffsets(from: text)
+
+        // Track bracket pairs for folding with offsets
+        var braceStack: [(line: Int, column: Int, offset: Int)] = []
+        var bracketStack: [(line: Int, column: Int, offset: Int)] = []
+        var parenStack: [(line: Int, column: Int, offset: Int)] = []
 
         // Track multi-line comments
-        var commentStart: Int?
+        var commentStart: (line: Int, offset: Int)?
+
+        var currentOffset = 0
 
         for (lineIndex, line) in lines.enumerated() {
             let lineNumber = lineIndex + 1
+            let lineStartOffset = currentOffset
 
             // Check for multi-line comment start/end
             if line.contains("/*") && !line.contains("*/") {
-                commentStart = lineNumber
+                if let range = line.range(of: "/*") {
+                    let commentOffset = lineStartOffset + line.distance(from: line.startIndex, to: range.lowerBound)
+                    commentStart = (line: lineNumber, offset: commentOffset)
+                }
             } else if let start = commentStart, line.contains("*/") {
-                let preview = extractPreview(from: lines, startLine: start - 1)
-                newRegions.append(FoldableRegion(
-                    startLine: start,
-                    endLine: lineNumber,
-                    type: .comment,
-                    preview: preview
-                ))
+                if let range = line.range(of: "*/") {
+                    let endOffset = lineStartOffset + line.distance(from: line.startIndex, to: range.upperBound)
+                    let preview = extractPreview(from: lines, startLine: start.line - 1)
+                    newRegions.append(FoldableRegion(
+                        startLine: start.line,
+                        endLine: lineNumber,
+                        startOffset: start.offset,
+                        endOffset: endOffset,
+                        type: .comment,
+                        preview: preview
+                    ))
+                }
                 commentStart = nil
             }
 
             // Check for region markers
             if line.contains("// MARK:") || line.contains("#pragma mark") || line.contains("#region") {
                 // Find the next marker or end of file
-                for nextLine in (lineIndex + 1)..<lines.count {
-                    let nextContent = lines[nextLine]
+                var searchOffset = currentOffset + line.count + 1 // +1 for newline
+                for nextLineIndex in (lineIndex + 1)..<lines.count {
+                    let nextContent = lines[nextLineIndex]
                     if nextContent.contains("// MARK:") || nextContent.contains("#pragma mark") ||
                        nextContent.contains("#region") || nextContent.contains("#endregion") {
-                        if nextLine > lineIndex + 1 {
+                        if nextLineIndex > lineIndex + 1 {
                             let preview = extractPreview(from: lines, startLine: lineIndex)
                             newRegions.append(FoldableRegion(
                                 startLine: lineNumber,
-                                endLine: nextLine,
+                                endLine: nextLineIndex,
+                                startOffset: lineStartOffset,
+                                endOffset: searchOffset,
                                 type: .region,
                                 preview: preview
                             ))
                         }
                         break
                     }
+                    searchOffset += nextContent.count + 1
                 }
             }
 
-            // Track braces
+            // Track braces with offsets
             for (charIndex, char) in line.enumerated() {
+                let charOffset = lineStartOffset + charIndex
                 switch char {
                 case "{":
-                    braceStack.append((line: lineNumber, column: charIndex))
+                    braceStack.append((line: lineNumber, column: charIndex, offset: charOffset))
                 case "}":
                     if let start = braceStack.popLast(), start.line < lineNumber {
                         let preview = extractPreview(from: lines, startLine: start.line - 1)
+                        // Find end of current line for the hidden range
+                        let lineEndOffset = lineStartOffset + line.count
                         newRegions.append(FoldableRegion(
                             startLine: start.line,
                             endLine: lineNumber,
+                            startOffset: getEndOfLine(start.line),
+                            endOffset: lineEndOffset,
                             type: .braces,
                             preview: preview
                         ))
                     }
                 case "[":
-                    bracketStack.append((line: lineNumber, column: charIndex))
+                    bracketStack.append((line: lineNumber, column: charIndex, offset: charOffset))
                 case "]":
                     if let start = bracketStack.popLast(), start.line < lineNumber {
                         let preview = extractPreview(from: lines, startLine: start.line - 1)
+                        let lineEndOffset = lineStartOffset + line.count
                         newRegions.append(FoldableRegion(
                             startLine: start.line,
                             endLine: lineNumber,
+                            startOffset: getEndOfLine(start.line),
+                            endOffset: lineEndOffset,
                             type: .brackets,
                             preview: preview
                         ))
                     }
                 case "(":
-                    parenStack.append((line: lineNumber, column: charIndex))
+                    parenStack.append((line: lineNumber, column: charIndex, offset: charOffset))
                 case ")":
                     if let start = parenStack.popLast(), start.line < lineNumber {
                         let preview = extractPreview(from: lines, startLine: start.line - 1)
+                        let lineEndOffset = lineStartOffset + line.count
                         newRegions.append(FoldableRegion(
                             startLine: start.line,
                             endLine: lineNumber,
+                            startOffset: getEndOfLine(start.line),
+                            endOffset: lineEndOffset,
                             type: .parentheses,
                             preview: preview
                         ))
@@ -162,6 +230,8 @@ public class CodeFoldingManager: ObservableObject {
                     break
                 }
             }
+
+            currentOffset += line.count + 1 // +1 for newline
         }
 
         // Sort by start line and filter out small regions
@@ -169,11 +239,55 @@ public class CodeFoldingManager: ObservableObject {
             .filter { $0.lineCount >= 2 }
             .sorted { $0.startLine < $1.startLine }
 
-        // Preserve fold state for existing regions
+        // Preserve fold state for existing regions with same start/end lines
         let oldFoldedIds = foldedRegionIds
-        foldedRegionIds = Set(regions.filter { region in
-            oldFoldedIds.contains(region.id)
-        }.map(\.id))
+        var newFoldedIds = Set<UUID>()
+
+        for region in regions {
+            // Find matching old region by line numbers
+            if let oldRegion = findPreviousRegion(startLine: region.startLine, endLine: region.endLine),
+               oldFoldedIds.contains(oldRegion.id) {
+                newFoldedIds.insert(region.id)
+            }
+        }
+        foldedRegionIds = newFoldedIds
+    }
+
+    /// Finds a region from the previous analysis with matching line numbers.
+    private func findPreviousRegion(startLine: Int, endLine: Int) -> FoldableRegion? {
+        regions.first { $0.startLine == startLine && $0.endLine == endLine }
+    }
+
+    /// Builds the line offset cache.
+    private func buildLineOffsets(from text: String) {
+        lineOffsets = [0] // Line 1 starts at offset 0
+        var offset = 0
+        for char in text {
+            offset += 1
+            if char == "\n" {
+                lineOffsets.append(offset)
+            }
+        }
+    }
+
+    /// Gets the offset at the end of a line (before the newline).
+    private func getEndOfLine(_ lineNumber: Int) -> Int {
+        let lineIndex = lineNumber - 1
+        guard lineIndex >= 0 && lineIndex < lineOffsets.count else { return 0 }
+
+        let lineStart = lineOffsets[lineIndex]
+        if lineIndex + 1 < lineOffsets.count {
+            return lineOffsets[lineIndex + 1] - 1 // Before the newline
+        } else {
+            return lastAnalyzedText.count
+        }
+    }
+
+    /// Gets the offset at the start of a line.
+    public func getLineStartOffset(_ lineNumber: Int) -> Int {
+        let lineIndex = lineNumber - 1
+        guard lineIndex >= 0 && lineIndex < lineOffsets.count else { return 0 }
+        return lineOffsets[lineIndex]
     }
 
     private func extractPreview(from lines: [String], startLine: Int) -> String {
@@ -196,6 +310,18 @@ public class CodeFoldingManager: ObservableObject {
         }
     }
 
+    /// Folds a specific region.
+    /// - Parameter region: The region to fold.
+    public func fold(_ region: FoldableRegion) {
+        foldedRegionIds.insert(region.id)
+    }
+
+    /// Unfolds a specific region.
+    /// - Parameter region: The region to unfold.
+    public func unfold(_ region: FoldableRegion) {
+        foldedRegionIds.remove(region.id)
+    }
+
     /// Folds all regions.
     public func foldAll() {
         foldedRegionIds = Set(regions.map(\.id))
@@ -210,6 +336,7 @@ public class CodeFoldingManager: ObservableObject {
     /// - Parameter lineNumber: The 1-based line number.
     /// - Returns: True if the line is hidden.
     public func isLineHidden(_ lineNumber: Int) -> Bool {
+        guard isEnabled else { return false }
         for region in regions {
             if foldedRegionIds.contains(region.id) &&
                lineNumber > region.startLine && lineNumber <= region.endLine {
@@ -219,18 +346,81 @@ public class CodeFoldingManager: ObservableObject {
         return false
     }
 
+    /// Checks if a character offset is inside a folded region.
+    /// - Parameter offset: The character offset to check.
+    /// - Returns: True if the offset is inside a folded (hidden) region.
+    public func isOffsetHidden(_ offset: Int) -> Bool {
+        guard isEnabled else { return false }
+        for region in regions {
+            if foldedRegionIds.contains(region.id) &&
+               offset > region.startOffset && offset <= region.endOffset {
+                return true
+            }
+        }
+        return false
+    }
+
+    /// Gets the folded region containing the given offset, if any.
+    /// - Parameter offset: The character offset to check.
+    /// - Returns: The folded region containing this offset, or nil.
+    public func foldedRegion(containingOffset offset: Int) -> FoldableRegion? {
+        guard isEnabled else { return nil }
+        for region in regions {
+            if foldedRegionIds.contains(region.id) &&
+               offset >= region.startOffset && offset <= region.endOffset {
+                return region
+            }
+        }
+        return nil
+    }
+
+    /// Unfolds any regions that contain the given offset.
+    /// Useful for auto-unfolding when navigating to a search match.
+    /// - Parameter offset: The character offset to unfold around.
+    /// - Returns: True if any regions were unfolded.
+    @discardableResult
+    public func unfoldRegions(containingOffset offset: Int) -> Bool {
+        var unfolded = false
+        for region in regions {
+            if foldedRegionIds.contains(region.id) &&
+               offset >= region.startOffset && offset <= region.endOffset {
+                foldedRegionIds.remove(region.id)
+                unfolded = true
+            }
+        }
+        return unfolded
+    }
+
+    /// Unfolds any regions that contain the given line.
+    /// - Parameter lineNumber: The 1-based line number.
+    /// - Returns: True if any regions were unfolded.
+    @discardableResult
+    public func unfoldRegions(containingLine lineNumber: Int) -> Bool {
+        var unfolded = false
+        for region in regions {
+            if foldedRegionIds.contains(region.id) &&
+               lineNumber >= region.startLine && lineNumber <= region.endLine {
+                foldedRegionIds.remove(region.id)
+                unfolded = true
+            }
+        }
+        return unfolded
+    }
+
     /// Gets the region at a specific line, if any.
     /// - Parameter lineNumber: The 1-based line number.
     /// - Returns: The foldable region starting at this line, if any.
     public func region(atLine lineNumber: Int) -> FoldableRegion? {
-        regions.first { $0.startLine == lineNumber }
+        guard isEnabled else { return nil }
+        return regions.first { $0.startLine == lineNumber }
     }
 
     /// Checks if a line has a foldable region starting.
     /// - Parameter lineNumber: The 1-based line number.
     /// - Returns: True if a foldable region starts at this line.
     public func hasFoldableRegion(atLine lineNumber: Int) -> Bool {
-        regions.contains { $0.startLine == lineNumber }
+        guard isEnabled else { return false }
+        return regions.contains { $0.startLine == lineNumber }
     }
 
     /// Checks if a region is currently folded.
@@ -238,5 +428,52 @@ public class CodeFoldingManager: ObservableObject {
     /// - Returns: True if the region is folded.
     public func isFolded(_ region: FoldableRegion) -> Bool {
         foldedRegionIds.contains(region.id)
+    }
+
+    /// Gets all currently folded regions sorted by start offset.
+    public var foldedRegions: [FoldableRegion] {
+        regions.filter { foldedRegionIds.contains($0.id) }
+            .sorted { $0.startOffset < $1.startOffset }
+    }
+
+    /// Calculates the character range that should be hidden for folded regions.
+    /// Returns ranges sorted by start offset, with overlapping ranges merged.
+    public var hiddenCharacterRanges: [NSRange] {
+        guard isEnabled else { return [] }
+
+        var ranges: [NSRange] = []
+        for region in foldedRegions {
+            // Hide from after the first line to the end of the region
+            let range = region.hiddenRange
+            if range.length > 0 {
+                ranges.append(range)
+            }
+        }
+
+        // Merge overlapping ranges
+        return mergeRanges(ranges)
+    }
+
+    /// Merges overlapping or adjacent ranges.
+    private func mergeRanges(_ ranges: [NSRange]) -> [NSRange] {
+        guard !ranges.isEmpty else { return [] }
+
+        let sorted = ranges.sorted { $0.location < $1.location }
+        var merged: [NSRange] = []
+        var current = sorted[0]
+
+        for range in sorted.dropFirst() {
+            if range.location <= current.location + current.length {
+                // Overlapping or adjacent - extend current
+                let newEnd = max(current.location + current.length, range.location + range.length)
+                current = NSRange(location: current.location, length: newEnd - current.location)
+            } else {
+                merged.append(current)
+                current = range
+            }
+        }
+        merged.append(current)
+
+        return merged
     }
 }

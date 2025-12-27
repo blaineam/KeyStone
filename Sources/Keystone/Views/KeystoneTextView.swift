@@ -2080,6 +2080,13 @@ public struct KeystoneTextView: NSViewRepresentable {
             applyViewportSyntaxHighlightingMac(to: containerView, text: text, font: font, highlighter: highlighter)
         }
 
+        // Analyze text for foldable regions (only if text changed and folding is enabled)
+        if (textChanged || needsHighlight) && containerView.foldingManager.isEnabled {
+            containerView.foldingManager.analyze(text)
+            // Apply folding styles after analysis
+            containerView.applyFolding()
+        }
+
         // Clear previous bracket highlights
         if let prevMatch = context.coordinator.previousBracketMatch,
            let textStorage = containerView.textView.textStorage {
@@ -2130,6 +2137,15 @@ public struct KeystoneTextView: NSViewRepresentable {
             let newLocation = min(cursorPosition.offset, textLength)
             let newLength = min(cursorPosition.selectionLength, textLength - newLocation)
             let newRange = NSRange(location: newLocation, length: newLength)
+
+            // Auto-unfold any regions containing the target position (for search navigation)
+            if containerView.foldingManager.isEnabled {
+                if containerView.foldingManager.unfoldRegions(containingOffset: newLocation) {
+                    // Re-apply folding if we unfolded something
+                    containerView.applyFolding()
+                    containerView.updateLineNumbers()
+                }
+            }
 
             containerView.textView.setSelectedRange(newRange)
 
@@ -2701,8 +2717,144 @@ public class KeystoneTextContainerViewMac: NSView {
     private func handleFoldToggle(_ region: FoldableRegion) {
         foldingManager.toggleFold(region)
         onFoldToggle?(region)
+        applyFolding()
+        updateLineNumbers()
         lineNumberView.needsDisplay = true
         textView.needsDisplay = true
+    }
+
+    /// Applies folding styles to hide folded content using paragraph styles.
+    /// This makes folded lines have zero height so they don't take up space.
+    public func applyFolding() {
+        guard let textStorage = textView.textStorage else { return }
+        guard foldingManager.isEnabled else {
+            // Clear any folding styles when disabled
+            clearFoldingStyles()
+            return
+        }
+
+        let text = textStorage.string
+        let fullRange = NSRange(location: 0, length: textStorage.length)
+
+        // First, clear previous folding styles
+        textStorage.beginEditing()
+
+        // Reset paragraph styles for all text
+        let normalParagraph = NSMutableParagraphStyle()
+        normalParagraph.minimumLineHeight = 0
+        normalParagraph.maximumLineHeight = .greatestFiniteMagnitude
+        textStorage.removeAttribute(.foldedContent, range: fullRange)
+
+        // Apply folding to each folded region
+        for region in foldingManager.foldedRegions {
+            // Calculate the range to hide (from end of first line to end of region)
+            // We hide lines 2 through endLine of the region
+            let firstLineEnd = findEndOfLine(region.startLine, in: text)
+            let lastLineEnd = findEndOfLine(region.endLine, in: text)
+
+            if firstLineEnd < lastLineEnd && firstLineEnd < text.count {
+                // Range to hide: from newline after first line to end of last line
+                let hideStart = firstLineEnd
+                let hideEnd = min(lastLineEnd, text.count)
+                let hideRange = NSRange(location: hideStart, length: hideEnd - hideStart)
+
+                if hideRange.location + hideRange.length <= textStorage.length {
+                    // Create a paragraph style that collapses lines
+                    let foldedParagraph = NSMutableParagraphStyle()
+                    foldedParagraph.minimumLineHeight = 0.001
+                    foldedParagraph.maximumLineHeight = 0.001
+                    foldedParagraph.lineSpacing = 0
+                    foldedParagraph.paragraphSpacing = 0
+                    foldedParagraph.paragraphSpacingBefore = 0
+
+                    // Mark as folded and make invisible
+                    textStorage.addAttributes([
+                        .foldedContent: true,
+                        .foldedRegionId: region.id,
+                        .paragraphStyle: foldedParagraph,
+                        .foregroundColor: NSColor.clear,
+                        .font: NSFont.systemFont(ofSize: 0.001)
+                    ], range: hideRange)
+                }
+            }
+
+            // Add ellipsis indicator at end of first line (before the hidden content)
+            addFoldIndicator(for: region, in: textStorage, text: text)
+        }
+
+        textStorage.endEditing()
+
+        // Force layout update
+        textView.layoutManager?.invalidateLayout(forCharacterRange: fullRange, actualCharacterRange: nil)
+    }
+
+    /// Clears all folding styles from the text storage.
+    private func clearFoldingStyles() {
+        guard let textStorage = textView.textStorage else { return }
+        let fullRange = NSRange(location: 0, length: textStorage.length)
+
+        textStorage.beginEditing()
+        textStorage.removeAttribute(.foldedContent, range: fullRange)
+        textStorage.removeAttribute(.foldedRegionId, range: fullRange)
+
+        // Reset font and color for any hidden text
+        let font = NSFont.monospacedSystemFont(ofSize: configuration.fontSize, weight: .regular)
+        let attributes = textStorage.attributes(at: 0, effectiveRange: nil)
+        if let existingColor = attributes[.foregroundColor] as? NSColor, existingColor == .clear {
+            textStorage.addAttribute(.foregroundColor, value: NSColor(configuration.theme.text), range: fullRange)
+        }
+
+        // Reset paragraph styles
+        let normalParagraph = NSMutableParagraphStyle()
+        textStorage.addAttribute(.paragraphStyle, value: normalParagraph, range: fullRange)
+        textStorage.addAttribute(.font, value: font, range: fullRange)
+
+        textStorage.endEditing()
+    }
+
+    /// Adds a visual fold indicator (ellipsis) at the end of a folded region's first line.
+    private func addFoldIndicator(for region: FoldableRegion, in textStorage: NSTextStorage, text: String) {
+        // Find position just before the newline at end of first line
+        let firstLineEnd = findEndOfLine(region.startLine, in: text)
+        if firstLineEnd > 0 && firstLineEnd <= text.count {
+            // We'll draw the indicator in the gutter and add tooltip
+            // The actual "..." is shown in the line number view
+        }
+    }
+
+    /// Finds the character offset at the end of a line (at the newline character).
+    private func findEndOfLine(_ lineNumber: Int, in text: String) -> Int {
+        var currentLine = 1
+        var offset = 0
+
+        for char in text {
+            if currentLine == lineNumber && char == "\n" {
+                return offset
+            }
+            if char == "\n" {
+                currentLine += 1
+            }
+            offset += 1
+        }
+
+        // If we reach here, return end of text (for last line without newline)
+        if currentLine == lineNumber {
+            return offset
+        }
+        return 0
+    }
+
+    /// Checks if editing should be blocked at the given range (folded content).
+    public func shouldBlockEditing(at range: NSRange) -> Bool {
+        guard foldingManager.isEnabled else { return false }
+
+        // Check if any part of the range is in a folded region
+        for offset in range.location..<(range.location + max(1, range.length)) {
+            if foldingManager.isOffsetHidden(offset) {
+                return true
+            }
+        }
+        return false
     }
 
     private func setupLayout() {
@@ -2781,6 +2933,15 @@ public class KeystoneTextContainerViewMac: NSView {
             updateLayoutConstraints()
             needsLayout = true
             layoutSubtreeIfNeeded()
+
+            // Sync code folding with line numbers visibility
+            // Code folding requires line numbers to be visible for the fold toggles
+            foldingManager.isEnabled = config.showLineNumbers
+            if !config.showLineNumbers {
+                // Unfold all when line numbers are hidden
+                foldingManager.unfoldAll()
+                clearFoldingStyles()
+            }
         }
 
         // Update tracking variables
