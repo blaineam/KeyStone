@@ -254,12 +254,31 @@ public struct KeystoneTextView: UIViewRepresentable {
             applyViewportSyntaxHighlighting(to: containerView, text: text, font: font, highlighter: highlighter)
         }
 
-        // Handle cursor position changes for search navigation or tail follow - scroll to cursor
-        // ONLY scroll when explicitly requested (search, go-to-line, tail follow sets shouldScrollToCursor)
-        // Skip if user is editing - the cursor is already where the user put it
-        if !isUserCurrentlyEditing {
+        // Handle cursor position changes for search navigation or tail follow
+        // When scrollToCursor is explicitly true, ALWAYS update cursor and scroll regardless of editing state
+        // This ensures search navigation, go-to-line, and tail follow work correctly
+        if scrollToCursor {
+            let newLocation = min(cursorPosition.offset, bindingLength)
+            let newLength = min(cursorPosition.selectionLength, max(0, bindingLength - newLocation))
+            let newRange = NSRange(location: newLocation, length: newLength)
+
+            // Set flag to prevent textViewDidChangeSelection from updating cursor position back
+            context.coordinator.isSettingCursorProgrammatically = true
+            containerView.textView.selectedRange = newRange
+
+            // Scroll to the cursor position
+            UIView.performWithoutAnimation {
+                containerView.textView.scrollRangeToVisible(newRange)
+            }
+
+            // Reset the binding after scrolling once
+            DispatchQueue.main.async {
+                self.scrollToCursor = false
+                context.coordinator.isSettingCursorProgrammatically = false
+            }
+        } else if !isUserCurrentlyEditing {
+            // Normal cursor sync when not explicitly scrolling - only update position if it changed
             let currentRange = containerView.textView.selectedRange
-            // Update if position or selection differs from current
             let positionDiffers = currentRange.location != cursorPosition.offset
             let selectionDiffers = currentRange.length != cursorPosition.selectionLength
 
@@ -268,23 +287,9 @@ public struct KeystoneTextView: UIViewRepresentable {
                 let newLength = min(cursorPosition.selectionLength, max(0, bindingLength - newLocation))
                 let newRange = NSRange(location: newLocation, length: newLength)
 
-                // Set flag to prevent textViewDidChangeSelection from updating cursor position back
                 context.coordinator.isSettingCursorProgrammatically = true
                 containerView.textView.selectedRange = newRange
 
-                // ONLY scroll if explicitly requested (e.g., search navigation, go-to-line, tail follow)
-                // This allows users to freely scroll and move cursor without the view snapping back
-                if scrollToCursor {
-                    UIView.performWithoutAnimation {
-                        containerView.textView.scrollRangeToVisible(newRange)
-                    }
-                    // Reset the binding after scrolling once
-                    DispatchQueue.main.async {
-                        self.scrollToCursor = false
-                    }
-                }
-
-                // Reset flag on next run loop
                 DispatchQueue.main.async {
                     context.coordinator.isSettingCursorProgrammatically = false
                 }
@@ -1042,6 +1047,8 @@ public class KeystoneTextContainerView: UIView {
 
     /// Tracks the previous line range for clearing highlights
     private var previousLineRange: NSRange?
+    /// Tracks the previous line number to avoid redundant updates
+    private var previousLineNumber: Int = 0
 
     func updateCurrentLineHighlight(_ cursorPosition: Int, highlightColor: UIColor?) {
         let text = textView.text ?? ""
@@ -1067,13 +1074,22 @@ public class KeystoneTextContainerView: UIView {
             }
         }
 
-        // Update line number gutter
-        lineNumberView.currentLine = currentLine
-        lineNumberView.setNeedsDisplay()
+        let currentRange = NSRange(location: lineStart, length: lineEnd - lineStart)
+
+        // Early exit if nothing changed - prevents flickering
+        if currentRange == previousLineRange && currentLine == previousLineNumber {
+            return
+        }
+
+        // Update line number gutter only if line changed
+        if currentLine != previousLineNumber {
+            lineNumberView.currentLine = currentLine
+            lineNumberView.setNeedsDisplay()
+            previousLineNumber = currentLine
+        }
 
         // Apply line highlight in text view if color provided
         let textStorage = textView.textStorage
-        let currentRange = NSRange(location: lineStart, length: lineEnd - lineStart)
 
         // Clear previous highlight if different line
         if let prevRange = previousLineRange, prevRange != currentRange {
@@ -1507,9 +1523,9 @@ public struct KeystoneTextView: NSViewRepresentable {
             )
         }
 
-        // Handle cursor position changes for search navigation - scroll to cursor
-        let currentRange = containerView.textView.selectedRange()
-        if currentRange.location != cursorPosition.offset || currentRange.length != cursorPosition.selectionLength {
+        // Handle cursor position changes for search navigation or tail follow
+        // When scrollToCursor is explicitly true, ALWAYS update cursor and scroll
+        if scrollToCursor {
             let newLocation = min(cursorPosition.offset, text.count)
             let newLength = min(cursorPosition.selectionLength, text.count - newLocation)
             let newRange = NSRange(location: newLocation, length: newLength)
@@ -1519,6 +1535,20 @@ public struct KeystoneTextView: NSViewRepresentable {
             NSAnimationContext.runAnimationGroup { context in
                 context.duration = 0
                 containerView.textView.scrollRangeToVisible(newRange)
+            }
+
+            // Reset the binding after scrolling once
+            DispatchQueue.main.async {
+                self.scrollToCursor = false
+            }
+        } else {
+            // Normal cursor sync - only update position if it changed, don't scroll
+            let currentRange = containerView.textView.selectedRange()
+            if currentRange.location != cursorPosition.offset || currentRange.length != cursorPosition.selectionLength {
+                let newLocation = min(cursorPosition.offset, text.count)
+                let newLength = min(cursorPosition.selectionLength, text.count - newLocation)
+                let newRange = NSRange(location: newLocation, length: newLength)
+                containerView.textView.setSelectedRange(newRange)
             }
         }
 
@@ -2079,6 +2109,8 @@ public class KeystoneTextContainerViewMac: NSView {
 
     /// Tracks the previous line range for clearing highlights
     private var previousLineRange: NSRange?
+    /// Tracks the previous line number to avoid redundant updates
+    private var previousLineNumber: Int = 0
 
     func updateCurrentLineHighlight(_ cursorPosition: Int, highlightColor: NSColor?) {
         let text = textView.string
@@ -2104,13 +2136,22 @@ public class KeystoneTextContainerViewMac: NSView {
             }
         }
 
-        // Update line number gutter
-        lineNumberView.currentLine = currentLine
-        lineNumberView.needsDisplay = true
+        let currentRange = NSRange(location: lineStart, length: lineEnd - lineStart)
+
+        // Early exit if nothing changed - prevents flickering
+        if currentRange == previousLineRange && currentLine == previousLineNumber {
+            return
+        }
+
+        // Update line number gutter only if line changed
+        if currentLine != previousLineNumber {
+            lineNumberView.currentLine = currentLine
+            lineNumberView.needsDisplay = true
+            previousLineNumber = currentLine
+        }
 
         // Apply line highlight in text view if color provided
         guard let textStorage = textView.textStorage else { return }
-        let currentRange = NSRange(location: lineStart, length: lineEnd - lineStart)
 
         // Clear previous highlight if different line
         if let prevRange = previousLineRange, prevRange != currentRange {
