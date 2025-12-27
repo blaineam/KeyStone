@@ -11,143 +11,29 @@ import SwiftUI
 #if os(iOS)
 import UIKit
 
-// MARK: - Custom UITextView that controls scroll-to-cursor behavior
+// MARK: - Non-scrolling UITextView for embedding in UIScrollView
 
-/// Custom UITextView subclass that allows control over automatic scroll-to-cursor behavior.
-/// By default, UITextView always scrolls to keep the cursor visible, which interferes with
-/// user scrolling. This subclass only scrolls when explicitly requested.
+/// A UITextView with scrolling disabled, designed to be embedded in a parent UIScrollView.
+/// This approach gives us complete control over scrolling - UITextView can't scroll to cursor
+/// because its scrolling is disabled. The parent UIScrollView handles all scrolling.
 class KeystoneUITextView: UITextView {
-    /// When true, allows automatic scrolling. When false, prevents automatic scrolling.
-    var allowScrollToCursor = false
 
-    /// Internal flag to prevent recursion when we're modifying content offset ourselves
-    private var isRestoringPosition = false
-
-    /// The content offset to preserve after user scrolling ends
-    private var preservedContentOffset: CGPoint?
-
-    /// Timestamp when user scrolling ended - used to block post-scroll snapping
-    private var scrollEndTime: CFTimeInterval = 0
-
-    /// How long to protect the scroll position after user scrolling ends (in seconds)
-    private let scrollProtectionDuration: CFTimeInterval = 0.5
-
-    /// Called by coordinator when scroll dragging begins
-    func userScrollDidBegin() {
-        preservedContentOffset = nil
+    override init(frame: CGRect, textContainer: NSTextContainer?) {
+        super.init(frame: frame, textContainer: textContainer)
+        // Disable scrolling - parent UIScrollView will handle it
+        isScrollEnabled = false
     }
 
-    /// Called by coordinator when scroll deceleration ends
-    func userScrollDidEnd() {
-        preservedContentOffset = super.contentOffset
-        scrollEndTime = CACurrentMediaTime()
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        isScrollEnabled = false
     }
 
-    /// Whether we're within the protection window after scrolling ended
-    private var isWithinScrollProtection: Bool {
-        guard preservedContentOffset != nil else { return false }
-        return CACurrentMediaTime() - scrollEndTime < scrollProtectionDuration
-    }
-
-    /// Scrolls to the given range, bypassing the scroll prevention
-    func scrollToRange(_ range: NSRange) {
-        preservedContentOffset = nil  // Clear preserved offset when explicitly scrolling
-        allowScrollToCursor = true
-        super.scrollRangeToVisible(range)
-        allowScrollToCursor = false
-    }
-
-    override func scrollRangeToVisible(_ range: NSRange) {
-        guard allowScrollToCursor else { return }
-        super.scrollRangeToVisible(range)
-    }
-
-    override func scrollRectToVisible(_ rect: CGRect, animated: Bool) {
-        guard allowScrollToCursor else { return }
-        super.scrollRectToVisible(rect, animated: animated)
-    }
-
-    override func setContentOffset(_ contentOffset: CGPoint, animated: Bool) {
-        // Prevent recursion when restoring position
-        if isRestoringPosition {
-            super.setContentOffset(contentOffset, animated: animated)
-            return
-        }
-
-        // Always allow if scrolling is explicitly permitted
-        if allowScrollToCursor {
-            super.setContentOffset(contentOffset, animated: animated)
-            return
-        }
-
-        // Always allow user-initiated scrolls (when tracking or decelerating)
-        if isTracking || isDecelerating || isDragging {
-            super.setContentOffset(contentOffset, animated: animated)
-            return
-        }
-
-        // During protection window, restore to preserved position if something tries to scroll
-        if isWithinScrollProtection, let preserved = preservedContentOffset {
-            if contentOffset != preserved {
-                isRestoringPosition = true
-                super.setContentOffset(preserved, animated: false)
-                isRestoringPosition = false
-            }
-            return
-        }
-
-        // Block automatic scrolls - this is likely UITextView trying to scroll to cursor
-    }
-
-    // Also intercept the non-animated content offset changes
-    override var contentOffset: CGPoint {
-        get { return super.contentOffset }
-        set {
-            // Prevent recursion when restoring position
-            if isRestoringPosition {
-                super.contentOffset = newValue
-                return
-            }
-
-            // Always allow if scrolling is explicitly permitted
-            if allowScrollToCursor {
-                super.contentOffset = newValue
-                return
-            }
-
-            // Always allow user-initiated scrolls
-            if isTracking || isDecelerating || isDragging {
-                super.contentOffset = newValue
-                return
-            }
-
-            // During protection window, restore to preserved position if something tries to scroll
-            if isWithinScrollProtection, let preserved = preservedContentOffset {
-                if newValue != preserved {
-                    isRestoringPosition = true
-                    super.contentOffset = preserved
-                    isRestoringPosition = false
-                }
-                return
-            }
-
-            // Block automatic scrolls
-        }
-    }
-
-    // Override layoutSubviews to catch any layout-triggered scroll changes
-    override func layoutSubviews() {
-        let offsetBefore = super.contentOffset
-        super.layoutSubviews()
-
-        // If we're in protection window and layout changed the offset, restore it
-        if !isRestoringPosition && isWithinScrollProtection,
-           let preserved = preservedContentOffset,
-           super.contentOffset != preserved {
-            isRestoringPosition = true
-            super.contentOffset = preserved
-            isRestoringPosition = false
-        }
+    /// Calculate the size needed to fit all content
+    func sizeThatFitsContent() -> CGSize {
+        let fixedWidth = bounds.width
+        let newSize = sizeThatFits(CGSize(width: fixedWidth, height: CGFloat.greatestFiniteMagnitude))
+        return CGSize(width: fixedWidth, height: max(newSize.height, bounds.height))
     }
 }
 
@@ -262,7 +148,10 @@ public struct KeystoneTextView: UIViewRepresentable {
 
     public func makeUIView(context: Context) -> KeystoneTextContainerView {
         let containerView = KeystoneTextContainerView(configuration: configuration)
+        // Text view delegate for text editing callbacks
         containerView.textView.delegate = context.coordinator
+        // Scroll view delegate for scroll callbacks (scroll view handles all scrolling now)
+        containerView.scrollView.delegate = context.coordinator
         containerView.coordinator = context.coordinator
         context.coordinator.containerView = containerView
 
@@ -361,6 +250,9 @@ public struct KeystoneTextView: UIViewRepresentable {
                     needsLineNumberUpdate = true
                     context.coordinator.hasSetInitialText = true
 
+                    // Update scroll view content size after text change
+                    containerView.updateContentSize()
+
                     // Restore selection using O(1) length
                     let newLocation = min(selectedRange.location, bindingLength)
                     containerView.textView.selectedRange = NSRange(location: newLocation, length: 0)
@@ -374,6 +266,9 @@ public struct KeystoneTextView: UIViewRepresentable {
                     containerView.textView.text = text
                     needsHighlight = true
                     needsLineNumberUpdate = true
+
+                    // Update scroll view content size after text change
+                    containerView.updateContentSize()
 
                     let newLocation = min(selectedRange.location, bindingLength)
                     containerView.textView.selectedRange = NSRange(location: newLocation, length: 0)
@@ -421,9 +316,9 @@ public struct KeystoneTextView: UIViewRepresentable {
             context.coordinator.isSettingCursorProgrammatically = true
             containerView.textView.selectedRange = newRange
 
-            // Use the new scrollToRange method which properly bypasses scroll prevention
+            // Scroll the scroll view to make the cursor visible
             UIView.performWithoutAnimation {
-                containerView.textView.scrollToRange(newRange)
+                containerView.scrollToRange(newRange)
             }
 
             // Reset flag after a brief delay to ensure selection change notification has fired
@@ -662,7 +557,8 @@ public struct KeystoneTextView: UIViewRepresentable {
             // IMMEDIATELY mark that user is editing - prevents updateUIView from overwriting
             isUserEditing = true
 
-            // Update line numbers immediately (fast operation - just triggers redisplay)
+            // Update content size and line numbers immediately
+            containerView?.updateContentSize()
             containerView?.updateLineNumbersForVisibleArea()
 
             // Debounce the SwiftUI binding update to avoid triggering expensive updates on every keystroke
@@ -783,17 +679,12 @@ public struct KeystoneTextView: UIViewRepresentable {
         public func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
             isDragging = true
             isScrolling = true
-            // Tell text view user scrolling has begun
-            containerView?.textView.userScrollDidBegin()
         }
 
         public func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
             isDragging = false
             if !decelerate {
                 isScrolling = false
-                // No deceleration, scrolling ended here
-                containerView?.textView.userScrollDidEnd()
-                containerView?.syncLineNumberScroll()
             }
         }
 
@@ -802,17 +693,13 @@ public struct KeystoneTextView: UIViewRepresentable {
         }
 
         public func scrollViewDidScroll(_ scrollView: UIScrollView) {
-            // ONLY sync line numbers during scroll - no other state updates
+            // Sync line numbers during scroll
             containerView?.syncLineNumberScroll()
         }
 
         public func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
             isDecelerating = false
             isScrolling = false
-            // Tell text view user scrolling has ended - blocks post-scroll snapping
-            containerView?.textView.userScrollDidEnd()
-            // Force sync line numbers to final position
-            containerView?.syncLineNumberScroll()
             // Trigger highlighting when scroll deceleration ends
             scrollEndWorkItem?.cancel()
             triggerViewportHighlighting()
@@ -820,7 +707,6 @@ public struct KeystoneTextView: UIViewRepresentable {
 
         public func scrollViewDidEndScrollingAnimation(_ scrollView: UIScrollView) {
             isScrolling = false
-            containerView?.syncLineNumberScroll()
             triggerViewportHighlighting()
         }
 
@@ -911,9 +797,17 @@ public struct KeystoneTextView: UIViewRepresentable {
 }
 
 /// Container view that holds text view and line number gutter
+/// Container view that uses UIScrollView for scrolling (like Runestone).
+/// The UITextView has scrolling disabled - the parent UIScrollView handles all scrolling.
+/// This completely eliminates UITextView's automatic scroll-to-cursor behavior.
 public class KeystoneTextContainerView: UIView {
+    /// The scroll view that handles all scrolling
+    let scrollView: UIScrollView
+    /// The text view (with scrolling disabled) for text editing
     let textView: KeystoneUITextView
+    /// The line number gutter
     let lineNumberView: LineNumberGutterView
+    /// Coordinator reference for delegate callbacks
     var coordinator: KeystoneTextView.Coordinator?
     private var configuration: KeystoneConfiguration
 
@@ -928,6 +822,9 @@ public class KeystoneTextContainerView: UIView {
 
     // Active layout constraints (for updating when showLineNumbers changes)
     private var activeConstraints: [NSLayoutConstraint] = []
+
+    // Text view height constraint - updated when content changes
+    private var textViewHeightConstraint: NSLayoutConstraint?
 
     // MARK: - Undo/Redo
 
@@ -964,6 +861,9 @@ public class KeystoneTextContainerView: UIView {
     init(configuration: KeystoneConfiguration) {
         self.configuration = configuration
 
+        // Create scroll view - this handles ALL scrolling
+        self.scrollView = UIScrollView()
+
         // Create text view with custom layout manager for invisible characters
         let textStorage = NSTextStorage()
         let textContainer = NSTextContainer(size: CGSize(width: 0, height: CGFloat.greatestFiniteMagnitude))
@@ -972,11 +872,13 @@ public class KeystoneTextContainerView: UIView {
         invisibleLayoutManager.addTextContainer(textContainer)
         textStorage.addLayoutManager(invisibleLayoutManager)
 
+        // UITextView with scrolling disabled - embedded in scroll view
         self.textView = KeystoneUITextView(frame: .zero, textContainer: textContainer)
         self.lineNumberView = LineNumberGutterView()
 
         super.init(frame: .zero)
 
+        setupScrollView()
         setupTextView()
         setupLineNumberView()
         setupLayout()
@@ -984,6 +886,14 @@ public class KeystoneTextContainerView: UIView {
 
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
+    }
+
+    private func setupScrollView() {
+        scrollView.alwaysBounceVertical = true
+        scrollView.keyboardDismissMode = .interactive
+        scrollView.showsVerticalScrollIndicator = true
+        scrollView.showsHorizontalScrollIndicator = false
+        addSubview(scrollView)
     }
 
     private func setupTextView() {
@@ -996,11 +906,9 @@ public class KeystoneTextContainerView: UIView {
         textView.smartInsertDeleteType = .no
         textView.backgroundColor = .clear
         textView.textContainerInset = UIEdgeInsets(top: 8, left: 8, bottom: 8, right: 8)
-        textView.isScrollEnabled = true
-        textView.alwaysBounceVertical = true
-        textView.keyboardDismissMode = .interactive
+        // Scrolling is disabled in KeystoneUITextView init - scroll view handles it
 
-        addSubview(textView)
+        scrollView.addSubview(textView)
     }
 
     private func setupLineNumberView() {
@@ -1021,6 +929,7 @@ public class KeystoneTextContainerView: UIView {
     }
 
     private func setupLayout() {
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
         textView.translatesAutoresizingMaskIntoConstraints = false
         lineNumberView.translatesAutoresizingMaskIntoConstraints = false
         updateLayoutConstraints()
@@ -1033,25 +942,74 @@ public class KeystoneTextContainerView: UIView {
 
         if configuration.showLineNumbers {
             activeConstraints = [
+                // Line number gutter - fixed to left side of container
                 lineNumberView.leadingAnchor.constraint(equalTo: leadingAnchor),
                 lineNumberView.topAnchor.constraint(equalTo: topAnchor),
                 lineNumberView.bottomAnchor.constraint(equalTo: bottomAnchor),
                 lineNumberView.widthAnchor.constraint(equalToConstant: gutterWidth),
 
-                textView.leadingAnchor.constraint(equalTo: lineNumberView.trailingAnchor),
-                textView.topAnchor.constraint(equalTo: topAnchor),
-                textView.trailingAnchor.constraint(equalTo: trailingAnchor),
-                textView.bottomAnchor.constraint(equalTo: bottomAnchor),
+                // Scroll view - fills remaining space
+                scrollView.leadingAnchor.constraint(equalTo: lineNumberView.trailingAnchor),
+                scrollView.topAnchor.constraint(equalTo: topAnchor),
+                scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
+                scrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
+
+                // Text view inside scroll view - fills width, height determined by content
+                textView.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor),
+                textView.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor),
+                textView.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor),
+                textView.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor),
+                textView.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor),
             ]
         } else {
             activeConstraints = [
-                textView.leadingAnchor.constraint(equalTo: leadingAnchor),
-                textView.topAnchor.constraint(equalTo: topAnchor),
-                textView.trailingAnchor.constraint(equalTo: trailingAnchor),
-                textView.bottomAnchor.constraint(equalTo: bottomAnchor),
+                // Scroll view - fills entire container
+                scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
+                scrollView.topAnchor.constraint(equalTo: topAnchor),
+                scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
+                scrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
+
+                // Text view inside scroll view
+                textView.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor),
+                textView.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor),
+                textView.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor),
+                textView.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor),
+                textView.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor),
             ]
         }
         NSLayoutConstraint.activate(activeConstraints)
+    }
+
+    /// Updates the content size based on text view content
+    func updateContentSize() {
+        let contentHeight = textView.sizeThatFitsContent().height
+        // Ensure minimum height equals scroll view height for proper scrolling feel
+        let minHeight = max(contentHeight, scrollView.bounds.height)
+        scrollView.contentSize = CGSize(width: scrollView.bounds.width, height: minHeight)
+    }
+
+    /// Scrolls to make the given range visible
+    func scrollToRange(_ range: NSRange, animated: Bool = false) {
+        // Get the rect for the range from the text view's layout manager
+        guard let layoutManager = textView.layoutManager,
+              let textContainer = textView.textContainer else { return }
+
+        // Ensure layout is up to date
+        layoutManager.ensureLayout(for: textContainer)
+
+        // Get the glyph range and bounding rect
+        let glyphRange = layoutManager.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
+        var rect = layoutManager.boundingRect(forGlyphRange: glyphRange, in: textContainer)
+
+        // Adjust for text container inset
+        rect.origin.x += textView.textContainerInset.left
+        rect.origin.y += textView.textContainerInset.top
+
+        // Add some padding
+        rect = rect.insetBy(dx: 0, dy: -50)
+
+        // Scroll the scroll view to make the rect visible
+        scrollView.scrollRectToVisible(rect, animated: animated)
     }
 
     // Track last applied configuration to avoid redundant updates
@@ -1238,7 +1196,8 @@ public class KeystoneTextContainerView: UIView {
     }
 
     func syncLineNumberScroll() {
-        let newOffset = textView.contentOffset.y
+        // Use scroll view's content offset since it handles all scrolling
+        let newOffset = scrollView.contentOffset.y
         if lineNumberView.contentOffset != newOffset {
             lineNumberView.contentOffset = newOffset
             // Force immediate redraw for smooth scrolling
