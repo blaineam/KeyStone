@@ -21,25 +21,39 @@ class KeystoneUITextView: UITextView {
     var allowScrollToCursor = false
 
     /// Internal flag to prevent recursion when we're modifying content offset ourselves
-    private var isSettingContentOffsetInternally = false
+    private var isRestoringPosition = false
 
-    /// The last user-initiated scroll position
-    private var lastUserContentOffset: CGPoint = .zero
+    /// The content offset to preserve after user scrolling ends
+    private var preservedContentOffset: CGPoint?
 
-    /// Temporarily allows scrolling for the duration of the closure
-    func withScrollingAllowed(_ block: () -> Void) {
-        let wasAllowed = allowScrollToCursor
-        allowScrollToCursor = true
-        block()
-        allowScrollToCursor = wasAllowed
+    /// Timestamp when user scrolling ended - used to block post-scroll snapping
+    private var scrollEndTime: CFTimeInterval = 0
+
+    /// How long to protect the scroll position after user scrolling ends (in seconds)
+    private let scrollProtectionDuration: CFTimeInterval = 0.5
+
+    /// Called by coordinator when scroll dragging begins
+    func userScrollDidBegin() {
+        preservedContentOffset = nil
+    }
+
+    /// Called by coordinator when scroll deceleration ends
+    func userScrollDidEnd() {
+        preservedContentOffset = super.contentOffset
+        scrollEndTime = CACurrentMediaTime()
+    }
+
+    /// Whether we're within the protection window after scrolling ended
+    private var isWithinScrollProtection: Bool {
+        guard preservedContentOffset != nil else { return false }
+        return CACurrentMediaTime() - scrollEndTime < scrollProtectionDuration
     }
 
     /// Scrolls to the given range, bypassing the scroll prevention
     func scrollToRange(_ range: NSRange) {
+        preservedContentOffset = nil  // Clear preserved offset when explicitly scrolling
         allowScrollToCursor = true
-        isSettingContentOffsetInternally = true
         super.scrollRangeToVisible(range)
-        isSettingContentOffsetInternally = false
         allowScrollToCursor = false
     }
 
@@ -54,8 +68,8 @@ class KeystoneUITextView: UITextView {
     }
 
     override func setContentOffset(_ contentOffset: CGPoint, animated: Bool) {
-        // Allow internal programmatic scrolls
-        if isSettingContentOffsetInternally {
+        // Prevent recursion when restoring position
+        if isRestoringPosition {
             super.setContentOffset(contentOffset, animated: animated)
             return
         }
@@ -63,27 +77,34 @@ class KeystoneUITextView: UITextView {
         // Always allow if scrolling is explicitly permitted
         if allowScrollToCursor {
             super.setContentOffset(contentOffset, animated: animated)
-            lastUserContentOffset = contentOffset
             return
         }
 
         // Always allow user-initiated scrolls (when tracking or decelerating)
         if isTracking || isDecelerating || isDragging {
             super.setContentOffset(contentOffset, animated: animated)
-            lastUserContentOffset = contentOffset
+            return
+        }
+
+        // During protection window, restore to preserved position if something tries to scroll
+        if isWithinScrollProtection, let preserved = preservedContentOffset {
+            if contentOffset != preserved {
+                isRestoringPosition = true
+                super.setContentOffset(preserved, animated: false)
+                isRestoringPosition = false
+            }
             return
         }
 
         // Block automatic scrolls - this is likely UITextView trying to scroll to cursor
-        // Don't call super, effectively ignoring the scroll request
     }
 
     // Also intercept the non-animated content offset changes
     override var contentOffset: CGPoint {
         get { return super.contentOffset }
         set {
-            // Allow internal programmatic scrolls
-            if isSettingContentOffsetInternally {
+            // Prevent recursion when restoring position
+            if isRestoringPosition {
                 super.contentOffset = newValue
                 return
             }
@@ -91,18 +112,41 @@ class KeystoneUITextView: UITextView {
             // Always allow if scrolling is explicitly permitted
             if allowScrollToCursor {
                 super.contentOffset = newValue
-                lastUserContentOffset = newValue
                 return
             }
 
             // Always allow user-initiated scrolls
             if isTracking || isDecelerating || isDragging {
                 super.contentOffset = newValue
-                lastUserContentOffset = newValue
+                return
+            }
+
+            // During protection window, restore to preserved position if something tries to scroll
+            if isWithinScrollProtection, let preserved = preservedContentOffset {
+                if newValue != preserved {
+                    isRestoringPosition = true
+                    super.contentOffset = preserved
+                    isRestoringPosition = false
+                }
                 return
             }
 
             // Block automatic scrolls
+        }
+    }
+
+    // Override layoutSubviews to catch any layout-triggered scroll changes
+    override func layoutSubviews() {
+        let offsetBefore = super.contentOffset
+        super.layoutSubviews()
+
+        // If we're in protection window and layout changed the offset, restore it
+        if !isRestoringPosition && isWithinScrollProtection,
+           let preserved = preservedContentOffset,
+           super.contentOffset != preserved {
+            isRestoringPosition = true
+            super.contentOffset = preserved
+            isRestoringPosition = false
         }
     }
 }
@@ -739,12 +783,17 @@ public struct KeystoneTextView: UIViewRepresentable {
         public func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
             isDragging = true
             isScrolling = true
+            // Tell text view user scrolling has begun
+            containerView?.textView.userScrollDidBegin()
         }
 
         public func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
             isDragging = false
             if !decelerate {
                 isScrolling = false
+                // No deceleration, scrolling ended here
+                containerView?.textView.userScrollDidEnd()
+                containerView?.syncLineNumberScroll()
             }
         }
 
@@ -760,6 +809,10 @@ public struct KeystoneTextView: UIViewRepresentable {
         public func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
             isDecelerating = false
             isScrolling = false
+            // Tell text view user scrolling has ended - blocks post-scroll snapping
+            containerView?.textView.userScrollDidEnd()
+            // Force sync line numbers to final position
+            containerView?.syncLineNumberScroll()
             // Trigger highlighting when scroll deceleration ends
             scrollEndWorkItem?.cancel()
             triggerViewportHighlighting()
@@ -767,6 +820,7 @@ public struct KeystoneTextView: UIViewRepresentable {
 
         public func scrollViewDidEndScrollingAnimation(_ scrollView: UIScrollView) {
             isScrolling = false
+            containerView?.syncLineNumberScroll()
             triggerViewportHighlighting()
         }
 
