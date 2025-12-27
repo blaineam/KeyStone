@@ -2020,13 +2020,24 @@ public struct KeystoneTextView: NSViewRepresentable {
                     let lastCharRange = NSRange(location: max(0, textLength - 100), length: min(100, textLength))
                     let lastGlyphRange = layoutManager.glyphRange(forCharacterRange: lastCharRange, actualCharacterRange: nil)
                     layoutManager.ensureLayout(forGlyphRange: lastGlyphRange)
-                }
 
-                // Now get accurate content height and scroll to bottom
-                let contentHeight = containerView.scrollView.documentView?.frame.height ?? 0
-                let visibleHeight = containerView.scrollView.contentView.bounds.height
-                let maxScrollY = max(0, contentHeight - visibleHeight)
-                containerView.scrollView.contentView.scroll(to: NSPoint(x: 0, y: maxScrollY))
+                    // Get the rect of the last character to ensure we scroll past it
+                    let lastCharGlyphRange = layoutManager.glyphRange(forCharacterRange: NSRange(location: textLength - 1, length: 1), actualCharacterRange: nil)
+                    let lastCharRect = layoutManager.boundingRect(forGlyphRange: lastCharGlyphRange, in: textContainer)
+
+                    // Calculate scroll to show the last line fully
+                    let visibleHeight = containerView.scrollView.contentView.bounds.height
+                    let bottomInset = containerView.textView.textContainerInset.height
+                    let targetY = lastCharRect.maxY + bottomInset + containerView.textView.textContainerInset.height - visibleHeight + 20
+                    let maxScrollY = max(0, targetY)
+                    containerView.scrollView.contentView.scroll(to: NSPoint(x: 0, y: maxScrollY))
+                } else {
+                    // Fallback if no layout manager
+                    let contentHeight = containerView.scrollView.documentView?.frame.height ?? 0
+                    let visibleHeight = containerView.scrollView.contentView.bounds.height
+                    let maxScrollY = max(0, contentHeight - visibleHeight)
+                    containerView.scrollView.contentView.scroll(to: NSPoint(x: 0, y: maxScrollY))
+                }
             } else {
                 // For search/go-to-line: use scrollRangeToVisible
                 containerView.textView.scrollRangeToVisible(newRange)
@@ -2697,6 +2708,9 @@ public class KeystoneTextContainerViewMac: NSView {
         }
 
         let text = textView.string
+        let nsText = text as NSString
+        let textLength = nsText.length
+
         if text.isEmpty {
             let lineHeight = configuration.fontSize * configuration.lineHeightMultiplier
             lineNumberView.lineData = [(lineNumber: 1, yPosition: textView.textContainerInset.height, height: lineHeight)]
@@ -2704,69 +2718,55 @@ public class KeystoneTextContainerViewMac: NSView {
             return
         }
 
-        // Get visible rect to only process visible lines
+        // Get visible rect
         let visibleRect = scrollView.contentView.bounds
-        let textLength = (text as NSString).length
-
-        // Get the visible glyph range
         let visibleGlyphRange = layoutManager.glyphRange(forBoundingRect: visibleRect, in: textContainer)
 
-        // Expand slightly to include lines just outside visible area
-        let expandedStart = max(0, visibleGlyphRange.location - 500)
-        let expandedLength = min(layoutManager.numberOfGlyphs - expandedStart, visibleGlyphRange.length + 1000)
-        let expandedGlyphRange = NSRange(location: expandedStart, length: expandedLength)
+        // Expand to include buffer for smooth scrolling
+        let bufferGlyphs = 500
+        let expandedStart = max(0, visibleGlyphRange.location - bufferGlyphs)
+        let expandedEnd = min(layoutManager.numberOfGlyphs, visibleGlyphRange.location + visibleGlyphRange.length + bufferGlyphs)
+        let expandedGlyphRange = NSRange(location: expandedStart, length: expandedEnd - expandedStart)
 
+        // Build line number data - one entry per logical line
         var lineData: [(lineNumber: Int, yPosition: CGFloat, height: CGFloat)] = []
-        var currentLine = 1
-        var processedLines = Set<Int>()
+        var seenYPositions = Set<Int>() // Track Y positions we've already added (rounded to avoid float issues)
 
-        // Count lines before visible range
-        let charRangeBeforeVisible = layoutManager.characterRange(forGlyphRange: NSRange(location: 0, length: expandedStart), actualGlyphRange: nil)
-        for i in 0..<min(charRangeBeforeVisible.location + charRangeBeforeVisible.length, textLength) {
-            if (text as NSString).character(at: i) == 0x0A { // newline
-                currentLine += 1
-            }
-        }
-
-        // Process visible glyphs
-        var lastProcessedCharIndex = charRangeBeforeVisible.location + charRangeBeforeVisible.length
         layoutManager.enumerateLineFragments(forGlyphRange: expandedGlyphRange) { rect, _, _, glyphRange, _ in
             let charRange = layoutManager.characterRange(forGlyphRange: glyphRange, actualGlyphRange: nil)
+            guard charRange.location < textLength else { return }
 
-            // Calculate line number for this fragment - count newlines since last processed
-            var lineForFragment = currentLine
-            let startIdx = lastProcessedCharIndex
-            let endIdx = charRange.location
-            if startIdx < endIdx && endIdx <= textLength {
-                for i in startIdx..<endIdx {
-                    if (text as NSString).character(at: i) == 0x0A {
-                        currentLine += 1
-                        lineForFragment = currentLine
-                    }
-                }
+            // Check if this fragment starts a new logical line
+            // A fragment starts a line if: it's at char 0, OR the char before it is a newline
+            let isLineStart: Bool
+            if charRange.location == 0 {
+                isLineStart = true
+            } else {
+                let prevChar = nsText.character(at: charRange.location - 1)
+                isLineStart = (prevChar == 0x0A) // newline
             }
 
-            // Only add if we haven't seen this line number yet
-            if !processedLines.contains(lineForFragment) {
-                processedLines.insert(lineForFragment)
+            if isLineStart {
+                // Count which line number this is (count newlines before this position)
+                var lineNumber = 1
+                for i in 0..<charRange.location {
+                    if nsText.character(at: i) == 0x0A {
+                        lineNumber += 1
+                    }
+                }
+
                 let yPos = rect.origin.y + self.textView.textContainerInset.height
-                lineData.append((lineNumber: lineForFragment, yPosition: yPos, height: rect.height))
-            }
+                let roundedY = Int(yPos * 10) // Round to 0.1 precision
 
-            // Check for newlines within this fragment
-            let fragStart = charRange.location
-            let fragEnd = min(charRange.location + charRange.length, textLength)
-            if fragStart < fragEnd {
-                for i in fragStart..<fragEnd {
-                    if (text as NSString).character(at: i) == 0x0A {
-                        currentLine += 1
-                    }
+                // Only add if we haven't added an entry at this Y position
+                if !seenYPositions.contains(roundedY) {
+                    seenYPositions.insert(roundedY)
+                    lineData.append((lineNumber: lineNumber, yPosition: yPos, height: rect.height))
                 }
             }
-            lastProcessedCharIndex = fragEnd
         }
 
-        // Sort by Y position to ensure correct order
+        // Sort by Y position
         lineData.sort { $0.yPosition < $1.yPosition }
 
         lineNumberView.lineData = lineData
