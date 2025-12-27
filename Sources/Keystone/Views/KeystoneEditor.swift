@@ -682,6 +682,7 @@ struct KeystoneFindReplaceBar: View {
                     Button("Replace") {
                         performReplaceCurrent()
                     }
+                    .buttonStyle(.plain)
                     .font(.system(size: smallFontSize, weight: .medium))
                     .padding(.horizontal, 12)
                     .padding(.vertical, 8)
@@ -692,6 +693,7 @@ struct KeystoneFindReplaceBar: View {
                     Button("All") {
                         performReplaceAll()
                     }
+                    .buttonStyle(.plain)
                     .font(.system(size: smallFontSize, weight: .medium))
                     .padding(.horizontal, 12)
                     .padding(.vertical, 8)
