@@ -108,19 +108,25 @@ public struct EditorSettingsView: View {
     }
 
     private var themePicker: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            themeButton("Default", theme: .default)
-            themeButton("Monokai", theme: .monokai)
-            themeButton("Solarized Dark", theme: .solarizedDark)
-            themeButton("Solarized Light", theme: .solarizedLight)
-            themeButton("GitHub", theme: .github)
-            themeButton("Xcode", theme: .xcode)
+        ForEach(KeystoneTheme.allThemes, id: \.name) { item in
+            themeButton(item.name, theme: item.theme)
         }
     }
 
     private func themeButton(_ name: String, theme: KeystoneTheme) -> some View {
         Button(action: { configuration.theme = theme }) {
             HStack {
+                // Theme color preview
+                HStack(spacing: 2) {
+                    Circle().fill(theme.keyword).frame(width: 12, height: 12)
+                    Circle().fill(theme.string).frame(width: 12, height: 12)
+                    Circle().fill(theme.type).frame(width: 12, height: 12)
+                    Circle().fill(theme.comment).frame(width: 12, height: 12)
+                }
+                .padding(4)
+                .background(theme.background)
+                .cornerRadius(4)
+
                 Text(name)
                     .foregroundColor(.primary)
                 Spacer()

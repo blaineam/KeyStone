@@ -6,7 +6,22 @@
 //
 
 import Foundation
-import TreeSitter
+@_implementationOnly import TreeSitter
+@_implementationOnly import TreeSitterSwift
+@_implementationOnly import TreeSitterPython
+@_implementationOnly import TreeSitterJavaScript
+@_implementationOnly import TreeSitterTypeScript
+@_implementationOnly import TreeSitterJSON
+@_implementationOnly import TreeSitterHTML
+@_implementationOnly import TreeSitterCSS
+@_implementationOnly import TreeSitterC
+@_implementationOnly import TreeSitterCPP
+@_implementationOnly import TreeSitterGo
+@_implementationOnly import TreeSitterRust
+@_implementationOnly import TreeSitterRuby
+@_implementationOnly import TreeSitterBash
+@_implementationOnly import TreeSitterYAML
+@_implementationOnly import TreeSitterMarkdown
 
 /// A syntax highlighter that uses TreeSitter for accurate parsing.
 public class TreeSitterHighlighter {
@@ -14,11 +29,17 @@ public class TreeSitterHighlighter {
     private var tree: OpaquePointer?
     private let language: KeystoneLanguage
     private let theme: KeystoneTheme
+    private var hasLanguage: Bool = false
 
     public init(language: KeystoneLanguage, theme: KeystoneTheme) {
         self.language = language
         self.theme = theme
         self.parser = ts_parser_new()
+
+        // Set the language grammar
+        if let parser = self.parser {
+            self.hasLanguage = Self.setLanguage(parser: parser, language: language)
+        }
     }
 
     deinit {
@@ -30,11 +51,54 @@ public class TreeSitterHighlighter {
         }
     }
 
+    /// Returns whether TreeSitter parsing is available for this language
+    public var isTreeSitterAvailable: Bool {
+        hasLanguage
+    }
+
+    /// Sets the TreeSitter language on the parser
+    private static func setLanguage(parser: OpaquePointer, language: KeystoneLanguage) -> Bool {
+        switch language {
+        case .swift:
+            return ts_parser_set_language(parser, tree_sitter_swift())
+        case .python:
+            return ts_parser_set_language(parser, tree_sitter_python())
+        case .javascript:
+            return ts_parser_set_language(parser, tree_sitter_javascript())
+        case .typescript:
+            return ts_parser_set_language(parser, tree_sitter_typescript())
+        case .json:
+            return ts_parser_set_language(parser, tree_sitter_json())
+        case .html:
+            return ts_parser_set_language(parser, tree_sitter_html())
+        case .css:
+            return ts_parser_set_language(parser, tree_sitter_css())
+        case .c:
+            return ts_parser_set_language(parser, tree_sitter_c())
+        case .cpp:
+            return ts_parser_set_language(parser, tree_sitter_cpp())
+        case .go:
+            return ts_parser_set_language(parser, tree_sitter_go())
+        case .rust:
+            return ts_parser_set_language(parser, tree_sitter_rust())
+        case .ruby:
+            return ts_parser_set_language(parser, tree_sitter_ruby())
+        case .shell:
+            return ts_parser_set_language(parser, tree_sitter_bash())
+        case .yaml:
+            return ts_parser_set_language(parser, tree_sitter_yaml())
+        case .markdown:
+            return ts_parser_set_language(parser, tree_sitter_markdown())
+        default:
+            return false
+        }
+    }
+
     /// Parses the given text and returns syntax highlighting ranges.
     /// - Parameter text: The source code to parse.
     /// - Returns: An array of highlight ranges with their associated token types.
     public func parse(_ text: String) -> [HighlightRange] {
-        guard let parser = parser else { return [] }
+        guard let parser = parser, hasLanguage else { return [] }
 
         // Delete previous tree if exists
         if let oldTree = tree {
@@ -69,7 +133,7 @@ public class TreeSitterHighlighter {
         let endByte = Int(ts_node_end_byte(node))
 
         // Map node type to token type
-        if let tokenType = mapNodeTypeToToken(nodeType) {
+        if let tokenType = mapNodeTypeToToken(nodeType, language: language) {
             ranges.append(HighlightRange(
                 start: startByte,
                 end: endByte,
@@ -85,7 +149,167 @@ public class TreeSitterHighlighter {
         }
     }
 
-    private func mapNodeTypeToToken(_ nodeType: String) -> TokenType? {
+    private func mapNodeTypeToToken(_ nodeType: String, language: KeystoneLanguage) -> TokenType? {
+        // Language-specific mappings first
+        switch language {
+        case .swift:
+            return mapSwiftNodeType(nodeType)
+        case .python:
+            return mapPythonNodeType(nodeType)
+        case .javascript, .typescript:
+            return mapJavaScriptNodeType(nodeType)
+        case .html:
+            return mapHTMLNodeType(nodeType)
+        case .css:
+            return mapCSSNodeType(nodeType)
+        case .json:
+            return mapJSONNodeType(nodeType)
+        default:
+            return mapGenericNodeType(nodeType)
+        }
+    }
+
+    // MARK: - Language-Specific Node Type Mappings
+
+    private func mapSwiftNodeType(_ nodeType: String) -> TokenType? {
+        switch nodeType {
+        // Keywords
+        case "import", "func", "var", "let", "class", "struct", "enum", "protocol",
+             "extension", "if", "else", "guard", "switch", "case", "default",
+             "for", "while", "repeat", "return", "throw", "throws", "try", "catch",
+             "defer", "do", "async", "await", "private", "public", "internal",
+             "fileprivate", "open", "static", "final", "override", "mutating",
+             "nonmutating", "convenience", "required", "init", "deinit", "self",
+             "Self", "super", "nil", "true", "false", "where", "in", "as", "is",
+             "typealias", "associatedtype", "subscript", "get", "set", "willSet",
+             "didSet", "inout", "some", "any", "weak", "unowned", "lazy":
+            return .keyword
+
+        // Types
+        case "type_identifier", "simple_identifier":
+            return .type
+
+        // Strings
+        case "line_string_literal", "multi_line_string_literal", "string_literal":
+            return .string
+
+        // Comments
+        case "comment", "multiline_comment":
+            return .comment
+
+        // Numbers
+        case "integer_literal", "real_literal", "boolean_literal":
+            return .number
+
+        // Functions
+        case "function_declaration", "call_expression":
+            return .function
+
+        // Attributes
+        case "attribute":
+            return .attribute
+
+        default:
+            return nil
+        }
+    }
+
+    private func mapPythonNodeType(_ nodeType: String) -> TokenType? {
+        switch nodeType {
+        case "import", "from", "def", "class", "if", "elif", "else", "for",
+             "while", "try", "except", "finally", "with", "as", "return",
+             "yield", "raise", "pass", "break", "continue", "lambda", "and",
+             "or", "not", "in", "is", "global", "nonlocal", "assert", "async",
+             "await", "True", "False", "None":
+            return .keyword
+        case "type", "identifier":
+            return .type
+        case "string", "concatenated_string":
+            return .string
+        case "comment":
+            return .comment
+        case "integer", "float":
+            return .number
+        case "function_definition", "call":
+            return .function
+        case "decorator":
+            return .attribute
+        default:
+            return nil
+        }
+    }
+
+    private func mapJavaScriptNodeType(_ nodeType: String) -> TokenType? {
+        switch nodeType {
+        case "import", "export", "from", "function", "const", "let", "var",
+             "class", "extends", "if", "else", "switch", "case", "default",
+             "for", "while", "do", "return", "throw", "try", "catch", "finally",
+             "new", "this", "super", "async", "await", "true", "false", "null",
+             "undefined", "typeof", "instanceof", "interface", "type":
+            return .keyword
+        case "type_identifier", "identifier":
+            return .type
+        case "string", "template_string", "template_literal":
+            return .string
+        case "comment":
+            return .comment
+        case "number":
+            return .number
+        case "function_declaration", "arrow_function", "call_expression":
+            return .function
+        default:
+            return nil
+        }
+    }
+
+    private func mapHTMLNodeType(_ nodeType: String) -> TokenType? {
+        switch nodeType {
+        case "tag_name", "start_tag", "end_tag", "self_closing_tag":
+            return .tag
+        case "attribute_name":
+            return .attribute
+        case "attribute_value", "quoted_attribute_value":
+            return .string
+        case "comment":
+            return .comment
+        default:
+            return nil
+        }
+    }
+
+    private func mapCSSNodeType(_ nodeType: String) -> TokenType? {
+        switch nodeType {
+        case "tag_name", "class_selector", "id_selector", "pseudo_class_selector":
+            return .tag
+        case "property_name":
+            return .attribute
+        case "string_value":
+            return .string
+        case "comment":
+            return .comment
+        case "integer_value", "float_value", "color_value":
+            return .number
+        case "function_name":
+            return .function
+        default:
+            return nil
+        }
+    }
+
+    private func mapJSONNodeType(_ nodeType: String) -> TokenType? {
+        switch nodeType {
+        case "string":
+            return .string
+        case "number":
+            return .number
+        case "true", "false", "null":
+            return .keyword
+        default:
+            return nil
+        }
+    }
+
+    private func mapGenericNodeType(_ nodeType: String) -> TokenType? {
         // Common TreeSitter node types mapped to token types
         switch nodeType {
         // Keywords
@@ -202,7 +426,7 @@ extension TreeSitterHighlighter {
     ///   - edit: The edit that was made.
     /// - Returns: Updated highlight ranges.
     public func update(_ text: String, with edit: TextEdit) -> [HighlightRange] {
-        guard let parser = parser, let oldTree = tree else {
+        guard let parser = parser, let oldTree = tree, hasLanguage else {
             return parse(text)
         }
 

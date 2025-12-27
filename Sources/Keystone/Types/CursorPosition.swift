@@ -25,27 +25,29 @@ public struct CursorPosition: Equatable, Sendable {
     }
 
     /// Calculates the cursor position from a character offset in the given text.
+    /// Uses NSString for O(1) character access instead of Swift String iteration.
     /// - Parameters:
     ///   - offset: The character offset from the beginning.
     ///   - text: The text content.
     ///   - selectionLength: Optional selection length.
     /// - Returns: The calculated cursor position.
     public static func from(offset: Int, in text: String, selectionLength: Int = 0) -> CursorPosition {
+        let nsText = text as NSString
+        let length = nsText.length
+        let safeOffset = min(offset, length)
+
         var line = 1
         var column = 1
-        var currentIndex = 0
+        let newlineCode: unichar = 0x0A // '\n'
 
-        for char in text {
-            if currentIndex >= offset {
-                break
-            }
-            if char == "\n" {
+        // Use NSString for O(1) character access at each position
+        for i in 0..<safeOffset {
+            if nsText.character(at: i) == newlineCode {
                 line += 1
                 column = 1
             } else {
                 column += 1
             }
-            currentIndex += 1
         }
 
         return CursorPosition(

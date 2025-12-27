@@ -50,6 +50,10 @@ public struct KeystoneEditor: View {
     /// Useful for features like "scroll to end" in tail follow mode.
     private var externalCursorPosition: Binding<CursorPosition>?
 
+    /// Optional external scroll-to-cursor binding. When set to true externally, scrolls to cursor and resets.
+    /// Useful for tail follow mode to scroll to end after updating cursor position.
+    private var externalScrollToCursor: Binding<Bool>?
+
     /// Whether tail follow is enabled. When provided, shows the follow button in the toolbar.
     private var isTailFollowEnabled: Binding<Bool>?
 
@@ -70,6 +74,12 @@ public struct KeystoneEditor: View {
     @State private var scrollOffset: CGFloat = 0
     @State private var lineCount: Int = 1
     @State private var matchingBracket: BracketMatch?
+
+    @State private var internalScrollToCursor = false
+    /// The effective scroll-to-cursor binding (external if provided, otherwise internal)
+    private var scrollToCursor: Binding<Bool> {
+        externalScrollToCursor ?? $internalScrollToCursor
+    }
     @State private var showGoToLine = false
     @State private var goToLineText = ""
 
@@ -92,6 +102,7 @@ public struct KeystoneEditor: View {
     ///   - configuration: The editor configuration.
     ///   - findReplaceManager: The find/replace manager.
     ///   - cursorPosition: Optional binding for external cursor position control (e.g., for scroll-to-end).
+    ///   - scrollToCursor: Optional binding to trigger scroll to cursor (set to true to scroll, resets to false).
     ///   - isTailFollowEnabled: Optional binding for tail follow state (shows follow button when provided).
     ///   - onCursorChange: Optional callback when cursor position changes.
     ///   - onScrollChange: Optional callback when scroll position changes.
@@ -103,6 +114,7 @@ public struct KeystoneEditor: View {
         configuration: KeystoneConfiguration,
         findReplaceManager: FindReplaceManager,
         cursorPosition: Binding<CursorPosition>? = nil,
+        scrollToCursor: Binding<Bool>? = nil,
         isTailFollowEnabled: Binding<Bool>? = nil,
         onCursorChange: ((CursorPosition) -> Void)? = nil,
         onScrollChange: ((CGFloat) -> Void)? = nil,
@@ -114,6 +126,7 @@ public struct KeystoneEditor: View {
         self.configuration = configuration
         self.findReplaceManager = findReplaceManager
         self.externalCursorPosition = cursorPosition
+        self.externalScrollToCursor = scrollToCursor
         self.isTailFollowEnabled = isTailFollowEnabled
         self.onCursorChange = onCursorChange
         self.onScrollChange = onScrollChange
@@ -166,6 +179,7 @@ public struct KeystoneEditor: View {
                 cursorPosition: cursorPosition,
                 scrollOffset: $scrollOffset,
                 matchingBracket: $matchingBracket,
+                scrollToCursor: scrollToCursor,
                 searchMatches: findReplaceManager.matches,
                 currentMatchIndex: findReplaceManager.currentMatchIndex,
                 undoController: undoController
@@ -381,6 +395,8 @@ public struct KeystoneEditor: View {
             // Small delay to allow the alert to dismiss
             try? await Task.sleep(nanoseconds: 50_000_000) // 50ms
 
+            // Request scroll to cursor when going to a specific line
+            scrollToCursor.wrappedValue = true
             // Set the cursor position
             cursorPosition.wrappedValue = CursorPosition.from(offset: finalOffset, in: text, selectionLength: 0)
 
@@ -390,6 +406,8 @@ public struct KeystoneEditor: View {
     }
 
     private func navigateToMatch(_ match: SearchMatch) {
+        // Request scroll to cursor when navigating to a search match
+        scrollToCursor.wrappedValue = true
         // Navigate to the match location
         cursorPosition.wrappedValue = CursorPosition.from(
             offset: text.distance(from: text.startIndex, to: match.range.lowerBound),

@@ -110,6 +110,8 @@ public struct KeystoneTextView: UIViewRepresentable {
     @Binding var cursorPosition: CursorPosition
     @Binding var scrollOffset: CGFloat
     @Binding var matchingBracket: BracketMatch?
+    /// When set to true, scrolls to make cursor visible, then resets to false
+    @Binding var scrollToCursor: Bool
     var searchMatches: [SearchMatch]
     var currentMatchIndex: Int
     var undoController: UndoController?
@@ -199,18 +201,40 @@ public struct KeystoneTextView: UIViewRepresentable {
         // CRITICAL: Skip text overwriting if user is editing!
         // The text view has the authoritative text during editing.
         // Only update from binding when it's an external change (file load, undo from outside, etc.)
+        //
+        // IMPORTANT: Setting textView.text clears the undo history!
+        // We only do this on initial load. After that, text changes should come through
+        // the text view's own editing which properly registers with undo manager.
         if !isUserCurrentlyEditing {
             // Fast path: if lengths differ, text definitely changed
             let textMightHaveChanged = currentLength != bindingLength
-            if textMightHaveChanged || (currentLength == bindingLength && containerView.textView.text != text) {
-                let selectedRange = containerView.textView.selectedRange
-                containerView.textView.text = text
-                needsHighlight = true
-                needsLineNumberUpdate = true
 
-                // Restore selection using O(1) length
-                let newLocation = min(selectedRange.location, bindingLength)
-                containerView.textView.selectedRange = NSRange(location: newLocation, length: 0)
+            // Only set text directly on FIRST load (to preserve undo history after that)
+            if !context.coordinator.hasSetInitialText {
+                if textMightHaveChanged || (currentLength == bindingLength && containerView.textView.text != text) {
+                    let selectedRange = containerView.textView.selectedRange
+                    containerView.textView.text = text
+                    needsHighlight = true
+                    needsLineNumberUpdate = true
+                    context.coordinator.hasSetInitialText = true
+
+                    // Restore selection using O(1) length
+                    let newLocation = min(selectedRange.location, bindingLength)
+                    containerView.textView.selectedRange = NSRange(location: newLocation, length: 0)
+                }
+            } else if textMightHaveChanged || (currentLength == bindingLength && containerView.textView.text != text) {
+                // After initial load, only set text if it was genuinely changed externally
+                // (e.g., file was reloaded, undo from outside text view)
+                // Skip if the text view is the one that made the change
+                if !context.coordinator.isSyncingFromInternalEdit {
+                    let selectedRange = containerView.textView.selectedRange
+                    containerView.textView.text = text
+                    needsHighlight = true
+                    needsLineNumberUpdate = true
+
+                    let newLocation = min(selectedRange.location, bindingLength)
+                    containerView.textView.selectedRange = NSRange(location: newLocation, length: 0)
+                }
             }
         }
 
@@ -231,7 +255,7 @@ public struct KeystoneTextView: UIViewRepresentable {
         }
 
         // Handle cursor position changes for search navigation or tail follow - scroll to cursor
-        // ONLY do this for external cursor changes (e.g., search navigation, tail follow), NOT during typing
+        // ONLY scroll when explicitly requested (search, go-to-line, tail follow sets shouldScrollToCursor)
         // Skip if user is editing - the cursor is already where the user put it
         if !isUserCurrentlyEditing {
             let currentRange = containerView.textView.selectedRange
@@ -239,9 +263,6 @@ public struct KeystoneTextView: UIViewRepresentable {
             let positionDiffers = currentRange.location != cursorPosition.offset
             let selectionDiffers = currentRange.length != cursorPosition.selectionLength
 
-            // Only scroll if the cursor position actually changed from the text view's current position
-            // We removed lastScrolledToCursorOffset tracking because it was preventing users from
-            // scrolling freely after tail follow was disabled
             if positionDiffers || selectionDiffers {
                 let newLocation = min(cursorPosition.offset, bindingLength)
                 let newLength = min(cursorPosition.selectionLength, max(0, bindingLength - newLocation))
@@ -250,10 +271,19 @@ public struct KeystoneTextView: UIViewRepresentable {
                 // Set flag to prevent textViewDidChangeSelection from updating cursor position back
                 context.coordinator.isSettingCursorProgrammatically = true
                 containerView.textView.selectedRange = newRange
-                // Scroll instantly without animation
-                UIView.performWithoutAnimation {
-                    containerView.textView.scrollRangeToVisible(newRange)
+
+                // ONLY scroll if explicitly requested (e.g., search navigation, go-to-line, tail follow)
+                // This allows users to freely scroll and move cursor without the view snapping back
+                if scrollToCursor {
+                    UIView.performWithoutAnimation {
+                        containerView.textView.scrollRangeToVisible(newRange)
+                    }
+                    // Reset the binding after scrolling once
+                    DispatchQueue.main.async {
+                        self.scrollToCursor = false
+                    }
                 }
+
                 // Reset flag on next run loop
                 DispatchQueue.main.async {
                     context.coordinator.isSettingCursorProgrammatically = false
@@ -426,6 +456,9 @@ public struct KeystoneTextView: UIViewRepresentable {
         var isUpdating = false
         weak var containerView: KeystoneTextContainerView?
         var previousBracketMatch: BracketMatch?
+
+        // Track if initial text has been set - only set text directly on first load
+        var hasSetInitialText = false
 
         // Cached highlighter to avoid recreating TreeSitter parser on every update
         private var cachedHighlighter: SyntaxHighlighter?
@@ -1243,6 +1276,8 @@ public struct KeystoneTextView: NSViewRepresentable {
     @Binding var cursorPosition: CursorPosition
     @Binding var scrollOffset: CGFloat
     @Binding var matchingBracket: BracketMatch?
+    /// When set to true, scrolls to make cursor visible, then resets to false
+    @Binding var scrollToCursor: Bool
     var searchMatches: [SearchMatch]
     var currentMatchIndex: Int
     var undoController: UndoController?

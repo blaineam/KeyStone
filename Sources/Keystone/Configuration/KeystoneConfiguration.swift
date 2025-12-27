@@ -66,9 +66,90 @@ public final class KeystoneConfiguration: ObservableObject {
         "`": "`"
     ]
 
+    // MARK: - Persistence Keys
+
+    private enum Keys {
+        static let fontSize = "keystone.fontSize"
+        static let lineHeightMultiplier = "keystone.lineHeightMultiplier"
+        static let showLineNumbers = "keystone.showLineNumbers"
+        static let highlightCurrentLine = "keystone.highlightCurrentLine"
+        static let showInvisibleCharacters = "keystone.showInvisibleCharacters"
+        static let lineWrapping = "keystone.lineWrapping"
+        static let autoInsertPairs = "keystone.autoInsertPairs"
+        static let highlightMatchingBrackets = "keystone.highlightMatchingBrackets"
+        static let tabKeyInsertsTab = "keystone.tabKeyInsertsTab"
+        static let themeName = "keystone.themeName"
+        static let indentUseTabs = "keystone.indentUseTabs"
+        static let indentWidth = "keystone.indentWidth"
+    }
+
     // MARK: - Initialization
 
-    public init() {}
+    public init() {
+        loadFromUserDefaults()
+    }
+
+    // MARK: - Persistence
+
+    /// Loads settings from UserDefaults.
+    public func loadFromUserDefaults() {
+        let defaults = UserDefaults.standard
+
+        if defaults.object(forKey: Keys.fontSize) != nil {
+            fontSize = CGFloat(defaults.double(forKey: Keys.fontSize))
+        }
+        if defaults.object(forKey: Keys.lineHeightMultiplier) != nil {
+            lineHeightMultiplier = CGFloat(defaults.double(forKey: Keys.lineHeightMultiplier))
+        }
+        if defaults.object(forKey: Keys.showLineNumbers) != nil {
+            showLineNumbers = defaults.bool(forKey: Keys.showLineNumbers)
+        }
+        if defaults.object(forKey: Keys.highlightCurrentLine) != nil {
+            highlightCurrentLine = defaults.bool(forKey: Keys.highlightCurrentLine)
+        }
+        if defaults.object(forKey: Keys.showInvisibleCharacters) != nil {
+            showInvisibleCharacters = defaults.bool(forKey: Keys.showInvisibleCharacters)
+        }
+        if defaults.object(forKey: Keys.lineWrapping) != nil {
+            lineWrapping = defaults.bool(forKey: Keys.lineWrapping)
+        }
+        if defaults.object(forKey: Keys.autoInsertPairs) != nil {
+            autoInsertPairs = defaults.bool(forKey: Keys.autoInsertPairs)
+        }
+        if defaults.object(forKey: Keys.highlightMatchingBrackets) != nil {
+            highlightMatchingBrackets = defaults.bool(forKey: Keys.highlightMatchingBrackets)
+        }
+        if defaults.object(forKey: Keys.tabKeyInsertsTab) != nil {
+            tabKeyInsertsTab = defaults.bool(forKey: Keys.tabKeyInsertsTab)
+        }
+        if let themeName = defaults.string(forKey: Keys.themeName) {
+            theme = KeystoneTheme.theme(named: themeName) ?? .system
+        }
+        if defaults.object(forKey: Keys.indentUseTabs) != nil {
+            indentation.type = defaults.bool(forKey: Keys.indentUseTabs) ? .tabs : .spaces
+        }
+        if defaults.object(forKey: Keys.indentWidth) != nil {
+            indentation.width = defaults.integer(forKey: Keys.indentWidth)
+        }
+    }
+
+    /// Saves current settings to UserDefaults.
+    public func saveToUserDefaults() {
+        let defaults = UserDefaults.standard
+
+        defaults.set(Double(fontSize), forKey: Keys.fontSize)
+        defaults.set(Double(lineHeightMultiplier), forKey: Keys.lineHeightMultiplier)
+        defaults.set(showLineNumbers, forKey: Keys.showLineNumbers)
+        defaults.set(highlightCurrentLine, forKey: Keys.highlightCurrentLine)
+        defaults.set(showInvisibleCharacters, forKey: Keys.showInvisibleCharacters)
+        defaults.set(lineWrapping, forKey: Keys.lineWrapping)
+        defaults.set(autoInsertPairs, forKey: Keys.autoInsertPairs)
+        defaults.set(highlightMatchingBrackets, forKey: Keys.highlightMatchingBrackets)
+        defaults.set(tabKeyInsertsTab, forKey: Keys.tabKeyInsertsTab)
+        defaults.set(KeystoneTheme.name(for: theme), forKey: Keys.themeName)
+        defaults.set(indentation.type == .tabs, forKey: Keys.indentUseTabs)
+        defaults.set(indentation.width, forKey: Keys.indentWidth)
+    }
 
     // MARK: - Methods
 
@@ -101,60 +182,50 @@ public final class KeystoneConfiguration: ObservableObject {
 // MARK: - Character Pair Handling
 
 extension KeystoneConfiguration {
+    /// Cached set of closing characters for O(1) lookup
+    private static let closingChars: Set<Character> = Set(characterPairs.values)
+
     /// Determines if a character should trigger auto-insertion of its pair.
-    /// - Parameters:
-    ///   - char: The character being typed.
-    ///   - text: The current text content.
-    ///   - position: The current cursor position.
-    /// - Returns: The closing character to insert, or nil if no auto-insertion should occur.
-    public func shouldAutoInsertPair(for char: Character, in text: String, at position: Int) -> Character? {
+    /// Uses NSString for O(1) character access.
+    public func shouldAutoInsertPair(for char: Character, in nsText: NSString, at position: Int) -> Character? {
         guard autoInsertPairs else { return nil }
         guard let closingChar = Self.characterPairs[char] else { return nil }
 
-        // For quotes, check if we're already inside a string
-        if char == "\"" || char == "'" || char == "`" {
-            // Simple heuristic: count occurrences before cursor
-            let textBefore = String(text.prefix(position))
-            let count = textBefore.filter { $0 == char }.count
-            // If odd number, we're inside a string - don't auto-insert
-            if count % 2 != 0 { return nil }
-        }
-
+        // For quotes, we skip the expensive inside-string check for performance
+        // The trade-off is occasional extra quote insertion, which user can delete
         return closingChar
     }
 
     /// Determines if typing a closing character should skip over an existing one.
-    /// - Parameters:
-    ///   - char: The character being typed.
-    ///   - text: The current text content.
-    ///   - position: The current cursor position.
-    /// - Returns: True if the character should be skipped, false otherwise.
-    public func shouldSkipClosingPair(for char: Character, in text: String, at position: Int) -> Bool {
+    /// Uses NSString for O(1) character access.
+    public func shouldSkipClosingPair(for char: Character, in nsText: NSString, at position: Int) -> Bool {
         guard autoInsertPairs else { return false }
-        guard position < text.count else { return false }
+        guard position < nsText.length else { return false }
 
-        let index = text.index(text.startIndex, offsetBy: position)
-        let nextChar = text[index]
+        // O(1) character access using NSString
+        let nextCharCode = nsText.character(at: position)
+        guard let nextCharScalar = Unicode.Scalar(nextCharCode) else { return false }
+        let nextChar = Character(nextCharScalar)
 
         // If we're typing a closing bracket and the next char is the same, skip it
-        let closingChars = Set(Self.characterPairs.values)
-        return closingChars.contains(char) && nextChar == char
+        return Self.closingChars.contains(char) && nextChar == char
     }
 
     /// Determines if deleting should remove both characters of a pair.
-    /// - Parameters:
-    ///   - text: The current text content.
-    ///   - position: The current cursor position.
-    /// - Returns: True if both characters of a pair should be deleted.
-    public func shouldDeletePair(in text: String, at position: Int) -> Bool {
+    /// Uses NSString for O(1) character access.
+    public func shouldDeletePair(in nsText: NSString, at position: Int) -> Bool {
         guard autoInsertPairs else { return false }
-        guard position > 0 && position < text.count else { return false }
+        guard position > 0 && position < nsText.length else { return false }
 
-        let prevIndex = text.index(text.startIndex, offsetBy: position - 1)
-        let currIndex = text.index(text.startIndex, offsetBy: position)
+        // O(1) character access using NSString
+        let prevCharCode = nsText.character(at: position - 1)
+        let currCharCode = nsText.character(at: position)
 
-        let prevChar = text[prevIndex]
-        let currChar = text[currIndex]
+        guard let prevScalar = Unicode.Scalar(prevCharCode),
+              let currScalar = Unicode.Scalar(currCharCode) else { return false }
+
+        let prevChar = Character(prevScalar)
+        let currChar = Character(currScalar)
 
         // Check if we're between a pair
         if let expectedClose = Self.characterPairs[prevChar] {
@@ -162,5 +233,22 @@ extension KeystoneConfiguration {
         }
 
         return false
+    }
+
+    // MARK: - Legacy String-based methods (for compatibility)
+
+    /// Legacy method - converts String to NSString internally
+    public func shouldAutoInsertPair(for char: Character, in text: String, at position: Int) -> Character? {
+        shouldAutoInsertPair(for: char, in: text as NSString, at: position)
+    }
+
+    /// Legacy method - converts String to NSString internally
+    public func shouldSkipClosingPair(for char: Character, in text: String, at position: Int) -> Bool {
+        shouldSkipClosingPair(for: char, in: text as NSString, at: position)
+    }
+
+    /// Legacy method - converts String to NSString internally
+    public func shouldDeletePair(in text: String, at position: Int) -> Bool {
+        shouldDeletePair(in: text as NSString, at: position)
     }
 }

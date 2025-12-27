@@ -202,4 +202,67 @@ final class KeystoneConfigurationTests: XCTestCase {
         let result = config.shouldDeletePair(in: text, at: 1)
         XCTAssertFalse(result)
     }
+
+    // MARK: - UserDefaults Persistence Tests
+
+    func testSaveAndLoadFromUserDefaults() {
+        // Clear existing preferences
+        let defaults = UserDefaults.standard
+        let keysToRemove = [
+            "keystone.fontSize",
+            "keystone.lineHeightMultiplier",
+            "keystone.showLineNumbers",
+            "keystone.highlightCurrentLine",
+            "keystone.showInvisibleCharacters",
+            "keystone.lineWrapping",
+            "keystone.autoInsertPairs",
+            "keystone.highlightMatchingBrackets",
+            "keystone.tabKeyInsertsTab",
+            "keystone.themeName",
+            "keystone.indentUseTabs",
+            "keystone.indentWidth"
+        ]
+        keysToRemove.forEach { defaults.removeObject(forKey: $0) }
+
+        // Create config with custom values
+        let config = KeystoneConfiguration()
+        config.fontSize = 18
+        config.showLineNumbers = false
+        config.showInvisibleCharacters = true
+        config.lineWrapping = false
+        config.theme = .monokai
+
+        // Save to UserDefaults
+        config.saveToUserDefaults()
+
+        // Create new config and load
+        let loadedConfig = KeystoneConfiguration()
+        loadedConfig.loadFromUserDefaults()
+
+        XCTAssertEqual(loadedConfig.fontSize, 18)
+        XCTAssertFalse(loadedConfig.showLineNumbers)
+        XCTAssertTrue(loadedConfig.showInvisibleCharacters)
+        XCTAssertFalse(loadedConfig.lineWrapping)
+        XCTAssertEqual(loadedConfig.theme, .monokai)
+
+        // Cleanup
+        keysToRemove.forEach { defaults.removeObject(forKey: $0) }
+    }
+
+    func testCopyConfiguration() {
+        let config = KeystoneConfiguration()
+        config.fontSize = 20
+        config.showLineNumbers = false
+        config.theme = .dracula
+
+        let copy = config.copy()
+
+        XCTAssertEqual(copy.fontSize, 20)
+        XCTAssertFalse(copy.showLineNumbers)
+        XCTAssertEqual(copy.theme, .dracula)
+
+        // Verify it's a true copy by modifying original
+        config.fontSize = 14
+        XCTAssertEqual(copy.fontSize, 20)
+    }
 }
