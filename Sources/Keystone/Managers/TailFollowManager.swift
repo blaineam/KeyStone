@@ -58,7 +58,8 @@ public class TailFollowManager: ObservableObject {
 
         // Start the timer
         timer = Timer.scheduledTimer(withTimeInterval: updateInterval, repeats: true) { [weak self] _ in
-            Task { @MainActor in
+            guard let self else { return }
+            Task { @MainActor [weak self] in
                 self?.checkForUpdates()
             }
         }
