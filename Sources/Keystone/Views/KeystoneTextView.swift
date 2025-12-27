@@ -2745,14 +2745,17 @@ public class KeystoneTextContainerViewMac: NSView {
         let visibleRect = scrollView.contentView.bounds
         let topInset = textView.textContainerInset.height
 
+        // Ensure we have at least 1 line
+        let effectiveLineCount = max(1, cachedLineCount)
+
         // Calculate which lines are visible
         let firstVisibleLine = max(1, Int((visibleRect.origin.y - topInset) / lineHeight))
-        let lastVisibleLine = min(cachedLineCount, Int((visibleRect.origin.y + visibleRect.height - topInset) / lineHeight) + 2)
+        let lastVisibleLine = min(effectiveLineCount, Int((visibleRect.origin.y + visibleRect.height - topInset) / lineHeight) + 2)
 
         // Add buffer for smooth scrolling
         let bufferLines = 20
         let startLine = max(1, firstVisibleLine - bufferLines)
-        let endLine = min(cachedLineCount, lastVisibleLine + bufferLines)
+        let endLine = max(startLine, min(effectiveLineCount, lastVisibleLine + bufferLines))
 
         // Generate line data only for visible range
         var lineData: [(lineNumber: Int, yPosition: CGFloat, height: CGFloat)] = []
