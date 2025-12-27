@@ -203,6 +203,12 @@ public struct KeystoneTextView: UIViewRepresentable {
         //     containerView.lineNumberView.setNeedsDisplay()
         // }
 
+        // Force initial layout on next run loop to ensure proper sizing
+        DispatchQueue.main.async {
+            containerView.setNeedsLayout()
+            containerView.layoutIfNeeded()
+        }
+
         return containerView
     }
 
@@ -250,8 +256,9 @@ public struct KeystoneTextView: UIViewRepresentable {
                     needsLineNumberUpdate = true
                     context.coordinator.hasSetInitialText = true
 
-                    // Update scroll view content size after text change
-                    containerView.updateContentSize()
+                    // Force immediate layout update to ensure text renders
+                    containerView.setNeedsLayout()
+                    containerView.layoutIfNeeded()
 
                     // Restore selection using O(1) length
                     let newLocation = min(selectedRange.location, bindingLength)
@@ -267,8 +274,9 @@ public struct KeystoneTextView: UIViewRepresentable {
                     needsHighlight = true
                     needsLineNumberUpdate = true
 
-                    // Update scroll view content size after text change
-                    containerView.updateContentSize()
+                    // Force immediate layout update to ensure text renders
+                    containerView.setNeedsLayout()
+                    containerView.layoutIfNeeded()
 
                     let newLocation = min(selectedRange.location, bindingLength)
                     containerView.textView.selectedRange = NSRange(location: newLocation, length: 0)
@@ -315,6 +323,11 @@ public struct KeystoneTextView: UIViewRepresentable {
             // Set flag to prevent textViewDidChangeSelection from updating cursor position back
             context.coordinator.isSettingCursorProgrammatically = true
             containerView.textView.selectedRange = newRange
+
+            // Force layout and content size update before scrolling
+            containerView.setNeedsLayout()
+            containerView.layoutIfNeeded()
+            containerView.updateContentSize()
 
             // Scroll the scroll view to make the cursor visible
             UIView.performWithoutAnimation {
@@ -710,7 +723,8 @@ public struct KeystoneTextView: UIViewRepresentable {
             triggerViewportHighlighting()
         }
 
-        private func triggerViewportHighlighting() {
+        /// Triggers viewport-based syntax highlighting after scrolling stops
+        func triggerViewportHighlighting() {
             guard let containerView = containerView else { return }
             let text = containerView.textView.text ?? ""
             let font = containerView.textView.font ?? UIFont.monospacedSystemFont(ofSize: 14, weight: .regular)
@@ -796,7 +810,6 @@ public struct KeystoneTextView: UIViewRepresentable {
     }
 }
 
-/// Container view that holds text view and line number gutter
 /// Container view that uses UIScrollView for scrolling (like Runestone).
 /// The UITextView has scrolling disabled - the parent UIScrollView handles all scrolling.
 /// This completely eliminates UITextView's automatic scroll-to-cursor behavior.
@@ -825,6 +838,20 @@ public class KeystoneTextContainerView: UIView {
 
     // Text view height constraint - updated when content changes
     private var textViewHeightConstraint: NSLayoutConstraint?
+
+    // MARK: - Runestone-style Managers
+
+    /// Line manager for O(1) line lookups
+    public let lineManager = LineManager()
+
+    /// Line height cache for fast layout calculations
+    public let lineHeightCache = LineHeightCache()
+
+    /// Throttled update controller for non-critical updates
+    private let throttledUpdater = ThrottledUpdateController()
+
+    /// Scroll synchronizer for smooth scroll-linked updates
+    public let scrollSynchronizer = ScrollSynchronizer()
 
     // MARK: - Undo/Redo
 
@@ -866,14 +893,17 @@ public class KeystoneTextContainerView: UIView {
 
         // Create text view with custom layout manager for invisible characters
         let textStorage = NSTextStorage()
-        let textContainer = NSTextContainer(size: CGSize(width: 0, height: CGFloat.greatestFiniteMagnitude))
+        // Use a reasonable default width initially - will be updated in layoutSubviews
+        let textContainer = NSTextContainer(size: CGSize(width: UIScreen.main.bounds.width, height: CGFloat.greatestFiniteMagnitude))
         textContainer.widthTracksTextView = true
+        // Keep default lineFragmentPadding (5.0) for proper text rendering
 
         invisibleLayoutManager.addTextContainer(textContainer)
         textStorage.addLayoutManager(invisibleLayoutManager)
 
         // UITextView with scrolling disabled - embedded in scroll view
-        self.textView = KeystoneUITextView(frame: .zero, textContainer: textContainer)
+        // Give it a reasonable initial frame so it can render before layoutSubviews
+        self.textView = KeystoneUITextView(frame: CGRect(x: 0, y: 0, width: UIScreen.main.bounds.width, height: 300), textContainer: textContainer)
         self.lineNumberView = LineNumberGutterView()
 
         super.init(frame: .zero)
@@ -882,6 +912,7 @@ public class KeystoneTextContainerView: UIView {
         setupTextView()
         setupLineNumberView()
         setupLayout()
+        setupManagers()
     }
 
     required init?(coder: NSCoder) {
@@ -893,7 +924,40 @@ public class KeystoneTextContainerView: UIView {
         scrollView.keyboardDismissMode = .interactive
         scrollView.showsVerticalScrollIndicator = true
         scrollView.showsHorizontalScrollIndicator = false
+        scrollView.backgroundColor = UIColor(configuration.theme.background)
+        scrollView.clipsToBounds = true  // Ensure content is clipped properly
         addSubview(scrollView)
+    }
+
+    private func setupManagers() {
+        // Setup scroll synchronizer for smooth scroll-linked updates
+        scrollSynchronizer.onScrollUpdate = { [weak self] offset, velocity in
+            self?.handleScrollUpdate(offset: offset, velocity: velocity)
+        }
+        scrollSynchronizer.onIdleUpdate = { [weak self] in
+            self?.handleScrollIdle()
+        }
+
+        // Initialize line height cache with default values
+        lineHeightCache.defaultLineHeight = configuration.fontSize * configuration.lineHeightMultiplier
+    }
+
+    /// Handles scroll updates from the scroll synchronizer
+    private func handleScrollUpdate(offset: CGFloat, velocity: CGFloat) {
+        // Defer expensive updates during fast scrolling
+        if abs(velocity) > 1000 {
+            // Very fast scroll - only sync line numbers
+            syncLineNumberScroll()
+        } else {
+            // Normal scroll - can do more work
+            syncLineNumberScroll()
+        }
+    }
+
+    /// Handles scroll idle state (when scrolling stops)
+    private func handleScrollIdle() {
+        // Do deferred work like syntax highlighting
+        coordinator?.triggerViewportHighlighting()
     }
 
     private func setupTextView() {
@@ -904,8 +968,10 @@ public class KeystoneTextContainerView: UIView {
         textView.smartDashesType = .no
         textView.smartQuotesType = .no
         textView.smartInsertDeleteType = .no
-        textView.backgroundColor = .clear
+        // Use theme background instead of clear to ensure visibility
+        textView.backgroundColor = UIColor(configuration.theme.background)
         textView.textContainerInset = UIEdgeInsets(top: 8, left: 8, bottom: 8, right: 8)
+        textView.isOpaque = false  // Allow transparency for proper rendering
         // Scrolling is disabled in KeystoneUITextView init - scroll view handles it
 
         scrollView.addSubview(textView)
@@ -930,8 +996,10 @@ public class KeystoneTextContainerView: UIView {
 
     private func setupLayout() {
         scrollView.translatesAutoresizingMaskIntoConstraints = false
-        textView.translatesAutoresizingMaskIntoConstraints = false
         lineNumberView.translatesAutoresizingMaskIntoConstraints = false
+        // IMPORTANT: Text view uses manual frame management, NOT Auto Layout
+        // This is how Runestone does it - the scroll view content size is set manually
+        textView.translatesAutoresizingMaskIntoConstraints = true
         updateLayoutConstraints()
     }
 
@@ -953,13 +1021,6 @@ public class KeystoneTextContainerView: UIView {
                 scrollView.topAnchor.constraint(equalTo: topAnchor),
                 scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
                 scrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
-
-                // Text view inside scroll view - fills width, height determined by content
-                textView.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor),
-                textView.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor),
-                textView.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor),
-                textView.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor),
-                textView.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor),
             ]
         } else {
             activeConstraints = [
@@ -968,24 +1029,103 @@ public class KeystoneTextContainerView: UIView {
                 scrollView.topAnchor.constraint(equalTo: topAnchor),
                 scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
                 scrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
-
-                // Text view inside scroll view
-                textView.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor),
-                textView.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor),
-                textView.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor),
-                textView.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor),
-                textView.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor),
             ]
         }
         NSLayoutConstraint.activate(activeConstraints)
     }
 
-    /// Updates the content size based on text view content
+    /// Flag to prevent re-entrancy in updateContentSize
+    private var isUpdatingContentSize = false
+
+    /// Updates the content size and text view frame based on text view content.
+    /// This follows Runestone's pattern of manual frame management.
     func updateContentSize() {
+        // Prevent re-entrancy - UITextView's internal layout can trigger this again
+        guard !isUpdatingContentSize else { return }
+        isUpdatingContentSize = true
+        defer { isUpdatingContentSize = false }
+
+        let scrollViewWidth = scrollView.bounds.width
+        let scrollViewHeight = scrollView.bounds.height
+        guard scrollViewWidth > 0, scrollViewHeight > 0 else { return }
+
+        // Get the content height from the text view
         let contentHeight = textView.sizeThatFitsContent().height
+
         // Ensure minimum height equals scroll view height for proper scrolling feel
-        let minHeight = max(contentHeight, scrollView.bounds.height)
-        scrollView.contentSize = CGSize(width: scrollView.bounds.width, height: minHeight)
+        let minHeight = max(contentHeight, scrollViewHeight)
+
+        // Calculate content width based on line wrapping setting
+        let contentWidth: CGFloat
+        if configuration.lineWrapping {
+            // Line wrapping on: text view width matches scroll view
+            contentWidth = scrollViewWidth
+        } else {
+            // Line wrapping off: measure actual content width from layout manager
+            let layoutManager = textView.layoutManager
+            layoutManager.ensureLayout(for: textView.textContainer)
+            let usedRect = layoutManager.usedRect(for: textView.textContainer)
+            // Add padding for the text container insets
+            let actualWidth = usedRect.width + textView.textContainerInset.left + textView.textContainerInset.right + 20
+            contentWidth = max(actualWidth, scrollViewWidth)
+        }
+
+        // Only update frame if it changed significantly (avoid floating point issues)
+        let newFrame = CGRect(x: 0, y: 0, width: contentWidth, height: minHeight)
+        if abs(textView.frame.width - contentWidth) > 1 || abs(textView.frame.height - minHeight) > 1 {
+            textView.frame = newFrame
+        }
+
+        // Set scroll view content size
+        let newContentSize = CGSize(width: contentWidth, height: minHeight)
+        if abs(scrollView.contentSize.width - contentWidth) > 1 || abs(scrollView.contentSize.height - minHeight) > 1 {
+            scrollView.contentSize = newContentSize
+        }
+    }
+
+    // MARK: - Line Manager Integration
+
+    /// Rebuilds the line manager from current text
+    func rebuildLineManager() {
+        let text = textView.text ?? ""
+        lineManager.rebuild(from: text as NSString)
+
+        // Also rebuild height cache
+        let lineHeight = configuration.fontSize * configuration.lineHeightMultiplier
+        lineHeightCache.rebuild(lineCount: lineManager.lineCount, defaultHeight: lineHeight)
+    }
+
+    /// Returns the visible line range based on current scroll position
+    func visibleLineRange() -> ClosedRange<Int>? {
+        let viewportTop = scrollView.contentOffset.y
+        let viewportBottom = viewportTop + scrollView.bounds.height
+
+        return lineHeightCache.visibleLines(viewportTop: viewportTop, viewportBottom: viewportBottom)
+    }
+
+    /// Returns the visible character range based on current scroll position
+    func visibleCharacterRange() -> NSRange? {
+        guard let visibleLines = visibleLineRange(),
+              let firstLine = lineManager.line(at: visibleLines.lowerBound),
+              let lastLine = lineManager.line(at: visibleLines.upperBound) else {
+            return nil
+        }
+
+        let start = firstLine.startOffset
+        let end = lastLine.endOffset
+        return NSRange(location: start, length: end - start)
+    }
+
+    /// Scrolls to the given line number
+    func scrollToLine(_ lineNumber: Int, animated: Bool = false) {
+        let yOffset = lineHeightCache.yOffset(forLine: lineNumber)
+        let targetOffset = CGPoint(x: 0, y: max(0, yOffset - 50)) // 50pt padding
+        scrollView.setContentOffset(targetOffset, animated: animated)
+    }
+
+    /// Returns the line number at the given scroll offset
+    func lineAtScrollOffset(_ offset: CGFloat) -> Int {
+        return lineHeightCache.lineAt(yOffset: offset)
     }
 
     /// Scrolls to make the given range visible
@@ -1005,11 +1145,29 @@ public class KeystoneTextContainerView: UIView {
         rect.origin.x += textView.textContainerInset.left
         rect.origin.y += textView.textContainerInset.top
 
-        // Add some padding
-        rect = rect.insetBy(dx: 0, dy: -50)
+        // Calculate target scroll offset to center the rect vertically
+        let scrollViewHeight = scrollView.bounds.height
+        let targetY = max(0, rect.origin.y - (scrollViewHeight / 3)) // Position 1/3 from top
+        let maxY = max(0, scrollView.contentSize.height - scrollViewHeight)
+        let clampedY = min(targetY, maxY)
 
-        // Scroll the scroll view to make the rect visible
-        scrollView.scrollRectToVisible(rect, animated: animated)
+        // For horizontal, keep current position unless rect is off-screen
+        var targetX = scrollView.contentOffset.x
+        if rect.origin.x < scrollView.contentOffset.x {
+            targetX = max(0, rect.origin.x - 20)
+        } else if rect.maxX > scrollView.contentOffset.x + scrollView.bounds.width {
+            targetX = rect.maxX - scrollView.bounds.width + 20
+        }
+
+        let targetOffset = CGPoint(x: targetX, y: clampedY)
+
+        if animated {
+            UIView.animate(withDuration: 0.25) {
+                self.scrollView.setContentOffset(targetOffset, animated: false)
+            }
+        } else {
+            scrollView.setContentOffset(targetOffset, animated: false)
+        }
     }
 
     // Track last applied configuration to avoid redundant updates
@@ -1036,6 +1194,19 @@ public class KeystoneTextContainerView: UIView {
             lastAppliedShowLineNumbers = config.showLineNumbers
             lastAppliedLineWrapping = config.lineWrapping
             lastAppliedShowInvisibles = config.showInvisibleCharacters
+        } else {
+            // Always update background colors to catch theme changes (cheap operation)
+            let bgColor = UIColor(config.theme.background)
+            if scrollView.backgroundColor != bgColor {
+                scrollView.backgroundColor = bgColor
+                textView.backgroundColor = bgColor
+            }
+            // Update text color for theme changes
+            let textColor = UIColor(config.theme.text)
+            if textView.textColor != textColor {
+                textView.textColor = textColor
+                needsRehighlight = true
+            }
         }
 
         return needsRehighlight
@@ -1061,6 +1232,11 @@ public class KeystoneTextContainerView: UIView {
         lineNumberView.fontSize = config.fontSize
         lineNumberView.lineHeight = config.fontSize * config.lineHeightMultiplier
 
+        // Update background colors for theme changes
+        let bgColor = UIColor(config.theme.background)
+        scrollView.backgroundColor = bgColor
+        textView.backgroundColor = bgColor
+
         // Update text color for theme changes
         textView.textColor = UIColor(config.theme.text)
 
@@ -1075,26 +1251,29 @@ public class KeystoneTextContainerView: UIView {
             textView.setNeedsDisplay()
         }
 
-        // Update text wrapping and horizontal scrolling
+        // Update text wrapping - NEVER enable textView.isScrollEnabled as the scroll view handles all scrolling
         if config.lineWrapping {
             textView.textContainer.lineBreakMode = .byWordWrapping
             textView.textContainer.widthTracksTextView = true
-            textView.isScrollEnabled = true
-            textView.showsHorizontalScrollIndicator = false
+            // Scroll view only scrolls vertically when line wrapping is on
+            scrollView.showsHorizontalScrollIndicator = false
+            scrollView.alwaysBounceHorizontal = false
         } else {
             textView.textContainer.lineBreakMode = .byClipping
             textView.textContainer.widthTracksTextView = false
-            // Allow horizontal scrolling by making text container very wide
-            textView.textContainer.size = CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
-            textView.isScrollEnabled = true
-            textView.showsHorizontalScrollIndicator = true
-            textView.contentSize = CGSize(
-                width: max(textView.contentSize.width, textView.bounds.width * 2),
-                height: textView.contentSize.height
-            )
+            // Set container width to very large for horizontal scrolling
+            // The height should still be max to allow vertical layout
+            let containerWidth: CGFloat = 10000 // Large but finite
+            textView.textContainer.size = CGSize(width: containerWidth, height: CGFloat.greatestFiniteMagnitude)
+            // Enable horizontal scrolling on the scroll view
+            scrollView.showsHorizontalScrollIndicator = true
+            scrollView.alwaysBounceHorizontal = true
         }
 
+        // Force layout update and content size recalculation
         setNeedsLayout()
+        layoutIfNeeded()
+        updateContentSize()
     }
 
     // Cached line data to avoid full recalculation on every keystroke
@@ -1206,8 +1385,24 @@ public class KeystoneTextContainerView: UIView {
         }
     }
 
+    /// Track if initial layout has been done
+    private var hasPerformedInitialLayout = false
+
     override public func layoutSubviews() {
         super.layoutSubviews()
+
+        // CRITICAL: Update text view frame and scroll view content size
+        // This must happen on every layout pass to ensure proper sizing
+        updateContentSize()
+
+        // Force text view layout on first layout pass to ensure text renders
+        if !hasPerformedInitialLayout && scrollView.bounds.width > 0 {
+            hasPerformedInitialLayout = true
+            textView.layoutManager.ensureLayout(for: textView.textContainer)
+            textView.setNeedsDisplay()
+        }
+
+        // Update line numbers after content size is correct
         updateLineNumbers()
         syncLineNumberScroll()
     }
