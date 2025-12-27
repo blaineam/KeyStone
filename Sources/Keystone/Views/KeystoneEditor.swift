@@ -212,12 +212,18 @@ public struct KeystoneEditor: View {
             if findReplaceManager.isVisible && !findReplaceManager.searchQuery.isEmpty {
                 findReplaceManager.search(in: newValue)
             }
+            // Update bracket matching when text changes (cursor might be at a bracket)
+            updateMatchingBracket()
             onTextChange?(newValue)
         }
         .onChange(of: cursorPosition.wrappedValue) { _, newPosition in
             onCursorChange?(newPosition)
             // Update bracket matching when cursor moves
             updateMatchingBracket()
+        }
+        .onChange(of: matchingBracket) { _, _ in
+            // Force view update when bracket match changes
+            // This ensures highlights are applied immediately
         }
         .onChange(of: scrollOffset) { _, newOffset in
             onScrollChange?(newOffset)
@@ -308,11 +314,25 @@ public struct KeystoneEditor: View {
             return
         }
 
-        if cursorPosition.wrappedValue.offset > 0 {
-            matchingBracket = BracketMatcher.findMatch(in: text, at: cursorPosition.wrappedValue.offset - 1)
-        } else {
-            matchingBracket = nil
+        let offset = cursorPosition.wrappedValue.offset
+
+        // Check character at cursor position first (cursor is at the start of a bracket)
+        if offset < text.count {
+            if let match = BracketMatcher.findMatch(in: text, at: offset) {
+                matchingBracket = match
+                return
+            }
         }
+
+        // Then check character before cursor (cursor is after a bracket)
+        if offset > 0 {
+            if let match = BracketMatcher.findMatch(in: text, at: offset - 1) {
+                matchingBracket = match
+                return
+            }
+        }
+
+        matchingBracket = nil
     }
 
     private func insertSymbol(_ symbol: String) {

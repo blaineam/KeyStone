@@ -296,22 +296,30 @@ public struct KeystoneTextView: UIViewRepresentable {
             containerView.updateLineNumbers()
         }
 
-        // Skip expensive highlight operations during typing - only run when user is not editing
+        // Always apply bracket highlights - they're fast and important for UX
+        // Clear previous bracket highlights
+        if let prevMatch = context.coordinator.previousBracketMatch {
+            clearBracketHighlights(from: textStorage, match: prevMatch)
+        }
+
+        // Apply highlights for matching brackets
+        if let match = matchingBracket {
+            applyBracketHighlights(to: textStorage, match: match)
+            context.coordinator.previousBracketMatch = match
+        } else {
+            context.coordinator.previousBracketMatch = nil
+        }
+
+        // Update current line highlight
+        if configuration.highlightCurrentLine {
+            let highlightColor = UIColor(configuration.theme.currentLineHighlight)
+            containerView.updateCurrentLineHighlight(cursorPosition.offset, highlightColor: highlightColor)
+        } else {
+            containerView.clearCurrentLineHighlight()
+        }
+
+        // Skip search highlights during active editing (expensive for many matches)
         if !isUserCurrentlyEditing {
-            // Clear previous bracket highlights
-            if let prevMatch = context.coordinator.previousBracketMatch {
-                clearBracketHighlights(from: textStorage, match: prevMatch)
-            }
-
-            // Apply highlights for matching brackets
-            if let match = matchingBracket {
-                applyBracketHighlights(to: textStorage, match: match)
-                context.coordinator.previousBracketMatch = match
-            } else {
-                context.coordinator.previousBracketMatch = nil
-            }
-
-            // Apply search match highlights
             applySearchHighlights(
                 to: textStorage,
                 matches: searchMatches,
@@ -606,6 +614,12 @@ public struct KeystoneTextView: UIViewRepresentable {
                     in: currentText,
                     selectionLength: selectedRange.length
                 )
+
+                // Immediately update current line highlight for responsive feedback
+                if parent.configuration.highlightCurrentLine, let containerView = containerView {
+                    let highlightColor = UIColor(parent.configuration.theme.currentLineHighlight)
+                    containerView.updateCurrentLineHighlight(selectedRange.location, highlightColor: highlightColor)
+                }
             }
         }
 
@@ -686,14 +700,49 @@ public struct KeystoneTextView: UIViewRepresentable {
             textStorage.endEditing()
         }
 
-        private func handleCharacterPairs(textView: UITextView, newText: String) {
-            // Character pair insertion is handled during typing
-        }
-
         // Handle character pair insertion
         public func textView(_ textView: UITextView, shouldChangeTextIn range: NSRange, replacementText text: String) -> Bool {
-            // ALWAYS allow the text change - let the system handle insertion/deletion
-            // Auto-pair features are disabled until core typing is fixed
+            let config = parent.configuration
+            let nsText = textView.textStorage.string as NSString
+
+            // Handle backspace - delete pair if cursor is between paired brackets
+            if text.isEmpty && range.length == 1 && range.location > 0 {
+                if config.shouldDeletePair(in: nsText, at: range.location) {
+                    // Delete both characters of the pair
+                    let extendedRange = NSRange(location: range.location - 1, length: 2)
+                    if let textRange = textView.textRange(from: extendedRange) {
+                        textView.replace(textRange, withText: "")
+                        return false
+                    }
+                }
+                return true
+            }
+
+            // Only handle single character insertions
+            guard text.count == 1, let char = text.first else {
+                return true
+            }
+
+            // Check if we should skip over a closing character
+            if config.shouldSkipClosingPair(for: char, in: nsText, at: range.location) {
+                // Move cursor past the existing closing character instead of inserting
+                let newPosition = range.location + 1
+                textView.selectedRange = NSRange(location: newPosition, length: 0)
+                return false
+            }
+
+            // Check if we should auto-insert a closing pair
+            if let closingChar = config.shouldAutoInsertPair(for: char, in: nsText, at: range.location) {
+                // Insert both the typed character and its pair
+                let pairText = String(char) + String(closingChar)
+                if let textRange = textView.textRange(from: range) {
+                    textView.replace(textRange, withText: pairText)
+                    // Position cursor between the pair
+                    textView.selectedRange = NSRange(location: range.location + 1, length: 0)
+                    return false
+                }
+            }
+
             return true
         }
     }
@@ -991,15 +1040,66 @@ public class KeystoneTextContainerView: UIView {
         lineNumberView.setNeedsDisplay()
     }
 
-    func updateCurrentLineHighlight(_ cursorPosition: Int) {
+    /// Tracks the previous line range for clearing highlights
+    private var previousLineRange: NSRange?
+
+    func updateCurrentLineHighlight(_ cursorPosition: Int, highlightColor: UIColor?) {
         let text = textView.text ?? ""
+        let nsText = text as NSString
         var currentLine = 1
+        var lineStart = 0
+
+        // Find current line number and line start position
         for (index, char) in text.enumerated() {
             if index >= cursorPosition { break }
-            if char == "\n" { currentLine += 1 }
+            if char == "\n" {
+                currentLine += 1
+                lineStart = index + 1
+            }
         }
+
+        // Find line end position
+        var lineEnd = nsText.length
+        for i in cursorPosition..<nsText.length {
+            if nsText.character(at: i) == 0x0A { // '\n'
+                lineEnd = i
+                break
+            }
+        }
+
+        // Update line number gutter
         lineNumberView.currentLine = currentLine
         lineNumberView.setNeedsDisplay()
+
+        // Apply line highlight in text view if color provided
+        let textStorage = textView.textStorage
+        let currentRange = NSRange(location: lineStart, length: lineEnd - lineStart)
+
+        // Clear previous highlight if different line
+        if let prevRange = previousLineRange, prevRange != currentRange {
+            if prevRange.location + prevRange.length <= textStorage.length {
+                textStorage.removeAttribute(.backgroundColor, range: prevRange)
+            }
+        }
+
+        // Apply new highlight
+        if let color = highlightColor, currentRange.location + currentRange.length <= textStorage.length {
+            textStorage.addAttribute(.backgroundColor, value: color, range: currentRange)
+            previousLineRange = currentRange
+        } else {
+            previousLineRange = nil
+        }
+    }
+
+    /// Clears current line highlight (call before applying syntax highlighting)
+    func clearCurrentLineHighlight() {
+        if let prevRange = previousLineRange {
+            let textStorage = textView.textStorage
+            if prevRange.location + prevRange.length <= textStorage.length {
+                textStorage.removeAttribute(.backgroundColor, range: prevRange)
+            }
+            previousLineRange = nil
+        }
     }
 
     func syncLineNumberScroll() {
@@ -1388,6 +1488,14 @@ public struct KeystoneTextView: NSViewRepresentable {
             context.coordinator.previousBracketMatch = nil
         }
 
+        // Update current line highlight
+        if configuration.highlightCurrentLine {
+            let highlightColor = NSColor(configuration.theme.currentLineHighlight)
+            containerView.updateCurrentLineHighlight(cursorPosition.offset, highlightColor: highlightColor)
+        } else {
+            containerView.clearCurrentLineHighlight()
+        }
+
         // Apply search match highlights
         if let textStorage = containerView.textView.textStorage {
             applySearchHighlights(
@@ -1615,7 +1723,11 @@ public struct KeystoneTextView: NSViewRepresentable {
                 selectionLength: selectedRange.length
             )
 
-            containerView?.updateCurrentLineHighlight(selectedRange.location)
+            // Immediately update current line highlight for responsive feedback
+            if parent.configuration.highlightCurrentLine, let containerView = containerView {
+                let highlightColor = NSColor(parent.configuration.theme.currentLineHighlight)
+                containerView.updateCurrentLineHighlight(selectedRange.location, highlightColor: highlightColor)
+            }
         }
 
         @objc func scrollViewDidScroll(_ notification: Notification) {
@@ -1626,8 +1738,47 @@ public struct KeystoneTextView: NSViewRepresentable {
 
         // Handle character pair insertion
         public func textView(_ textView: NSTextView, shouldChangeTextIn range: NSRange, replacementString text: String?) -> Bool {
-            // ALWAYS allow the text change - let the system handle insertion/deletion
-            // Auto-pair features are disabled until core typing is fixed
+            guard let text = text, let textStorage = textView.textStorage else {
+                return true
+            }
+
+            let config = parent.configuration
+            let nsText = textStorage.string as NSString
+
+            // Handle backspace - delete pair if cursor is between paired brackets
+            if text.isEmpty && range.length == 1 && range.location > 0 {
+                if config.shouldDeletePair(in: nsText, at: range.location) {
+                    // Delete both characters of the pair
+                    let extendedRange = NSRange(location: range.location - 1, length: 2)
+                    textView.insertText("", replacementRange: extendedRange)
+                    return false
+                }
+                return true
+            }
+
+            // Only handle single character insertions
+            guard text.count == 1, let char = text.first else {
+                return true
+            }
+
+            // Check if we should skip over a closing character
+            if config.shouldSkipClosingPair(for: char, in: nsText, at: range.location) {
+                // Move cursor past the existing closing character instead of inserting
+                let newPosition = range.location + 1
+                textView.setSelectedRange(NSRange(location: newPosition, length: 0))
+                return false
+            }
+
+            // Check if we should auto-insert a closing pair
+            if let closingChar = config.shouldAutoInsertPair(for: char, in: nsText, at: range.location) {
+                // Insert both the typed character and its pair
+                let pairText = String(char) + String(closingChar)
+                textView.insertText(pairText, replacementRange: range)
+                // Position cursor between the pair
+                textView.setSelectedRange(NSRange(location: range.location + 1, length: 0))
+                return false
+            }
+
             return true
         }
     }
@@ -1926,15 +2077,65 @@ public class KeystoneTextContainerViewMac: NSView {
         lineNumberView.needsDisplay = true
     }
 
-    func updateCurrentLineHighlight(_ cursorPosition: Int) {
+    /// Tracks the previous line range for clearing highlights
+    private var previousLineRange: NSRange?
+
+    func updateCurrentLineHighlight(_ cursorPosition: Int, highlightColor: NSColor?) {
         let text = textView.string
+        let nsText = text as NSString
         var currentLine = 1
+        var lineStart = 0
+
+        // Find current line number and line start position
         for (index, char) in text.enumerated() {
             if index >= cursorPosition { break }
-            if char == "\n" { currentLine += 1 }
+            if char == "\n" {
+                currentLine += 1
+                lineStart = index + 1
+            }
         }
+
+        // Find line end position
+        var lineEnd = nsText.length
+        for i in cursorPosition..<nsText.length {
+            if nsText.character(at: i) == 0x0A { // '\n'
+                lineEnd = i
+                break
+            }
+        }
+
+        // Update line number gutter
         lineNumberView.currentLine = currentLine
         lineNumberView.needsDisplay = true
+
+        // Apply line highlight in text view if color provided
+        guard let textStorage = textView.textStorage else { return }
+        let currentRange = NSRange(location: lineStart, length: lineEnd - lineStart)
+
+        // Clear previous highlight if different line
+        if let prevRange = previousLineRange, prevRange != currentRange {
+            if prevRange.location + prevRange.length <= textStorage.length {
+                textStorage.removeAttribute(.backgroundColor, range: prevRange)
+            }
+        }
+
+        // Apply new highlight
+        if let color = highlightColor, currentRange.location + currentRange.length <= textStorage.length {
+            textStorage.addAttribute(.backgroundColor, value: color, range: currentRange)
+            previousLineRange = currentRange
+        } else {
+            previousLineRange = nil
+        }
+    }
+
+    /// Clears current line highlight
+    func clearCurrentLineHighlight() {
+        if let prevRange = previousLineRange, let textStorage = textView.textStorage {
+            if prevRange.location + prevRange.length <= textStorage.length {
+                textStorage.removeAttribute(.backgroundColor, range: prevRange)
+            }
+            previousLineRange = nil
+        }
     }
 
     func syncLineNumberScroll() {

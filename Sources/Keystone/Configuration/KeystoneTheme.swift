@@ -128,7 +128,7 @@ public struct KeystoneTheme: Equatable, Sendable {
         text: Color(light: .black, dark: Color(white: 0.95)),
         gutterBackground: Color(light: Color(white: 0.96), dark: Color(white: 0.16)),
         lineNumber: Color(light: Color(white: 0.45), dark: Color(white: 0.65)),
-        currentLineHighlight: Color(light: Color.blue.opacity(0.06), dark: Color.white.opacity(0.06)),
+        currentLineHighlight: Color(light: Color.blue.opacity(0.08), dark: Color.white.opacity(0.10)),
         invisibleCharacter: Color(light: Color(white: 0.8), dark: Color(white: 0.40))
     )
 

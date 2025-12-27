@@ -10,15 +10,18 @@ public struct EditorSettingsView: View {
     @ObservedObject var configuration: KeystoneConfiguration
     @Binding var isPresented: Bool
     var onConvertLineEndings: ((LineEnding) -> Void)?
+    var onConvertIndentation: ((IndentationSettings) -> Void)?
 
     public init(
         configuration: KeystoneConfiguration,
         isPresented: Binding<Bool>,
-        onConvertLineEndings: ((LineEnding) -> Void)? = nil
+        onConvertLineEndings: ((LineEnding) -> Void)? = nil,
+        onConvertIndentation: ((IndentationSettings) -> Void)? = nil
     ) {
         self.configuration = configuration
         self._isPresented = isPresented
         self.onConvertLineEndings = onConvertLineEndings
+        self.onConvertIndentation = onConvertIndentation
     }
 
     public var body: some View {
@@ -65,6 +68,23 @@ public struct EditorSettingsView: View {
                     if configuration.indentation.type == .spaces {
                         Stepper("Width: \(configuration.indentation.width) spaces",
                                value: $configuration.indentation.width, in: 1...8)
+                    }
+
+                    if let onConvert = onConvertIndentation {
+                        Menu("Convert Indentation To...") {
+                            Button("Tabs") {
+                                let newSettings = IndentationSettings(type: .tabs, width: configuration.indentation.width)
+                                configuration.indentation = newSettings
+                                onConvert(newSettings)
+                            }
+                            ForEach([2, 4, 8], id: \.self) { width in
+                                Button("\(width) Spaces") {
+                                    let newSettings = IndentationSettings(type: .spaces, width: width)
+                                    configuration.indentation = newSettings
+                                    onConvert(newSettings)
+                                }
+                            }
+                        }
                     }
                 }
 

@@ -91,4 +91,52 @@ public struct IndentationSettings: Equatable, Codable, Sendable {
         let (type, width) = IndentationType.detect(in: text)
         return IndentationSettings(type: type, width: width)
     }
+
+    /// Converts the indentation in the given text to use these settings.
+    /// - Parameter text: The text to convert.
+    /// - Returns: The text with converted indentation.
+    public static func convert(_ text: String, to settings: IndentationSettings) -> String {
+        // Detect current indentation
+        let current = detect(from: text)
+
+        // If already using the target settings, return as-is
+        if current.type == settings.type && (current.type == .tabs || current.width == settings.width) {
+            return text
+        }
+
+        let lines = text.components(separatedBy: "\n")
+        var result: [String] = []
+
+        for line in lines {
+            var leadingWhitespace = ""
+            var indentLevel = 0
+            var contentStart = line.startIndex
+
+            // Count indentation levels in the line
+            for char in line {
+                if char == "\t" {
+                    indentLevel += 1
+                    contentStart = line.index(after: contentStart)
+                } else if char == " " {
+                    leadingWhitespace.append(char)
+                    contentStart = line.index(after: contentStart)
+                } else {
+                    break
+                }
+            }
+
+            // Calculate total indent levels from spaces
+            let spaceWidth = current.type == .spaces ? current.width : settings.width
+            if !leadingWhitespace.isEmpty {
+                indentLevel += leadingWhitespace.count / max(1, spaceWidth)
+            }
+
+            // Build new indentation
+            let newIndent = String(repeating: settings.indentString, count: indentLevel)
+            let content = String(line[contentStart...])
+            result.append(newIndent + content)
+        }
+
+        return result.joined(separator: "\n")
+    }
 }
