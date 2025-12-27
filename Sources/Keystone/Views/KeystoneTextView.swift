@@ -11,6 +11,24 @@ import SwiftUI
 #if os(iOS)
 import UIKit
 
+// MARK: - Custom UITextView that controls scroll-to-cursor behavior
+
+/// Custom UITextView subclass that allows control over automatic scroll-to-cursor behavior.
+/// By default, UITextView always scrolls to keep the cursor visible, which interferes with
+/// user scrolling. This subclass only scrolls when explicitly requested.
+class KeystoneUITextView: UITextView {
+    /// When true, allows scrollRangeToVisible to work. When false, prevents automatic scrolling.
+    var allowScrollToCursor = false
+
+    override func scrollRangeToVisible(_ range: NSRange) {
+        // Only scroll if explicitly allowed (e.g., during search navigation, go-to-line)
+        // This prevents UITextView's automatic scroll-to-cursor behavior from interfering
+        // with user scrolling
+        guard allowScrollToCursor else { return }
+        super.scrollRangeToVisible(range)
+    }
+}
+
 // MARK: - Range Extension
 
 extension Range where Bound == String.Index {
@@ -281,10 +299,12 @@ public struct KeystoneTextView: UIViewRepresentable {
             context.coordinator.isSettingCursorProgrammatically = true
             containerView.textView.selectedRange = newRange
 
-            // Scroll to the cursor position
+            // Temporarily allow scroll-to-cursor, then scroll
+            containerView.textView.allowScrollToCursor = true
             UIView.performWithoutAnimation {
                 containerView.textView.scrollRangeToVisible(newRange)
             }
+            containerView.textView.allowScrollToCursor = false
 
             // Reset flag after a brief delay to ensure selection change notification has fired
             DispatchQueue.main.async {
@@ -762,7 +782,7 @@ public struct KeystoneTextView: UIViewRepresentable {
 
 /// Container view that holds text view and line number gutter
 public class KeystoneTextContainerView: UIView {
-    let textView: UITextView
+    let textView: KeystoneUITextView
     let lineNumberView: LineNumberGutterView
     var coordinator: KeystoneTextView.Coordinator?
     private var configuration: KeystoneConfiguration
@@ -822,7 +842,7 @@ public class KeystoneTextContainerView: UIView {
         invisibleLayoutManager.addTextContainer(textContainer)
         textStorage.addLayoutManager(invisibleLayoutManager)
 
-        self.textView = UITextView(frame: .zero, textContainer: textContainer)
+        self.textView = KeystoneUITextView(frame: .zero, textContainer: textContainer)
         self.lineNumberView = LineNumberGutterView()
 
         super.init(frame: .zero)
