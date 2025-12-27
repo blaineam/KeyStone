@@ -991,8 +991,8 @@ public class KeystoneTextContainerView: UIView {
     /// Scrolls to make the given range visible
     func scrollToRange(_ range: NSRange, animated: Bool = false) {
         // Get the rect for the range from the text view's layout manager
-        guard let layoutManager = textView.layoutManager,
-              let textContainer = textView.textContainer else { return }
+        let layoutManager = textView.layoutManager
+        let textContainer = textView.textContainer
 
         // Ensure layout is up to date
         layoutManager.ensureLayout(for: textContainer)
