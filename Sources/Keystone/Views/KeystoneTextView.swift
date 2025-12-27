@@ -606,29 +606,35 @@ public struct KeystoneTextView: UIViewRepresentable {
         // Flag to prevent feedback loop when programmatically setting cursor position
         var isSettingCursorProgrammatically = false
 
-        // Note: Removed lastScrolledToCursorOffset tracking as it was preventing
-        // users from scrolling freely after using features like tail follow
+        // Debounce timer for cursor position updates to prevent rapid SwiftUI re-renders
+        private var cursorUpdateWorkItem: DispatchWorkItem?
 
         public func textViewDidChangeSelection(_ textView: UITextView) {
-            // CRITICAL: Skip ALL updates during scrolling to prevent feedback loops
-            // This is the key pattern from Runestone that prevents flickering
+            // CRITICAL: Skip ALL updates during scrolling or programmatic changes
             guard !isUpdating && !isSettingCursorProgrammatically && !isScrolling else { return }
 
-            // Update cursor position binding for status bar display
             let selectedRange = textView.selectedRange
 
-            // Only update if cursor actually moved (avoid redundant updates during typing)
-            if selectedRange.location != lastSyncedCursorOffset || selectedRange.length != parent.cursorPosition.selectionLength {
-                lastSyncedCursorOffset = selectedRange.location
+            // Only update if cursor actually moved
+            guard selectedRange.location != lastSyncedCursorOffset || selectedRange.length != parent.cursorPosition.selectionLength else { return }
 
-                // Use the text view's text for cursor calculation since it has the current state
-                let currentText = textView.text ?? ""
-                parent.cursorPosition = CursorPosition.from(
+            lastSyncedCursorOffset = selectedRange.location
+
+            // DEBOUNCE cursor position updates to prevent rapid SwiftUI re-render cycles
+            // This is critical for preventing the feedback loop that causes flickering
+            cursorUpdateWorkItem?.cancel()
+            let workItem = DispatchWorkItem { [weak self] in
+                guard let self = self else { return }
+                let currentText = self.containerView?.textView.text ?? ""
+                self.parent.cursorPosition = CursorPosition.from(
                     offset: selectedRange.location,
                     in: currentText,
                     selectionLength: selectedRange.length
                 )
             }
+            cursorUpdateWorkItem = workItem
+            // 100ms debounce - enough to batch rapid selection changes
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1, execute: workItem)
         }
 
         // Debounce timer for scroll-end syntax highlighting
