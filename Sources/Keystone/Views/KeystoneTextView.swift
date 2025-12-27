@@ -2672,10 +2672,9 @@ public class KeystoneTextContainerViewMac: NSView {
 
         let text = textView.string
 
-        // Ensure layout is complete before iterating
-        if let textContainer = textView.textContainer {
-            layoutManager.ensureLayout(for: textContainer)
-        }
+        // NOTE: Do NOT call ensureLayout here - it forces full document layout which is
+        // extremely expensive for large files (causes beachball/lockup).
+        // Instead, only process glyphs that have already been laid out.
 
         var lineData: [(lineNumber: Int, yPosition: CGFloat, height: CGFloat)] = []
         var lineNumber = 1
