@@ -181,6 +181,9 @@ public struct KeystoneTextView: UIViewRepresentable {
         context.coordinator.parent = self
         context.coordinator.isUpdating = true
 
+        // Track if we're scrolling - used to skip non-essential work
+        let isCurrentlyScrolling = context.coordinator.isScrolling
+
         // Skip most work if user is actively editing OR we're syncing from internal edit
         // This prevents updateUIView from overwriting the text view with stale binding data
         let isUserCurrentlyEditing = context.coordinator.isUserEditing || context.coordinator.isSyncingFromInternalEdit
@@ -297,41 +300,42 @@ public struct KeystoneTextView: UIViewRepresentable {
             containerView.updateLineNumbers()
         }
 
-        // Always apply bracket highlights - they're fast and important for UX
-        // Clear previous bracket highlights
-        if let prevMatch = context.coordinator.previousBracketMatch {
-            clearBracketHighlights(from: textStorage, match: prevMatch)
-        }
-
-        // Apply highlights for matching brackets
-        if let match = matchingBracket {
-            applyBracketHighlights(to: textStorage, match: match)
-            context.coordinator.previousBracketMatch = match
-        } else {
-            context.coordinator.previousBracketMatch = nil
-        }
-
-        // Update current line highlight - only if cursor position changed
-        if configuration.highlightCurrentLine {
-            if cursorPosition.offset != context.coordinator.lastLineHighlightCursorOffset {
-                context.coordinator.lastLineHighlightCursorOffset = cursorPosition.offset
-                let highlightColor = UIColor(configuration.theme.currentLineHighlight)
-                containerView.updateCurrentLineHighlight(cursorPosition.offset, highlightColor: highlightColor)
+        // SKIP all highlight work during scrolling to prevent flickering
+        // This is a key optimization from Runestone's architecture
+        if !isCurrentlyScrolling {
+            // Apply bracket highlights
+            if let prevMatch = context.coordinator.previousBracketMatch {
+                clearBracketHighlights(from: textStorage, match: prevMatch)
             }
-        } else {
-            context.coordinator.lastLineHighlightCursorOffset = -1
-            containerView.clearCurrentLineHighlight()
-        }
+            if let match = matchingBracket {
+                applyBracketHighlights(to: textStorage, match: match)
+                context.coordinator.previousBracketMatch = match
+            } else {
+                context.coordinator.previousBracketMatch = nil
+            }
 
-        // Skip search highlights during active editing (expensive for many matches)
-        if !isUserCurrentlyEditing {
-            applySearchHighlights(
-                to: textStorage,
-                matches: searchMatches,
-                currentIndex: currentMatchIndex,
-                text: text,
-                coordinator: context.coordinator
-            )
+            // Update current line highlight - only if cursor position changed
+            if configuration.highlightCurrentLine {
+                if cursorPosition.offset != context.coordinator.lastLineHighlightCursorOffset {
+                    context.coordinator.lastLineHighlightCursorOffset = cursorPosition.offset
+                    let highlightColor = UIColor(configuration.theme.currentLineHighlight)
+                    containerView.updateCurrentLineHighlight(cursorPosition.offset, highlightColor: highlightColor)
+                }
+            } else {
+                context.coordinator.lastLineHighlightCursorOffset = -1
+                containerView.clearCurrentLineHighlight()
+            }
+
+            // Skip search highlights during active editing (expensive for many matches)
+            if !isUserCurrentlyEditing {
+                applySearchHighlights(
+                    to: textStorage,
+                    matches: searchMatches,
+                    currentIndex: currentMatchIndex,
+                    text: text,
+                    coordinator: context.coordinator
+                )
+            }
         }
 
         context.coordinator.isUpdating = false
@@ -507,6 +511,10 @@ public struct KeystoneTextView: UIViewRepresentable {
         var appliedSearchHighlightRanges: [NSRange] = []
         /// Tracks the last cursor offset used for line highlight to avoid redundant calls
         var lastLineHighlightCursorOffset: Int = -1
+        /// Track scroll state to defer updates during scrolling (prevents flickering)
+        var isScrolling = false
+        var isDragging = false
+        var isDecelerating = false
 
         public func textViewDidChange(_ textView: UITextView) {
             guard !isUpdating else { return }
@@ -602,10 +610,9 @@ public struct KeystoneTextView: UIViewRepresentable {
         // users from scrolling freely after using features like tail follow
 
         public func textViewDidChangeSelection(_ textView: UITextView) {
-            // Don't update cursor position binding if:
-            // 1. We're in the middle of a view update (isUpdating)
-            // 2. We're programmatically setting cursor position (e.g., from find/replace navigation)
-            guard !isUpdating && !isSettingCursorProgrammatically else { return }
+            // CRITICAL: Skip ALL updates during scrolling to prevent feedback loops
+            // This is the key pattern from Runestone that prevents flickering
+            guard !isUpdating && !isSettingCursorProgrammatically && !isScrolling else { return }
 
             // Update cursor position binding for status bar display
             let selectedRange = textView.selectedRange
@@ -621,48 +628,44 @@ public struct KeystoneTextView: UIViewRepresentable {
                     in: currentText,
                     selectionLength: selectedRange.length
                 )
-                // NOTE: Line highlight is now handled by updateUIView with caching
-                // Removed duplicate call here to prevent double updates
             }
         }
 
         // Debounce timer for scroll-end syntax highlighting
         private var scrollEndWorkItem: DispatchWorkItem?
 
+        public func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
+            isDragging = true
+            isScrolling = true
+        }
+
+        public func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
+            isDragging = false
+            if !decelerate {
+                isScrolling = false
+            }
+        }
+
+        public func scrollViewWillBeginDecelerating(_ scrollView: UIScrollView) {
+            isDecelerating = true
+        }
+
         public func scrollViewDidScroll(_ scrollView: UIScrollView) {
-            // Avoid modifying state during view update
-            guard !isUpdating else {
-                containerView?.syncLineNumberScroll()
-                return
-            }
-
-            let offset = scrollView.contentOffset.y
-            DispatchQueue.main.async { [weak self] in
-                self?.parent.scrollOffset = offset
-            }
+            // ONLY sync line numbers during scroll - no other state updates
             containerView?.syncLineNumberScroll()
-
-            // Debounce scroll-end highlighting - re-highlight visible viewport after scrolling stops
-            scrollEndWorkItem?.cancel()
-            let workItem = DispatchWorkItem { [weak self] in
-                self?.triggerViewportHighlighting()
-            }
-            scrollEndWorkItem = workItem
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: workItem)
         }
 
         public func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
-            // Immediately trigger highlighting when scroll deceleration ends
+            isDecelerating = false
+            isScrolling = false
+            // Trigger highlighting when scroll deceleration ends
             scrollEndWorkItem?.cancel()
             triggerViewportHighlighting()
         }
 
-        public func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
-            // If not decelerating, trigger highlighting immediately
-            if !decelerate {
-                scrollEndWorkItem?.cancel()
-                triggerViewportHighlighting()
-            }
+        public func scrollViewDidEndScrollingAnimation(_ scrollView: UIScrollView) {
+            isScrolling = false
+            triggerViewportHighlighting()
         }
 
         private func triggerViewportHighlighting() {
