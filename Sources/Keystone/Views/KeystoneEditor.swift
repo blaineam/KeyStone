@@ -60,6 +60,12 @@ public struct KeystoneEditor: View {
     /// Callback to toggle tail follow mode.
     public var onToggleTailFollow: (() -> Void)?
 
+    /// Callback when line endings should be converted.
+    public var onConvertLineEndings: ((LineEnding) -> Void)?
+
+    /// Callback when indentation should be converted.
+    public var onConvertIndentation: ((IndentationSettings) -> Void)?
+
     /// Controller for undo/redo operations (bridges to native text view's undo manager).
     @StateObject private var undoController = UndoController()
 
@@ -80,8 +86,13 @@ public struct KeystoneEditor: View {
     private var scrollToCursor: Binding<Bool> {
         externalScrollToCursor ?? $internalScrollToCursor
     }
-    @State private var showGoToLine = false
+    private var externalShowGoToLine: Binding<Bool>?
+    @State private var internalShowGoToLine = false
+    private var showGoToLine: Binding<Bool> {
+        externalShowGoToLine ?? $internalShowGoToLine
+    }
     @State private var goToLineText = ""
+    @State private var showSettings = false
 
     #if os(iOS)
     @State private var showSymbolKeyboard = false
@@ -103,11 +114,14 @@ public struct KeystoneEditor: View {
     ///   - findReplaceManager: The find/replace manager.
     ///   - cursorPosition: Optional binding for external cursor position control (e.g., for scroll-to-end).
     ///   - scrollToCursor: Optional binding to trigger scroll to cursor (set to true to scroll, resets to false).
+    ///   - showGoToLine: Optional binding to trigger showing the Go To Line dialog.
     ///   - isTailFollowEnabled: Optional binding for tail follow state (shows follow button when provided).
     ///   - onCursorChange: Optional callback when cursor position changes.
     ///   - onScrollChange: Optional callback when scroll position changes.
     ///   - onTextChange: Optional callback when text changes.
     ///   - onToggleTailFollow: Optional callback to toggle tail follow mode.
+    ///   - onConvertLineEndings: Optional callback when user requests line ending conversion.
+    ///   - onConvertIndentation: Optional callback when user requests indentation conversion.
     public init(
         text: Binding<String>,
         language: KeystoneLanguage = .plainText,
@@ -115,11 +129,14 @@ public struct KeystoneEditor: View {
         findReplaceManager: FindReplaceManager,
         cursorPosition: Binding<CursorPosition>? = nil,
         scrollToCursor: Binding<Bool>? = nil,
+        showGoToLine: Binding<Bool>? = nil,
         isTailFollowEnabled: Binding<Bool>? = nil,
         onCursorChange: ((CursorPosition) -> Void)? = nil,
         onScrollChange: ((CGFloat) -> Void)? = nil,
         onTextChange: ((String) -> Void)? = nil,
-        onToggleTailFollow: (() -> Void)? = nil
+        onToggleTailFollow: (() -> Void)? = nil,
+        onConvertLineEndings: ((LineEnding) -> Void)? = nil,
+        onConvertIndentation: ((IndentationSettings) -> Void)? = nil
     ) {
         self._text = text
         self.language = language
@@ -127,11 +144,14 @@ public struct KeystoneEditor: View {
         self.findReplaceManager = findReplaceManager
         self.externalCursorPosition = cursorPosition
         self.externalScrollToCursor = scrollToCursor
+        self.externalShowGoToLine = showGoToLine
         self.isTailFollowEnabled = isTailFollowEnabled
         self.onCursorChange = onCursorChange
         self.onScrollChange = onScrollChange
         self.onTextChange = onTextChange
         self.onToggleTailFollow = onToggleTailFollow
+        self.onConvertLineEndings = onConvertLineEndings
+        self.onConvertIndentation = onConvertIndentation
     }
 
     // MARK: - Body
@@ -146,7 +166,8 @@ public struct KeystoneEditor: View {
                 showSymbolKeyboard: $showSymbolKeyboard,
                 undoController: undoController,
                 isTailFollowEnabled: isTailFollowEnabled,
-                onGoToLine: { showGoToLine = true },
+                onGoToLine: { showGoToLine.wrappedValue = true },
+                onShowSettings: { showSettings = true },
                 onToggleTailFollow: onToggleTailFollow
             )
             #else
@@ -156,7 +177,8 @@ public struct KeystoneEditor: View {
                 findReplaceManager: findReplaceManager,
                 undoController: undoController,
                 isTailFollowEnabled: isTailFollowEnabled,
-                onGoToLine: { showGoToLine = true },
+                onGoToLine: { showGoToLine.wrappedValue = true },
+                onShowSettings: { showSettings = true },
                 onToggleTailFollow: onToggleTailFollow
             )
             #endif
@@ -241,7 +263,7 @@ public struct KeystoneEditor: View {
         .onAppear {
             updateLineCount(from: text)
         }
-        .alert("Go to Line", isPresented: $showGoToLine) {
+        .alert("Go to Line", isPresented: showGoToLine) {
             TextField("Line or Line:Column (e.g., 42 or 42:10)", text: $goToLineText)
                 #if os(iOS)
                 .keyboardType(.numbersAndPunctuation)
@@ -252,6 +274,24 @@ public struct KeystoneEditor: View {
             }
         } message: {
             Text("Enter line number, or line:column")
+        }
+        .sheet(isPresented: $showSettings) {
+            EditorSettingsView(
+                configuration: configuration,
+                isPresented: $showSettings,
+                onConvertLineEndings: { newEnding in
+                    // Convert the text using Keystone's built-in conversion
+                    text = LineEnding.convert(text, to: newEnding)
+                    // Call external callback if provided (for app-specific handling like marking unsaved)
+                    onConvertLineEndings?(newEnding)
+                },
+                onConvertIndentation: { newIndentation in
+                    // Convert the text using Keystone's built-in conversion
+                    text = IndentationSettings.convert(text, to: newIndentation)
+                    // Call external callback if provided (for app-specific handling like marking unsaved)
+                    onConvertIndentation?(newIndentation)
+                }
+            )
         }
         #if os(macOS)
         .onKeyPress(.escape) {
@@ -285,7 +325,7 @@ public struct KeystoneEditor: View {
     /// Shows the go to line dialog.
     public func showGoToLineDialog() {
         goToLineText = ""
-        showGoToLine = true
+        showGoToLine.wrappedValue = true
     }
 
     #if os(iOS)
@@ -863,6 +903,7 @@ struct KeystoneEditorToolbarBar: View {
     @ObservedObject var undoController: UndoController
     var isTailFollowEnabled: Binding<Bool>?
     var onGoToLine: (() -> Void)?
+    var onShowSettings: (() -> Void)?
     var onToggleTailFollow: (() -> Void)?
 
     var body: some View {
@@ -924,10 +965,49 @@ struct KeystoneEditorToolbarBar: View {
             }
 
             Spacer()
+
+            // Settings (right aligned)
+            toolbarButton(icon: "gearshape", tooltip: "Editor Settings", enabled: true) {
+                onShowSettings?()
+            }
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
         .background(Color.keystoneStatusBar)
+        // Keyboard shortcuts
+        .background {
+            VStack(spacing: 0) {
+                // Cmd+Z: Undo
+                Button("", action: { undoController.undo() })
+                    .keyboardShortcut("z", modifiers: .command)
+                // Cmd+Shift+Z: Redo
+                Button("", action: { undoController.redo() })
+                    .keyboardShortcut("z", modifiers: [.command, .shift])
+                // Cmd+F: Find
+                Button("", action: { findReplaceManager.toggle() })
+                    .keyboardShortcut("f", modifiers: .command)
+                // Cmd+G: Find Next
+                Button("", action: {
+                    if !findReplaceManager.matches.isEmpty { findReplaceManager.findNext() }
+                })
+                    .keyboardShortcut("g", modifiers: .command)
+                // Cmd+Shift+G: Find Previous
+                Button("", action: {
+                    if !findReplaceManager.matches.isEmpty { findReplaceManager.findPrevious() }
+                })
+                    .keyboardShortcut("g", modifiers: [.command, .shift])
+                // Cmd+L: Go to Line
+                Button("", action: { onGoToLine?() })
+                    .keyboardShortcut("l", modifiers: .command)
+                // Cmd+Shift+T: Toggle follow (if available)
+                if let onToggleTailFollow = onToggleTailFollow {
+                    Button("", action: { onToggleTailFollow() })
+                        .keyboardShortcut("t", modifiers: [.command, .shift])
+                }
+            }
+            .frame(width: 0, height: 0)
+            .opacity(0)
+        }
     }
 
     private func toolbarButton(icon: String, tooltip: String, enabled: Bool, isActive: Bool = false, action: @escaping () -> Void) -> some View {
@@ -957,6 +1037,7 @@ struct KeystoneEditorToolbarBar: View {
     @ObservedObject var undoController: UndoController
     var isTailFollowEnabled: Binding<Bool>?
     var onGoToLine: (() -> Void)?
+    var onShowSettings: (() -> Void)?
     var onToggleTailFollow: (() -> Void)?
 
     var body: some View {
@@ -1011,6 +1092,11 @@ struct KeystoneEditorToolbarBar: View {
                     withAnimation(.easeInOut(duration: 0.2)) {
                         showSymbolKeyboard.toggle()
                     }
+                }
+
+                // Settings
+                toolbarButton(icon: "gearshape", enabled: true) {
+                    onShowSettings?()
                 }
 
                 // Tail Follow (only show if callback is provided)

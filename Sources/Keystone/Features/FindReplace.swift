@@ -381,6 +381,7 @@ public struct FindReplaceBar: View {
                     .cornerRadius(6)
 
                     // Replace buttons
+                    #if os(iOS)
                     Button("Replace") {
                         if let newText = manager.replaceCurrent(in: text) {
                             onReplace(newText)
@@ -395,6 +396,31 @@ public struct FindReplaceBar: View {
                     }
                     .buttonStyle(.bordered)
                     .disabled(manager.matches.isEmpty)
+                    #else
+                    // macOS: Use plain text buttons to avoid double border
+                    Button(action: {
+                        if let newText = manager.replaceCurrent(in: text) {
+                            onReplace(newText)
+                        }
+                    }) {
+                        Text("Replace")
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 4)
+                    }
+                    .buttonStyle(.accessoryBar)
+                    .disabled(manager.currentMatch == nil)
+
+                    Button(action: {
+                        let newText = manager.replaceAll(in: text)
+                        onReplace(newText)
+                    }) {
+                        Text("Replace All")
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 4)
+                    }
+                    .buttonStyle(.accessoryBar)
+                    .disabled(manager.matches.isEmpty)
+                    #endif
                 }
             }
         }

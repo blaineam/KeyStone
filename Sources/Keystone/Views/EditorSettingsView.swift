@@ -25,6 +25,17 @@ public struct EditorSettingsView: View {
     }
 
     public var body: some View {
+        #if os(iOS)
+        iOSSettingsView
+        #else
+        macOSSettingsView
+        #endif
+    }
+
+    // MARK: - iOS Settings View
+
+    #if os(iOS)
+    private var iOSSettingsView: some View {
         NavigationStack {
             Form {
                 // Appearance Section
@@ -114,9 +125,7 @@ public struct EditorSettingsView: View {
                 }
             }
             .navigationTitle("Editor Settings")
-            #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
-            #endif
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") {
@@ -126,6 +135,145 @@ public struct EditorSettingsView: View {
             }
         }
     }
+    #endif
+
+    // MARK: - macOS Settings View
+
+    #if os(macOS)
+    private var macOSSettingsView: some View {
+        VStack(spacing: 0) {
+            // Header
+            HStack {
+                Text("Editor Settings")
+                    .font(.headline)
+                Spacer()
+                Button("Done") {
+                    isPresented = false
+                }
+                .keyboardShortcut(.defaultAction)
+            }
+            .padding()
+
+            Divider()
+
+            // Settings content
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    // Appearance Section
+                    GroupBox("Appearance") {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Toggle("Show Line Numbers", isOn: $configuration.showLineNumbers)
+                            Toggle("Highlight Current Line", isOn: $configuration.highlightCurrentLine)
+                            Toggle("Show Invisible Characters", isOn: $configuration.showInvisibleCharacters)
+                            Toggle("Line Wrapping", isOn: $configuration.lineWrapping)
+
+                            HStack {
+                                Text("Font Size")
+                                Spacer()
+                                Stepper("\(Int(configuration.fontSize))pt", value: $configuration.fontSize, in: 8...32)
+                            }
+
+                            HStack {
+                                Text("Line Height")
+                                Spacer()
+                                Slider(value: $configuration.lineHeightMultiplier, in: 1.0...2.0, step: 0.1)
+                                    .frame(width: 100)
+                                Text(String(format: "%.1fx", configuration.lineHeightMultiplier))
+                                    .frame(width: 35)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.vertical, 4)
+                    }
+
+                    // Behavior Section
+                    GroupBox("Behavior") {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Toggle("Auto-insert Pairs", isOn: $configuration.autoInsertPairs)
+                            Toggle("Highlight Matching Brackets", isOn: $configuration.highlightMatchingBrackets)
+                            Toggle("Tab Key Inserts Tab", isOn: $configuration.tabKeyInsertsTab)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.vertical, 4)
+                    }
+
+                    // Indentation Section
+                    GroupBox("Indentation") {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Picker("Type", selection: $configuration.indentation.type) {
+                                ForEach(IndentationType.allCases) { type in
+                                    Text(type.rawValue).tag(type)
+                                }
+                            }
+                            .pickerStyle(.segmented)
+
+                            if configuration.indentation.type == .spaces {
+                                Stepper("Width: \(configuration.indentation.width) spaces",
+                                       value: $configuration.indentation.width, in: 1...8)
+                            }
+
+                            if let onConvert = onConvertIndentation {
+                                Menu("Convert Indentation To...") {
+                                    Button("Tabs") {
+                                        let newSettings = IndentationSettings(type: .tabs, width: configuration.indentation.width)
+                                        configuration.indentation = newSettings
+                                        onConvert(newSettings)
+                                    }
+                                    ForEach([2, 4, 8], id: \.self) { width in
+                                        Button("\(width) Spaces") {
+                                            let newSettings = IndentationSettings(type: .spaces, width: width)
+                                            configuration.indentation = newSettings
+                                            onConvert(newSettings)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.vertical, 4)
+                    }
+
+                    // Line Endings Section
+                    GroupBox("Line Endings") {
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack {
+                                Text("Current")
+                                Spacer()
+                                Text(configuration.lineEnding.displayName)
+                                    .foregroundColor(.secondary)
+                            }
+
+                            if let onConvert = onConvertLineEndings {
+                                Menu("Convert To...") {
+                                    ForEach(LineEnding.allCases.filter { $0 != .mixed && $0 != configuration.lineEnding }) { ending in
+                                        Button(ending.displayName) {
+                                            onConvert(ending)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.vertical, 4)
+                    }
+
+                    // Theme Section
+                    GroupBox("Theme") {
+                        VStack(alignment: .leading, spacing: 4) {
+                            themePicker
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.vertical, 4)
+                    }
+                }
+                .padding()
+            }
+        }
+        .frame(width: 400, height: 580)
+    }
+    #endif
+
+    // MARK: - Shared Components
 
     private var themePicker: some View {
         ForEach(KeystoneTheme.allThemes, id: \.name) { item in
@@ -138,12 +286,23 @@ public struct EditorSettingsView: View {
             HStack {
                 // Theme color preview
                 HStack(spacing: 2) {
+                    #if os(iOS)
                     Circle().fill(theme.keyword).frame(width: 12, height: 12)
                     Circle().fill(theme.string).frame(width: 12, height: 12)
                     Circle().fill(theme.type).frame(width: 12, height: 12)
                     Circle().fill(theme.comment).frame(width: 12, height: 12)
+                    #else
+                    Circle().fill(theme.keyword).frame(width: 10, height: 10)
+                    Circle().fill(theme.string).frame(width: 10, height: 10)
+                    Circle().fill(theme.type).frame(width: 10, height: 10)
+                    Circle().fill(theme.comment).frame(width: 10, height: 10)
+                    #endif
                 }
+                #if os(iOS)
                 .padding(4)
+                #else
+                .padding(3)
+                #endif
                 .background(theme.background)
                 .cornerRadius(4)
 
@@ -156,6 +315,9 @@ public struct EditorSettingsView: View {
                 }
             }
         }
+        #if os(macOS)
+        .buttonStyle(.plain)
+        #endif
     }
 }
 

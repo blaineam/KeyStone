@@ -1883,6 +1883,24 @@ public struct KeystoneTextView: NSViewRepresentable {
         //     containerView.lineNumberView.needsDisplay = true
         // }
 
+        // Register for scroll notifications to trigger syntax highlighting when scrolling stops
+        containerView.scrollView.contentView.postsBoundsChangedNotifications = true
+        NotificationCenter.default.addObserver(
+            context.coordinator,
+            selector: #selector(Coordinator.scrollViewDidScroll(_:)),
+            name: NSView.boundsDidChangeNotification,
+            object: containerView.scrollView.contentView
+        )
+
+        // Trigger initial syntax highlighting after view is in window
+        // This ensures the visible rect is valid for viewport-based highlighting
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [self] in
+            guard let textStorage = containerView.textView.textStorage else { return }
+            let font = NSFont.monospacedSystemFont(ofSize: configuration.fontSize, weight: .regular)
+            let highlighter = context.coordinator.getHighlighter(language: language, theme: configuration.theme)
+            applyViewportSyntaxHighlightingMac(to: containerView, text: text, font: font, highlighter: highlighter)
+        }
+
         return containerView
     }
 
@@ -2026,6 +2044,23 @@ public struct KeystoneTextView: NSViewRepresentable {
         guard let layoutManager = textView.layoutManager,
               let textContainer = textView.textContainer else { return }
 
+        // Fallback: if visible rect is invalid (view not yet in window), highlight the beginning
+        if visibleRect.isEmpty || visibleRect.height < 10 {
+            let initialHighlightLength = min(fullLength, 10000)
+            let initialRange = NSRange(location: 0, length: initialHighlightLength)
+            textStorage.beginEditing()
+            textStorage.setAttributes([
+                .font: font,
+                .foregroundColor: NSColor(theme.text)
+            ], range: initialRange)
+            if let swiftRange = Range(initialRange, in: text) {
+                let substring = String(text[swiftRange])
+                highlighter.highlightRange(textStorage: textStorage, text: substring, offset: 0)
+            }
+            textStorage.endEditing()
+            return
+        }
+
         // Get visible glyph range
         let visibleGlyphRange = layoutManager.glyphRange(forBoundingRect: visibleRect, in: textContainer)
         let visibleCharRange = layoutManager.characterRange(forGlyphRange: visibleGlyphRange, actualGlyphRange: nil)
@@ -2138,6 +2173,9 @@ public struct KeystoneTextView: NSViewRepresentable {
         /// Tracks the last cursor offset used for line highlight to avoid redundant calls
         var lastLineHighlightCursorOffset: Int = -1
 
+        /// Tracks the last highlighted range to avoid redundant highlighting
+        var lastHighlightedRange: NSRange = NSRange(location: 0, length: 0)
+
         // Cached highlighter to avoid recreating TreeSitter parser on every update
         private var cachedHighlighter: SyntaxHighlighter?
         private var cachedLanguage: KeystoneLanguage?
@@ -2175,6 +2213,8 @@ public struct KeystoneTextView: NSViewRepresentable {
             guard !isUpdating, let textView = notification.object as? NSTextView else { return }
 
             parent.text = textView.string
+            // Reset highlighted range so next scroll/update will re-highlight
+            lastHighlightedRange = NSRange(location: 0, length: 0)
             containerView?.updateLineNumbers()
 
             // Code folding disabled for performance testing
@@ -2236,8 +2276,12 @@ public struct KeystoneTextView: NSViewRepresentable {
             let fullLength = textStorage.length
             guard fullLength > 0 else { return }
 
-            // For small files, highlight everything
+            // For small files, highlight everything (but only once)
             if fullLength < 5000 {
+                // Skip if already fully highlighted
+                if lastHighlightedRange.location == 0 && lastHighlightedRange.length == fullLength {
+                    return
+                }
                 textStorage.beginEditing()
                 textStorage.setAttributes([
                     .font: font,
@@ -2245,6 +2289,7 @@ public struct KeystoneTextView: NSViewRepresentable {
                 ], range: NSRange(location: 0, length: fullLength))
                 highlighter.highlight(textStorage: textStorage, text: text)
                 textStorage.endEditing()
+                lastHighlightedRange = NSRange(location: 0, length: fullLength)
                 return
             }
 
@@ -2261,6 +2306,14 @@ public struct KeystoneTextView: NSViewRepresentable {
             let highlightEnd = min(fullLength, visibleCharRange.location + visibleCharRange.length + bufferSize)
             let highlightRange = NSRange(location: highlightStart, length: highlightEnd - highlightStart)
 
+            // Skip re-highlighting if viewport is already fully within the last highlighted range
+            let lastStart = lastHighlightedRange.location
+            let lastEnd = lastStart + lastHighlightedRange.length
+            if visibleCharRange.location >= lastStart &&
+               visibleCharRange.location + visibleCharRange.length <= lastEnd {
+                return
+            }
+
             textStorage.beginEditing()
             textStorage.setAttributes([
                 .font: font,
@@ -2272,6 +2325,7 @@ public struct KeystoneTextView: NSViewRepresentable {
                 highlighter.highlightRange(textStorage: textStorage, text: substring, offset: highlightStart)
             }
             textStorage.endEditing()
+            lastHighlightedRange = highlightRange
         }
 
         // Handle character pair insertion
@@ -2555,8 +2609,11 @@ public class KeystoneTextContainerViewMac: NSView {
         lineNumberView.fontSize = config.fontSize
         lineNumberView.lineHeight = config.fontSize * config.lineHeightMultiplier
 
-        // Update text color for theme changes
-        textView.textColor = NSColor(config.theme.text)
+        // Update text color for theme changes - only set if different to avoid attribute resets
+        let newTextColor = NSColor(config.theme.text)
+        if textView.textColor != newTextColor {
+            textView.textColor = newTextColor
+        }
 
         // Update invisible character settings - invalidate layout to force redraw
         invisibleLayoutManager.showInvisibles = config.showInvisibleCharacters
@@ -2712,6 +2769,10 @@ class LineNumberGutterViewMac: NSView {
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
 
+        // Clip drawing to view bounds to prevent rendering outside (e.g., over toolbar)
+        NSGraphicsContext.saveGraphicsState()
+        NSBezierPath(rect: bounds).addClip()
+
         // Draw background explicitly to ensure proper dark mode support
         gutterBackgroundColor.setFill()
         bounds.fill()
@@ -2760,6 +2821,8 @@ class LineNumberGutterViewMac: NSView {
                 }
             }
         }
+
+        NSGraphicsContext.restoreGraphicsState()
     }
 
     private func drawFoldedPlaceholder(at point: CGPoint, height: CGFloat, lineCount: Int) {

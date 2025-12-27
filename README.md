@@ -155,45 +155,38 @@ struct EditorWithStatusBar: View {
 }
 ```
 
-### With Settings Panel
+### Built-in Toolbar with Settings
+
+KeystoneEditor includes a built-in toolbar with undo/redo, find/replace, line numbers, word wrap, invisible characters, and a **settings button** that opens the full settings panel.
 
 ```swift
 import SwiftUI
 import Keystone
 
-struct EditorWithSettings: View {
+struct EditorView: View {
     @State private var code = "// Your code here"
-    @State private var showSettings = false
     @StateObject private var config = KeystoneConfiguration()
+    @StateObject private var findReplace = FindReplaceManager()
 
     var body: some View {
-        NavigationStack {
-            KeystoneEditor(
-                text: $code,
-                language: .swift,
-                configuration: config
-            )
-            .toolbar {
-                ToolbarItem {
-                    Button(action: { showSettings = true }) {
-                        Image(systemName: "gear")
-                    }
-                }
-            }
-            .sheet(isPresented: $showSettings) {
-                EditorSettingsView(
-                    configuration: config,
-                    isPresented: $showSettings,
-                    onConvertLineEndings: { newEnding in
-                        code = LineEnding.convert(code, to: newEnding)
-                        config.lineEnding = newEnding
-                    }
-                )
-            }
-        }
+        KeystoneEditor(
+            text: $code,
+            language: .swift,
+            configuration: config,
+            findReplaceManager: findReplace
+        )
     }
 }
 ```
+
+The toolbar provides access to:
+- **Undo/Redo** — With full undo history
+- **Find & Replace** — Toggle the find/replace bar
+- **Go to Line** — Jump to specific line:column
+- **Line Numbers** — Toggle visibility
+- **Word Wrap** — Toggle line wrapping
+- **Invisible Characters** — Show tabs/spaces
+- **Settings** — Opens the full settings sheet with themes, indentation, line endings, and more
 
 ---
 
@@ -300,7 +293,7 @@ let customTheme = KeystoneTheme(
 
 ### KeystoneEditor
 
-The main editor view component.
+The main editor view component with built-in toolbar and settings.
 
 ```swift
 public struct KeystoneEditor: View {
@@ -308,11 +301,22 @@ public struct KeystoneEditor: View {
         text: Binding<String>,
         language: KeystoneLanguage = .plainText,
         configuration: KeystoneConfiguration,
+        findReplaceManager: FindReplaceManager,
+        cursorPosition: Binding<CursorPosition>? = nil,
+        scrollToCursor: Binding<Bool>? = nil,
+        showGoToLine: Binding<Bool>? = nil,
+        isTailFollowEnabled: Binding<Bool>? = nil,
         onCursorChange: ((CursorPosition) -> Void)? = nil,
-        onScrollChange: ((CGFloat) -> Void)? = nil
+        onScrollChange: ((CGFloat) -> Void)? = nil,
+        onTextChange: ((String) -> Void)? = nil,
+        onToggleTailFollow: (() -> Void)? = nil,
+        onConvertLineEndings: ((LineEnding) -> Void)? = nil,
+        onConvertIndentation: ((IndentationSettings) -> Void)? = nil
     )
 }
 ```
+
+The editor includes a built-in toolbar with settings button. When conversion callbacks are provided, they are called **after** the built-in conversion is complete (useful for marking documents as unsaved).
 
 ### EditorStatusBar
 
@@ -332,17 +336,20 @@ public struct EditorStatusBar: View {
 
 ### EditorSettingsView
 
-A pre-built settings panel for editor configuration.
+A pre-built settings panel for editor configuration. Platform-optimized (Form on iOS, GroupBox on macOS).
 
 ```swift
 public struct EditorSettingsView: View {
     public init(
         configuration: KeystoneConfiguration,
         isPresented: Binding<Bool>,
-        onConvertLineEndings: ((LineEnding) -> Void)? = nil
+        onConvertLineEndings: ((LineEnding) -> Void)? = nil,
+        onConvertIndentation: ((IndentationSettings) -> Void)? = nil
     )
 }
 ```
+
+Note: When using KeystoneEditor, settings are accessible via the built-in toolbar. Use EditorSettingsView directly only if you need standalone settings (e.g., in a preferences window).
 
 ### SymbolKeyboard (iOS only)
 
