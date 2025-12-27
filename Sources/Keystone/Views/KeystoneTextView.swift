@@ -958,7 +958,15 @@ public class KeystoneTextContainerView: UIView {
     var coordinator: KeystoneTextView.Coordinator?
     private var configuration: KeystoneConfiguration
 
-    private let gutterWidth: CGFloat = 56 // Extra space for fold indicators
+    private let baseGutterWidth: CGFloat = 16 // Padding + fold indicator space
+    private let foldIndicatorWidth: CGFloat = 12
+
+    /// Calculates dynamic gutter width based on line count
+    private func calculateGutterWidth(forLineCount lineCount: Int) -> CGFloat {
+        let digits = max(3, String(lineCount).count) // Minimum 3 digits
+        let charWidth: CGFloat = 8.5 // Approximate width of monospaced digit at 14pt
+        return CGFloat(digits) * charWidth + baseGutterWidth + foldIndicatorWidth
+    }
 
     // Custom layout manager for invisible characters
     private let invisibleLayoutManager = InvisibleCharacterLayoutManager()
@@ -969,6 +977,10 @@ public class KeystoneTextContainerView: UIView {
 
     // Active layout constraints (for updating when showLineNumbers changes)
     private var activeConstraints: [NSLayoutConstraint] = []
+
+    // Gutter width constraint (for dynamic updates)
+    private var gutterWidthConstraint: NSLayoutConstraint?
+    private var currentGutterWidth: CGFloat = 50
 
     // Text view height constraint - updated when content changes
     private var textViewHeightConstraint: NSLayoutConstraint?
@@ -1147,12 +1159,16 @@ public class KeystoneTextContainerView: UIView {
         activeConstraints.removeAll()
 
         if configuration.showLineNumbers {
+            // Create width constraint separately so we can update it dynamically
+            let widthConstraint = lineNumberView.widthAnchor.constraint(equalToConstant: currentGutterWidth)
+            gutterWidthConstraint = widthConstraint
+
             activeConstraints = [
                 // Line number gutter - fixed to left side of container
                 lineNumberView.leadingAnchor.constraint(equalTo: leadingAnchor),
                 lineNumberView.topAnchor.constraint(equalTo: topAnchor),
                 lineNumberView.bottomAnchor.constraint(equalTo: bottomAnchor),
-                lineNumberView.widthAnchor.constraint(equalToConstant: gutterWidth),
+                widthConstraint,
 
                 // Scroll view - fills remaining space
                 scrollView.leadingAnchor.constraint(equalTo: lineNumberView.trailingAnchor),
@@ -1450,6 +1466,48 @@ public class KeystoneTextContainerView: UIView {
     private var cachedLineData: [(lineNumber: Int, yPosition: CGFloat, height: CGFloat)] = []
     private var cachedTextLength: Int = -1
 
+    /// Cached array of character offsets where each line starts (index = line number - 1)
+    private var cachedLineOffsets: [Int] = [0]
+    private var cachedLineOffsetsTextLength: Int = -1
+
+    /// Build line offset array - O(n) once, then O(log n) lookups
+    private func buildLineOffsets(for nsText: NSString) -> [Int] {
+        let textLength = nsText.length
+
+        // Return cached if text hasn't changed
+        if textLength == cachedLineOffsetsTextLength {
+            return cachedLineOffsets
+        }
+
+        var offsets: [Int] = [0] // Line 1 starts at offset 0
+        for i in 0..<textLength {
+            if nsText.character(at: i) == 0x0A { // newline
+                offsets.append(i + 1) // Next line starts after the newline
+            }
+        }
+
+        cachedLineOffsets = offsets
+        cachedLineOffsetsTextLength = textLength
+        return offsets
+    }
+
+    /// Binary search to find line number for a character offset - O(log n)
+    private func lineNumber(forCharacterOffset offset: Int, lineOffsets: [Int]) -> Int {
+        var low = 0
+        var high = lineOffsets.count - 1
+
+        while low < high {
+            let mid = (low + high + 1) / 2
+            if lineOffsets[mid] <= offset {
+                low = mid
+            } else {
+                high = mid - 1
+            }
+        }
+
+        return low + 1 // Convert 0-based index to 1-based line number
+    }
+
     func updateLineNumbers() {
         guard configuration.showLineNumbers else { return }
 
@@ -1497,6 +1555,14 @@ public class KeystoneTextContainerView: UIView {
         cachedLineData = lineData
         cachedTextLength = text.count
 
+        // Update gutter width dynamically based on max line number
+        let maxLineNumber = lineData.last?.lineNumber ?? 1
+        let newGutterWidth = calculateGutterWidth(forLineCount: maxLineNumber)
+        if abs(newGutterWidth - currentGutterWidth) > 1 {
+            currentGutterWidth = newGutterWidth
+            gutterWidthConstraint?.constant = newGutterWidth
+        }
+
         lineNumberView.lineData = lineData
         lineNumberView.setNeedsDisplay()
     }
@@ -1514,15 +1580,17 @@ public class KeystoneTextContainerView: UIView {
 
     func updateCurrentLineHighlight(_ cursorPosition: Int, highlightColor: UIColor?) {
         let text = textView.text ?? ""
-        var currentLine = 1
+        let nsText = text as NSString
+        let textLength = nsText.length
 
-        // Find current line number
-        for (index, char) in text.enumerated() {
-            if index >= cursorPosition { break }
-            if char == "\n" {
-                currentLine += 1
-            }
+        // Quick bounds check
+        guard cursorPosition >= 0 && cursorPosition <= textLength else {
+            return
         }
+
+        // Use cached line offsets for O(log n) lookup instead of O(n) iteration
+        let lineOffsets = buildLineOffsets(for: nsText)
+        let currentLine = lineNumber(forCharacterOffset: cursorPosition, lineOffsets: lineOffsets)
 
         // Early exit if line hasn't changed
         if currentLine == previousLineNumber {
@@ -2013,31 +2081,9 @@ public struct KeystoneTextView: NSViewRepresentable {
             let isAtEnd = newLocation >= textLength - 1
 
             if isAtEnd && textLength > 0 {
-                // For tail follow: ensure layout is complete at the end, then scroll
-                if let layoutManager = containerView.textView.layoutManager,
-                   let textContainer = containerView.textView.textContainer {
-                    // Ensure layout for the last portion of the document
-                    let lastCharRange = NSRange(location: max(0, textLength - 100), length: min(100, textLength))
-                    let lastGlyphRange = layoutManager.glyphRange(forCharacterRange: lastCharRange, actualCharacterRange: nil)
-                    layoutManager.ensureLayout(forGlyphRange: lastGlyphRange)
-
-                    // Get the rect of the last character to ensure we scroll past it
-                    let lastCharGlyphRange = layoutManager.glyphRange(forCharacterRange: NSRange(location: textLength - 1, length: 1), actualCharacterRange: nil)
-                    let lastCharRect = layoutManager.boundingRect(forGlyphRange: lastCharGlyphRange, in: textContainer)
-
-                    // Calculate scroll to show the last line fully
-                    let visibleHeight = containerView.scrollView.contentView.bounds.height
-                    let bottomInset = containerView.textView.textContainerInset.height
-                    let targetY = lastCharRect.maxY + bottomInset + containerView.textView.textContainerInset.height - visibleHeight + 20
-                    let maxScrollY = max(0, targetY)
-                    containerView.scrollView.contentView.scroll(to: NSPoint(x: 0, y: maxScrollY))
-                } else {
-                    // Fallback if no layout manager
-                    let contentHeight = containerView.scrollView.documentView?.frame.height ?? 0
-                    let visibleHeight = containerView.scrollView.contentView.bounds.height
-                    let maxScrollY = max(0, contentHeight - visibleHeight)
-                    containerView.scrollView.contentView.scroll(to: NSPoint(x: 0, y: maxScrollY))
-                }
+                // For tail follow: scroll to absolute bottom using NSTextView's built-in method
+                // This properly handles layout and scrolls to show the very end
+                containerView.textView.scrollToEndOfDocument(nil)
             } else {
                 // For search/go-to-line: use scrollRangeToVisible
                 containerView.textView.scrollRangeToVisible(newRange)
@@ -2439,7 +2485,19 @@ public class KeystoneTextContainerViewMac: NSView {
     let lineNumberView: LineNumberGutterViewMac
     private var configuration: KeystoneConfiguration
 
-    private let gutterWidth: CGFloat = 56 // Extra space for fold indicators
+    private let baseGutterWidth: CGFloat = 16 // Padding + fold indicator space
+    private let foldIndicatorWidth: CGFloat = 12
+
+    /// Calculates dynamic gutter width based on line count
+    private func calculateGutterWidth(forLineCount lineCount: Int) -> CGFloat {
+        let digits = max(3, String(lineCount).count) // Minimum 3 digits
+        let charWidth: CGFloat = 8.5 // Approximate width of monospaced digit at 14pt
+        return CGFloat(digits) * charWidth + baseGutterWidth + foldIndicatorWidth
+    }
+
+    // Gutter width constraint (for dynamic updates)
+    private var gutterWidthConstraint: NSLayoutConstraint?
+    private var currentGutterWidth: CGFloat = 50
 
     // Custom layout manager for invisible characters
     private let invisibleLayoutManager = InvisibleCharacterLayoutManagerMac()
@@ -2590,11 +2648,15 @@ public class KeystoneTextContainerViewMac: NSView {
         activeConstraints.removeAll()
 
         if configuration.showLineNumbers {
+            // Create width constraint separately so we can update it dynamically
+            let widthConstraint = lineNumberView.widthAnchor.constraint(equalToConstant: currentGutterWidth)
+            gutterWidthConstraint = widthConstraint
+
             activeConstraints = [
                 lineNumberView.leadingAnchor.constraint(equalTo: leadingAnchor),
                 lineNumberView.topAnchor.constraint(equalTo: topAnchor),
                 lineNumberView.bottomAnchor.constraint(equalTo: bottomAnchor),
-                lineNumberView.widthAnchor.constraint(equalToConstant: gutterWidth),
+                widthConstraint,
 
                 scrollView.leadingAnchor.constraint(equalTo: lineNumberView.trailingAnchor),
                 scrollView.topAnchor.constraint(equalTo: topAnchor),
@@ -2695,6 +2757,48 @@ public class KeystoneTextContainerViewMac: NSView {
         return needsRehighlight
     }
 
+    /// Cached array of character offsets where each line starts (index = line number - 1)
+    private var cachedLineOffsets: [Int] = [0]
+    private var cachedLineOffsetsTextLength: Int = -1
+
+    /// Build line offset array - O(n) once, then O(log n) lookups
+    private func buildLineOffsets(for nsText: NSString) -> [Int] {
+        let textLength = nsText.length
+
+        // Return cached if text hasn't changed
+        if textLength == cachedLineOffsetsTextLength {
+            return cachedLineOffsets
+        }
+
+        var offsets: [Int] = [0] // Line 1 starts at offset 0
+        for i in 0..<textLength {
+            if nsText.character(at: i) == 0x0A { // newline
+                offsets.append(i + 1) // Next line starts after the newline
+            }
+        }
+
+        cachedLineOffsets = offsets
+        cachedLineOffsetsTextLength = textLength
+        return offsets
+    }
+
+    /// Binary search to find line number for a character offset - O(log n)
+    private func lineNumber(forCharacterOffset offset: Int, lineOffsets: [Int]) -> Int {
+        var low = 0
+        var high = lineOffsets.count - 1
+
+        while low < high {
+            let mid = (low + high + 1) / 2
+            if lineOffsets[mid] <= offset {
+                low = mid
+            } else {
+                high = mid - 1
+            }
+        }
+
+        return low + 1 // Convert 0-based index to 1-based line number
+    }
+
     func updateLineNumbers() {
         guard configuration.showLineNumbers else {
             lineNumberView.lineData = []
@@ -2715,8 +2819,13 @@ public class KeystoneTextContainerViewMac: NSView {
             let lineHeight = configuration.fontSize * configuration.lineHeightMultiplier
             lineNumberView.lineData = [(lineNumber: 1, yPosition: textView.textContainerInset.height, height: lineHeight)]
             lineNumberView.needsDisplay = true
+            cachedLineOffsets = [0]
+            cachedLineOffsetsTextLength = 0
             return
         }
+
+        // Build line offsets ONCE - O(n), cached for subsequent calls
+        let lineOffsets = buildLineOffsets(for: nsText)
 
         // Get visible rect
         let visibleRect = scrollView.contentView.bounds
@@ -2730,7 +2839,7 @@ public class KeystoneTextContainerViewMac: NSView {
 
         // Build line number data - one entry per logical line
         var lineData: [(lineNumber: Int, yPosition: CGFloat, height: CGFloat)] = []
-        var seenYPositions = Set<Int>() // Track Y positions we've already added (rounded to avoid float issues)
+        var seenLineNumbers = Set<Int>() // Track line numbers we've already added
 
         layoutManager.enumerateLineFragments(forGlyphRange: expandedGlyphRange) { rect, _, _, glyphRange, _ in
             let charRange = layoutManager.characterRange(forGlyphRange: glyphRange, actualGlyphRange: nil)
@@ -2747,27 +2856,28 @@ public class KeystoneTextContainerViewMac: NSView {
             }
 
             if isLineStart {
-                // Count which line number this is (count newlines before this position)
-                var lineNumber = 1
-                for i in 0..<charRange.location {
-                    if nsText.character(at: i) == 0x0A {
-                        lineNumber += 1
-                    }
-                }
+                // Use binary search to find line number - O(log n) per fragment
+                let lineNum = self.lineNumber(forCharacterOffset: charRange.location, lineOffsets: lineOffsets)
 
-                let yPos = rect.origin.y + self.textView.textContainerInset.height
-                let roundedY = Int(yPos * 10) // Round to 0.1 precision
-
-                // Only add if we haven't added an entry at this Y position
-                if !seenYPositions.contains(roundedY) {
-                    seenYPositions.insert(roundedY)
-                    lineData.append((lineNumber: lineNumber, yPosition: yPos, height: rect.height))
+                // Only add if we haven't added this line number yet
+                if !seenLineNumbers.contains(lineNum) {
+                    seenLineNumbers.insert(lineNum)
+                    let yPos = rect.origin.y + self.textView.textContainerInset.height
+                    lineData.append((lineNumber: lineNum, yPosition: yPos, height: rect.height))
                 }
             }
         }
 
-        // Sort by Y position
-        lineData.sort { $0.yPosition < $1.yPosition }
+        // Sort by line number
+        lineData.sort { $0.lineNumber < $1.lineNumber }
+
+        // Update gutter width dynamically based on total line count
+        let totalLineCount = lineOffsets.count
+        let newGutterWidth = calculateGutterWidth(forLineCount: totalLineCount)
+        if abs(newGutterWidth - currentGutterWidth) > 1 {
+            currentGutterWidth = newGutterWidth
+            gutterWidthConstraint?.constant = newGutterWidth
+        }
 
         lineNumberView.lineData = lineData
         lineNumberView.needsDisplay = true
@@ -2781,7 +2891,8 @@ public class KeystoneTextContainerViewMac: NSView {
 
     func updateCurrentLineHighlight(_ cursorPosition: Int, highlightColor: NSColor?) {
         let text = textView.string
-        let textLength = (text as NSString).length
+        let nsText = text as NSString
+        let textLength = nsText.length
 
         // Quick bounds check
         guard cursorPosition >= 0 && cursorPosition <= textLength else {
@@ -2794,18 +2905,9 @@ public class KeystoneTextContainerViewMac: NSView {
         }
         lastHighlightCursorPosition = cursorPosition
 
-        // For ASCII text, UTF-8 byte count == character count, so we can iterate bytes
-        // For large files at low cursor positions, this is fast
-        // For cursor at end of large file, we can estimate based on cached line count
-        var currentLine = 1
-        var charIndex = 0
-        for char in text {
-            if charIndex >= cursorPosition { break }
-            if char == "\n" {
-                currentLine += 1
-            }
-            charIndex += 1
-        }
+        // Use cached line offsets for O(log n) lookup instead of O(n) iteration
+        let lineOffsets = buildLineOffsets(for: nsText)
+        let currentLine = lineNumber(forCharacterOffset: cursorPosition, lineOffsets: lineOffsets)
 
         // Early exit if line hasn't changed
         if currentLine == previousLineNumber {
