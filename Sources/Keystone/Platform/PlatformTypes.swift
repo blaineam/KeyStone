@@ -27,33 +27,39 @@ public typealias PlatformImage = NSImage
 
 extension PlatformColor {
     /// Creates a platform color from SwiftUI Color.
-    /// Uses native initializers to preserve dynamic light/dark mode behavior.
+    /// Creates a dynamic color that properly adapts to light/dark mode.
     public convenience init(_ color: Color) {
         #if os(iOS)
-        // Use UIColor's native Color initializer which preserves dynamic colors
-        let uiColor = UIColor(color)
-        self.init(cgColor: uiColor.cgColor)
-        #else
-        // Use NSColor's native Color initializer which preserves dynamic colors
-        let nsColor = NSColor(color)
-        self.init(cgColor: nsColor.cgColor)!
-        #endif
-    }
-
-    /// Creates a dynamic platform color that adapts to light/dark mode.
-    public static func dynamicColor(light: Color, dark: Color) -> PlatformColor {
-        #if os(iOS)
-        return UIColor { traitCollection in
-            traitCollection.userInterfaceStyle == .dark
-                ? UIColor(dark)
-                : UIColor(light)
+        // Create a dynamic UIColor that resolves the SwiftUI Color in the current trait collection
+        // This preserves light/dark mode behavior
+        self.init { traitCollection in
+            // Resolve the color in the appropriate color scheme
+            let scheme: ColorScheme = traitCollection.userInterfaceStyle == .dark ? .dark : .light
+            var environment = EnvironmentValues()
+            environment.colorScheme = scheme
+            let resolved = color.resolve(in: environment)
+            return UIColor(
+                red: CGFloat(resolved.red),
+                green: CGFloat(resolved.green),
+                blue: CGFloat(resolved.blue),
+                alpha: CGFloat(resolved.opacity)
+            )
         }
         #else
-        return NSColor(name: nil) { appearance in
-            appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-                ? NSColor(dark)
-                : NSColor(light)
-        }
+        // Create a dynamic NSColor that resolves the SwiftUI Color in the current appearance
+        self.init(name: nil) { appearance in
+            let isDark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            let scheme: ColorScheme = isDark ? .dark : .light
+            var environment = EnvironmentValues()
+            environment.colorScheme = scheme
+            let resolved = color.resolve(in: environment)
+            return NSColor(
+                red: CGFloat(resolved.red),
+                green: CGFloat(resolved.green),
+                blue: CGFloat(resolved.blue),
+                alpha: CGFloat(resolved.opacity)
+            )
+        }!
         #endif
     }
 }
