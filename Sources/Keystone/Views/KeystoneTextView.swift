@@ -1960,14 +1960,7 @@ public struct KeystoneTextView: NSViewRepresentable {
 
         // Handle cursor position changes for search navigation or tail follow
         // When scrollToCursor is explicitly true, ALWAYS update cursor and scroll
-        //
-        // IMPORTANT: Capture scrollToCursor value FIRST and reset it IMMEDIATELY before doing any work.
-        // This prevents SwiftUI update loops caused by async state resets.
         let shouldScrollToCursor = scrollToCursor
-        if shouldScrollToCursor {
-            // Reset IMMEDIATELY to prevent update loop - do this before any other work
-            scrollToCursor = false
-        }
 
         // Only update cursor position when explicitly requested (search, go-to-line, tail follow)
         // The text view IS the source of truth for cursor position - we never sync FROM binding TO text view
@@ -1976,12 +1969,28 @@ public struct KeystoneTextView: NSViewRepresentable {
             let newLocation = min(cursorPosition.offset, text.count)
             let newLength = min(cursorPosition.selectionLength, text.count - newLocation)
             let newRange = NSRange(location: newLocation, length: newLength)
+
+            // Force layout before scrolling to ensure text view is properly sized
+            containerView.textView.layoutManager?.ensureLayout(for: containerView.textView.textContainer!)
+
             containerView.textView.setSelectedRange(newRange)
 
-            // Scroll instantly without animation
-            NSAnimationContext.runAnimationGroup { context in
-                context.duration = 0
-                containerView.textView.scrollRangeToVisible(newRange)
+            // Scroll to visible - use scrollRangeToVisible which properly handles the scroll view
+            containerView.textView.scrollRangeToVisible(newRange)
+
+            // Force the scroll view to update
+            containerView.scrollView.reflectScrolledClipView(containerView.scrollView.contentView)
+
+            // Re-apply syntax highlighting after scrolling since viewport changed
+            let font = NSFont.monospacedSystemFont(ofSize: configuration.fontSize, weight: .regular)
+            let highlighter = context.coordinator.getHighlighter(language: language, theme: configuration.theme)
+            DispatchQueue.main.async {
+                self.applyViewportSyntaxHighlightingMac(to: containerView, text: text, font: font, highlighter: highlighter)
+            }
+
+            // Reset scrollToCursor AFTER the view update is complete to avoid "Modifying state during view update"
+            DispatchQueue.main.async {
+                self.scrollToCursor = false
             }
         }
         // NOTE: Removed automatic cursor sync from binding to text view
@@ -2117,6 +2126,7 @@ public struct KeystoneTextView: NSViewRepresentable {
 
     // MARK: - Coordinator
 
+    @MainActor
     public class Coordinator: NSObject, NSTextViewDelegate {
         var parent: KeystoneTextView
         var isUpdating = false
@@ -2193,10 +2203,75 @@ public struct KeystoneTextView: NSViewRepresentable {
             // Removed duplicate call here to prevent double updates
         }
 
+        // Debounce work item for scroll-triggered highlighting
+        private var scrollHighlightWorkItem: DispatchWorkItem?
+
         @objc func scrollViewDidScroll(_ notification: Notification) {
             guard let clipView = notification.object as? NSClipView else { return }
             parent.scrollOffset = clipView.bounds.origin.y
             containerView?.syncLineNumberScroll()
+
+            // Capture values on main thread before async dispatch to avoid actor isolation issues
+            let fontSize = parent.configuration.fontSize
+            let theme = parent.configuration.theme
+            let language = parent.language
+
+            // Debounce syntax highlighting during scroll (trigger 100ms after scroll stops)
+            scrollHighlightWorkItem?.cancel()
+            let workItem = DispatchWorkItem { [weak self] in
+                self?.triggerViewportHighlighting(fontSize: fontSize, theme: theme, language: language)
+            }
+            scrollHighlightWorkItem = workItem
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1, execute: workItem)
+        }
+
+        private func triggerViewportHighlighting(fontSize: CGFloat, theme: KeystoneTheme, language: KeystoneLanguage) {
+            guard let containerView = containerView,
+                  let textStorage = containerView.textView.textStorage else { return }
+
+            let text = containerView.textView.string
+            let font = NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
+            let highlighter = getHighlighter(language: language, theme: theme)
+
+            let fullLength = textStorage.length
+            guard fullLength > 0 else { return }
+
+            // For small files, highlight everything
+            if fullLength < 5000 {
+                textStorage.beginEditing()
+                textStorage.setAttributes([
+                    .font: font,
+                    .foregroundColor: NSColor(theme.text)
+                ], range: NSRange(location: 0, length: fullLength))
+                highlighter.highlight(textStorage: textStorage, text: text)
+                textStorage.endEditing()
+                return
+            }
+
+            // For large files, only highlight visible portion + buffer
+            let visibleRect = containerView.scrollView.documentVisibleRect
+            guard let layoutManager = containerView.textView.layoutManager,
+                  let textContainer = containerView.textView.textContainer else { return }
+
+            let visibleGlyphRange = layoutManager.glyphRange(forBoundingRect: visibleRect, in: textContainer)
+            let visibleCharRange = layoutManager.characterRange(forGlyphRange: visibleGlyphRange, actualGlyphRange: nil)
+
+            let bufferSize = 2000
+            let highlightStart = max(0, visibleCharRange.location - bufferSize)
+            let highlightEnd = min(fullLength, visibleCharRange.location + visibleCharRange.length + bufferSize)
+            let highlightRange = NSRange(location: highlightStart, length: highlightEnd - highlightStart)
+
+            textStorage.beginEditing()
+            textStorage.setAttributes([
+                .font: font,
+                .foregroundColor: NSColor(theme.text)
+            ], range: highlightRange)
+
+            if let swiftRange = Range(highlightRange, in: text) {
+                let substring = String(text[swiftRange])
+                highlighter.highlightRange(textStorage: textStorage, text: substring, offset: highlightStart)
+            }
+            textStorage.endEditing()
         }
 
         // Handle character pair insertion
@@ -2331,6 +2406,7 @@ public class KeystoneTextContainerViewMac: NSView {
     }
 
     private func setupTextView() {
+        // Configure text view for proper scrolling
         textView.font = .monospacedSystemFont(ofSize: configuration.fontSize, weight: .regular)
         textView.textColor = NSColor(configuration.theme.text)
         textView.isAutomaticQuoteSubstitutionEnabled = false
@@ -2341,22 +2417,35 @@ public class KeystoneTextContainerViewMac: NSView {
         textView.textContainerInset = NSSize(width: 8, height: 8)
         textView.isRichText = false
         textView.allowsUndo = true
-        textView.autoresizingMask = [.width]
+
+        // Critical: Set proper sizing for scrolling
+        textView.minSize = NSSize(width: 0, height: 0)
+        textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         textView.isVerticallyResizable = true
         textView.isHorizontallyResizable = !configuration.lineWrapping
+        textView.autoresizingMask = configuration.lineWrapping ? [.width] : [.width, .height]
 
-        if configuration.lineWrapping {
-            textView.textContainer?.widthTracksTextView = true
-        } else {
-            textView.textContainer?.widthTracksTextView = false
-            textView.textContainer?.containerSize = CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        // Configure text container for proper text flow
+        if let textContainer = textView.textContainer {
+            textContainer.widthTracksTextView = configuration.lineWrapping
+            textContainer.heightTracksTextView = false
+            if !configuration.lineWrapping {
+                textContainer.containerSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+            }
         }
 
+        // Set up scroll view properly
         scrollView.documentView = textView
         scrollView.hasVerticalScroller = true
         scrollView.hasHorizontalScroller = !configuration.lineWrapping
+        scrollView.autohidesScrollers = false
+        scrollView.scrollerStyle = .legacy  // Use legacy scrollers for visibility
+        scrollView.borderType = .noBorder
         scrollView.drawsBackground = false
-        scrollView.autohidesScrollers = true
+
+        // Ensure content view is properly set up
+        scrollView.contentView.copiesOnScroll = true
+        scrollView.contentView.drawsBackground = false
 
         addSubview(scrollView)
     }

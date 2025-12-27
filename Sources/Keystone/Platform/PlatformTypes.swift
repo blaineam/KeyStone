@@ -46,20 +46,20 @@ extension PlatformColor {
             )
         }
         #else
-        // Create a dynamic NSColor that resolves the SwiftUI Color in the current appearance
-        self.init(name: nil) { appearance in
-            let isDark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-            let scheme: ColorScheme = isDark ? .dark : .light
-            var environment = EnvironmentValues()
-            environment.colorScheme = scheme
-            let resolved = color.resolve(in: environment)
-            return NSColor(
-                red: CGFloat(resolved.red),
-                green: CGFloat(resolved.green),
-                blue: CGFloat(resolved.blue),
-                alpha: CGFloat(resolved.opacity)
-            )
-        }
+        // For macOS, resolve the color immediately using a reliable dark mode check.
+        // Check UserDefaults for the system appearance style
+        let interfaceStyle = UserDefaults.standard.string(forKey: "AppleInterfaceStyle")
+        let isDark = interfaceStyle == "Dark"
+        let scheme: ColorScheme = isDark ? .dark : .light
+        var environment = EnvironmentValues()
+        environment.colorScheme = scheme
+        let resolved = color.resolve(in: environment)
+        self.init(
+            red: CGFloat(resolved.red),
+            green: CGFloat(resolved.green),
+            blue: CGFloat(resolved.blue),
+            alpha: CGFloat(resolved.opacity)
+        )
         #endif
     }
 }

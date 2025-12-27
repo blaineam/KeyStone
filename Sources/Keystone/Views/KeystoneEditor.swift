@@ -149,6 +149,16 @@ public struct KeystoneEditor: View {
                 onGoToLine: { showGoToLine = true },
                 onToggleTailFollow: onToggleTailFollow
             )
+            #else
+            // Editor toolbar for macOS
+            KeystoneEditorToolbarBar(
+                configuration: configuration,
+                findReplaceManager: findReplaceManager,
+                undoController: undoController,
+                isTailFollowEnabled: isTailFollowEnabled,
+                onGoToLine: { showGoToLine = true },
+                onToggleTailFollow: onToggleTailFollow
+            )
             #endif
 
             // Find/Replace bar
@@ -842,6 +852,99 @@ public struct KeystoneEditorToolbar: View {
         self.canRedo = canRedo
     }
 }
+
+// MARK: - macOS Toolbar Bar
+
+#if os(macOS)
+/// A horizontal toolbar bar for the editor on macOS.
+struct KeystoneEditorToolbarBar: View {
+    @ObservedObject var configuration: KeystoneConfiguration
+    @ObservedObject var findReplaceManager: FindReplaceManager
+    @ObservedObject var undoController: UndoController
+    var isTailFollowEnabled: Binding<Bool>?
+    var onGoToLine: (() -> Void)?
+    var onToggleTailFollow: (() -> Void)?
+
+    var body: some View {
+        HStack(spacing: 8) {
+            // Undo
+            toolbarButton(icon: "arrow.uturn.backward", tooltip: "Undo", enabled: undoController.canUndo) {
+                undoController.undo()
+            }
+
+            // Redo
+            toolbarButton(icon: "arrow.uturn.forward", tooltip: "Redo", enabled: undoController.canRedo) {
+                undoController.redo()
+            }
+
+            Divider().frame(height: 18)
+
+            // Find
+            toolbarButton(icon: "magnifyingglass", tooltip: "Find", enabled: true, isActive: findReplaceManager.isVisible) {
+                findReplaceManager.toggle()
+            }
+
+            // Go to Line
+            toolbarButton(icon: "arrow.right.to.line", tooltip: "Go to Line", enabled: true) {
+                onGoToLine?()
+            }
+
+            Divider().frame(height: 18)
+
+            // Line Numbers
+            toolbarButton(icon: "list.number", tooltip: "Line Numbers", enabled: true, isActive: configuration.showLineNumbers) {
+                configuration.showLineNumbers.toggle()
+                configuration.saveToUserDefaults()
+            }
+
+            // Line Wrap
+            toolbarButton(icon: "text.justify.left", tooltip: "Word Wrap", enabled: true, isActive: configuration.lineWrapping) {
+                configuration.lineWrapping.toggle()
+                configuration.saveToUserDefaults()
+            }
+
+            // Invisible Characters
+            toolbarButton(icon: "eye", tooltip: "Invisible Characters", enabled: true, isActive: configuration.showInvisibleCharacters) {
+                configuration.showInvisibleCharacters.toggle()
+                configuration.saveToUserDefaults()
+            }
+
+            // Tail Follow (only show if callback is provided)
+            if let onToggleTailFollow = onToggleTailFollow {
+                Divider().frame(height: 18)
+
+                toolbarButton(
+                    icon: isTailFollowEnabled?.wrappedValue == true ? "stop.circle" : "play.circle",
+                    tooltip: isTailFollowEnabled?.wrappedValue == true ? "Stop Following" : "Follow File",
+                    enabled: true,
+                    isActive: isTailFollowEnabled?.wrappedValue == true
+                ) {
+                    onToggleTailFollow()
+                }
+            }
+
+            Spacer()
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(Color.keystoneStatusBar)
+    }
+
+    private func toolbarButton(icon: String, tooltip: String, enabled: Bool, isActive: Bool = false, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.system(size: 13, weight: .medium))
+                .frame(width: 26, height: 22)
+                .foregroundColor(isActive ? .accentColor : (enabled ? .primary : .secondary.opacity(0.5)))
+                .background(isActive ? Color.accentColor.opacity(0.15) : Color.clear)
+                .cornerRadius(4)
+        }
+        .buttonStyle(.plain)
+        .disabled(!enabled)
+        .help(tooltip)
+    }
+}
+#endif
 
 // MARK: - iOS Toolbar Bar
 
