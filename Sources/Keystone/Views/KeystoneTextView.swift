@@ -1043,77 +1043,39 @@ public class KeystoneTextContainerView: UIView {
         lineNumberView.setNeedsDisplay()
     }
 
-    /// Tracks the previous line range for clearing highlights
-    private var previousLineRange: NSRange?
-    /// Tracks the previous line number to avoid redundant updates
+    /// Tracks the previous line number to avoid redundant gutter updates
     private var previousLineNumber: Int = 0
 
     func updateCurrentLineHighlight(_ cursorPosition: Int, highlightColor: UIColor?) {
         let text = textView.text ?? ""
-        let nsText = text as NSString
         var currentLine = 1
-        var lineStart = 0
 
-        // Find current line number and line start position
+        // Find current line number
         for (index, char) in text.enumerated() {
             if index >= cursorPosition { break }
             if char == "\n" {
                 currentLine += 1
-                lineStart = index + 1
             }
         }
 
-        // Find line end position
-        var lineEnd = nsText.length
-        for i in cursorPosition..<nsText.length {
-            if nsText.character(at: i) == 0x0A { // '\n'
-                lineEnd = i
-                break
-            }
-        }
-
-        let currentRange = NSRange(location: lineStart, length: lineEnd - lineStart)
-
-        // Early exit if nothing changed - prevents flickering
-        if currentRange == previousLineRange && currentLine == previousLineNumber {
+        // Early exit if line hasn't changed
+        if currentLine == previousLineNumber {
             return
         }
 
-        // Update line number gutter only if line changed
-        if currentLine != previousLineNumber {
-            lineNumberView.currentLine = currentLine
-            lineNumberView.setNeedsDisplay()
-            previousLineNumber = currentLine
-        }
-
-        // Apply line highlight in text view if color provided
-        let textStorage = textView.textStorage
-
-        // Clear previous highlight if different line
-        if let prevRange = previousLineRange, prevRange != currentRange {
-            if prevRange.location + prevRange.length <= textStorage.length {
-                textStorage.removeAttribute(.backgroundColor, range: prevRange)
-            }
-        }
-
-        // Apply new highlight
-        if let color = highlightColor, currentRange.location + currentRange.length <= textStorage.length {
-            textStorage.addAttribute(.backgroundColor, value: color, range: currentRange)
-            previousLineRange = currentRange
-        } else {
-            previousLineRange = nil
-        }
+        // Update line number gutter only - NO text view background modification
+        // Modifying textStorage.backgroundColor was causing layout thrashing and cursor flickering
+        lineNumberView.currentLine = currentLine
+        lineNumberView.setNeedsDisplay()
+        previousLineNumber = currentLine
     }
 
-    /// Clears current line highlight (call before applying syntax highlighting)
+    /// Clears current line highlight
     func clearCurrentLineHighlight() {
-        if let prevRange = previousLineRange {
-            let textStorage = textView.textStorage
-            if prevRange.location + prevRange.length <= textStorage.length {
-                textStorage.removeAttribute(.backgroundColor, range: prevRange)
-            }
-            previousLineRange = nil
-        }
+        // Only clear gutter highlight - we no longer modify text view background
+        lineNumberView.currentLine = 0
+        lineNumberView.setNeedsDisplay()
+        previousLineNumber = 0
     }
 
     func syncLineNumberScroll() {
@@ -2107,76 +2069,39 @@ public class KeystoneTextContainerViewMac: NSView {
         lineNumberView.needsDisplay = true
     }
 
-    /// Tracks the previous line range for clearing highlights
-    private var previousLineRange: NSRange?
-    /// Tracks the previous line number to avoid redundant updates
+    /// Tracks the previous line number to avoid redundant gutter updates
     private var previousLineNumber: Int = 0
 
     func updateCurrentLineHighlight(_ cursorPosition: Int, highlightColor: NSColor?) {
         let text = textView.string
-        let nsText = text as NSString
         var currentLine = 1
-        var lineStart = 0
 
-        // Find current line number and line start position
+        // Find current line number
         for (index, char) in text.enumerated() {
             if index >= cursorPosition { break }
             if char == "\n" {
                 currentLine += 1
-                lineStart = index + 1
             }
         }
 
-        // Find line end position
-        var lineEnd = nsText.length
-        for i in cursorPosition..<nsText.length {
-            if nsText.character(at: i) == 0x0A { // '\n'
-                lineEnd = i
-                break
-            }
-        }
-
-        let currentRange = NSRange(location: lineStart, length: lineEnd - lineStart)
-
-        // Early exit if nothing changed - prevents flickering
-        if currentRange == previousLineRange && currentLine == previousLineNumber {
+        // Early exit if line hasn't changed
+        if currentLine == previousLineNumber {
             return
         }
 
-        // Update line number gutter only if line changed
-        if currentLine != previousLineNumber {
-            lineNumberView.currentLine = currentLine
-            lineNumberView.needsDisplay = true
-            previousLineNumber = currentLine
-        }
-
-        // Apply line highlight in text view if color provided
-        guard let textStorage = textView.textStorage else { return }
-
-        // Clear previous highlight if different line
-        if let prevRange = previousLineRange, prevRange != currentRange {
-            if prevRange.location + prevRange.length <= textStorage.length {
-                textStorage.removeAttribute(.backgroundColor, range: prevRange)
-            }
-        }
-
-        // Apply new highlight
-        if let color = highlightColor, currentRange.location + currentRange.length <= textStorage.length {
-            textStorage.addAttribute(.backgroundColor, value: color, range: currentRange)
-            previousLineRange = currentRange
-        } else {
-            previousLineRange = nil
-        }
+        // Update line number gutter only - NO text view background modification
+        // Modifying textStorage.backgroundColor was causing layout thrashing and cursor flickering
+        lineNumberView.currentLine = currentLine
+        lineNumberView.needsDisplay = true
+        previousLineNumber = currentLine
     }
 
     /// Clears current line highlight
     func clearCurrentLineHighlight() {
-        if let prevRange = previousLineRange, let textStorage = textView.textStorage {
-            if prevRange.location + prevRange.length <= textStorage.length {
-                textStorage.removeAttribute(.backgroundColor, range: prevRange)
-            }
-            previousLineRange = nil
-        }
+        // Only clear gutter highlight - we no longer modify text view background
+        lineNumberView.currentLine = 0
+        lineNumberView.needsDisplay = true
+        previousLineNumber = 0
     }
 
     func syncLineNumberScroll() {
