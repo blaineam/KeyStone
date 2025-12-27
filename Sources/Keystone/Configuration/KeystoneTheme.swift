@@ -73,8 +73,8 @@ public struct KeystoneTheme: Equatable, Sendable {
         currentLineHighlight: Color = Color(light: Color.blue.opacity(0.05), dark: Color.blue.opacity(0.1)),
         selection: Color = Color.accentColor.opacity(0.3),
         matchingBracket: Color = Color.blue.opacity(0.3),
-        searchMatch: Color = Color.yellow.opacity(0.3),
-        currentSearchMatch: Color = Color.orange.opacity(0.5),
+        searchMatch: Color = Color.yellow.opacity(0.5),
+        currentSearchMatch: Color = Color.orange.opacity(0.7),
         invisibleCharacter: Color = Color.gray.opacity(0.3)
     ) {
         self.keyword = keyword

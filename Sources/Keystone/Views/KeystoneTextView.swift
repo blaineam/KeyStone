@@ -35,6 +35,24 @@ class KeystoneUITextView: UITextView {
         let newSize = sizeThatFits(CGSize(width: fixedWidth, height: CGFloat.greatestFiniteMagnitude))
         return CGSize(width: fixedWidth, height: max(newSize.height, bounds.height))
     }
+
+    // MARK: - Prevent Internal Scrolling
+
+    /// Override to prevent UITextView from scrolling internally - parent scroll view handles it
+    override func scrollRangeToVisible(_ range: NSRange) {
+        // Do nothing - parent UIScrollView controls scrolling
+    }
+
+    /// Override to prevent automatic scroll adjustments
+    override var contentOffset: CGPoint {
+        get { return .zero }
+        set { /* Ignore - parent scroll view handles scrolling */ }
+    }
+
+    /// Prevent scroll-to-caret behavior
+    override func setContentOffset(_ contentOffset: CGPoint, animated: Bool) {
+        // Do nothing - parent UIScrollView controls scrolling
+    }
 }
 
 // MARK: - Range Extension
