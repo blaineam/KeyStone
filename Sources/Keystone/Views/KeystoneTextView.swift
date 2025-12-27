@@ -1929,13 +1929,18 @@ public struct KeystoneTextView: NSViewRepresentable {
         var needsHighlight = configNeedsRehighlight
 
         // Only update if text actually changed
-        if containerView.textView.string != text {
+        // Use textStorage.length for O(1) comparison instead of string comparison O(n)
+        let currentLength = containerView.textView.textStorage?.length ?? 0
+        let newLength = (text as NSString).length
+        let textChanged = currentLength != newLength || (currentLength > 0 && containerView.textView.string != text)
+
+        if textChanged {
             let selectedRange = containerView.textView.selectedRange()
             containerView.textView.string = text
             needsHighlight = true
 
-            // Restore selection
-            let newLocation = min(selectedRange.location, text.count)
+            // Restore selection - use textStorage.length (O(1)) instead of text.count (O(n))
+            let newLocation = min(selectedRange.location, containerView.textView.textStorage?.length ?? 0)
             containerView.textView.setSelectedRange(NSRange(location: newLocation, length: 0))
         }
 
@@ -1996,17 +2001,19 @@ public struct KeystoneTextView: NSViewRepresentable {
         // The text view IS the source of truth for cursor position - we never sync FROM binding TO text view
         // This prevents feedback loops that cause flickering
         if shouldScrollToCursor {
-            let newLocation = min(cursorPosition.offset, text.count)
-            let newLength = min(cursorPosition.selectionLength, text.count - newLocation)
+            // Use textStorage.length (O(1)) instead of text.count (O(n))
+            let textLength = containerView.textView.textStorage?.length ?? 0
+            let newLocation = min(cursorPosition.offset, textLength)
+            let newLength = min(cursorPosition.selectionLength, textLength - newLocation)
             let newRange = NSRange(location: newLocation, length: newLength)
 
-            // Force layout before scrolling to ensure text view is properly sized
-            containerView.textView.layoutManager?.ensureLayout(for: containerView.textView.textContainer!)
+            // Don't use ensureLayout - it's extremely expensive for large files
+            // scrollRangeToVisible will layout only the needed portion
 
             containerView.textView.setSelectedRange(newRange)
 
             // Check if cursor is at the very end of the text (tail follow mode)
-            let isAtEnd = newLocation >= text.count
+            let isAtEnd = newLocation >= textLength
 
             if isAtEnd {
                 // For tail follow: scroll to absolute bottom
@@ -2067,8 +2074,12 @@ public struct KeystoneTextView: NSViewRepresentable {
         guard let layoutManager = textView.layoutManager,
               let textContainer = textView.textContainer else { return }
 
-        // Fallback: if visible rect is invalid (view not yet in window), highlight the beginning
-        if visibleRect.isEmpty || visibleRect.height < 10 {
+        // Check if layout has been performed - numberOfGlyphs is 0 if no layout yet
+        // Also check if visible rect is valid
+        // IMPORTANT: Don't call glyphRange(forBoundingRect:) before layout is done - it triggers full layout!
+        let hasLayout = layoutManager.numberOfGlyphs > 0
+        if !hasLayout || visibleRect.isEmpty || visibleRect.height < 10 {
+            // Highlight just the beginning - don't trigger full layout
             let initialHighlightLength = min(fullLength, 10000)
             let initialRange = NSRange(location: 0, length: initialHighlightLength)
             textStorage.beginEditing()
@@ -2084,7 +2095,7 @@ public struct KeystoneTextView: NSViewRepresentable {
             return
         }
 
-        // Get visible glyph range
+        // Get visible glyph range - only safe after layout is done
         let visibleGlyphRange = layoutManager.glyphRange(forBoundingRect: visibleRect, in: textContainer)
         let visibleCharRange = layoutManager.characterRange(forGlyphRange: visibleGlyphRange, actualGlyphRange: nil)
 
@@ -2667,59 +2678,89 @@ public class KeystoneTextContainerViewMac: NSView {
         return needsRehighlight
     }
 
+    /// Cached total line count to avoid recounting on every update
+    private var cachedLineCount: Int = 0
+    private var cachedTextLength: Int = -1
+    private var isCountingLines: Bool = false
+
     func updateLineNumbers() {
-        guard configuration.showLineNumbers, let layoutManager = textView.layoutManager else { return }
-
-        let text = textView.string
-
-        // NOTE: Do NOT call ensureLayout here - it forces full document layout which is
-        // extremely expensive for large files (causes beachball/lockup).
-        // Instead, only process glyphs that have already been laid out.
-
-        var lineData: [(lineNumber: Int, yPosition: CGFloat, height: CGFloat)] = []
-        var lineNumber = 1
-        var glyphIndex = 0
-        let numberOfGlyphs = layoutManager.numberOfGlyphs
-        var lastYPosition: CGFloat = -1 // Track last Y position to avoid duplicates
-
-        while glyphIndex < numberOfGlyphs {
-            var lineRange = NSRange()
-            let lineRect = layoutManager.lineFragmentRect(forGlyphAt: glyphIndex, effectiveRange: &lineRange)
-
-            // Ensure we're making progress
-            let nextGlyphIndex = NSMaxRange(lineRange)
-            if nextGlyphIndex <= glyphIndex {
-                glyphIndex += 1
-                continue
-            }
-
-            let yPosition = lineRect.origin.y + textView.textContainerInset.height
-
-            let charRange = layoutManager.characterRange(forGlyphRange: lineRange, actualGlyphRange: nil)
-
-            let isFirstFragmentOfLine: Bool
-            if charRange.location == 0 {
-                isFirstFragmentOfLine = true
-            } else if charRange.location > 0 && charRange.location <= text.count {
-                let prevChar = (text as NSString).substring(with: NSRange(location: charRange.location - 1, length: 1))
-                isFirstFragmentOfLine = prevChar == "\n"
-            } else {
-                isFirstFragmentOfLine = false
-            }
-
-            // Only add if this is a new logical line AND we haven't already added this Y position
-            // (prevents duplicates from layout edge cases)
-            if isFirstFragmentOfLine && abs(yPosition - lastYPosition) > 0.5 {
-                lineData.append((lineNumber: lineNumber, yPosition: yPosition, height: lineRect.height))
-                lastYPosition = yPosition
-                lineNumber += 1
-            }
-
-            glyphIndex = nextGlyphIndex
+        guard configuration.showLineNumbers else {
+            lineNumberView.lineData = []
+            lineNumberView.needsDisplay = true
+            return
         }
 
+        let text = textView.string
+        let lineHeight = configuration.fontSize * configuration.lineHeightMultiplier
+
         if text.isEmpty {
-            lineData.append((lineNumber: 1, yPosition: textView.textContainerInset.height, height: configuration.fontSize * configuration.lineHeightMultiplier))
+            lineNumberView.lineData = [(lineNumber: 1, yPosition: textView.textContainerInset.height, height: lineHeight)]
+            lineNumberView.needsDisplay = true
+            cachedLineCount = 1
+            cachedTextLength = 0
+            return
+        }
+
+        // Only recount lines if text length changed
+        // Use NSString.length which is O(1) instead of String.count which is O(n)
+        let textLength = (text as NSString).length
+        if textLength != cachedTextLength {
+            cachedTextLength = textLength
+
+            // For large files (> 50KB), count lines asynchronously to avoid blocking UI
+            if textLength > 50000 && !isCountingLines {
+                // Use estimated count initially (assume ~40 chars per line)
+                cachedLineCount = max(1, textLength / 40)
+                isCountingLines = true
+
+                // Count actual lines in background
+                let textCopy = text
+                DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                    var lineCount = 1
+                    for char in textCopy.utf8 {
+                        if char == 0x0A { // newline
+                            lineCount += 1
+                        }
+                    }
+                    DispatchQueue.main.async { [weak self] in
+                        guard let self = self else { return }
+                        self.cachedLineCount = lineCount
+                        self.isCountingLines = false
+                        self.lineNumberView.needsDisplay = true
+                    }
+                }
+            } else if !isCountingLines {
+                // Small files: count synchronously (fast enough)
+                var lineCount = 1
+                for char in text.utf8 {
+                    if char == 0x0A { // newline
+                        lineCount += 1
+                    }
+                }
+                cachedLineCount = lineCount
+            }
+        }
+
+        // Get visible rect to only generate line data for visible lines + buffer
+        let visibleRect = scrollView.contentView.bounds
+        let topInset = textView.textContainerInset.height
+
+        // Calculate which lines are visible
+        let firstVisibleLine = max(1, Int((visibleRect.origin.y - topInset) / lineHeight))
+        let lastVisibleLine = min(cachedLineCount, Int((visibleRect.origin.y + visibleRect.height - topInset) / lineHeight) + 2)
+
+        // Add buffer for smooth scrolling
+        let bufferLines = 20
+        let startLine = max(1, firstVisibleLine - bufferLines)
+        let endLine = min(cachedLineCount, lastVisibleLine + bufferLines)
+
+        // Generate line data only for visible range
+        var lineData: [(lineNumber: Int, yPosition: CGFloat, height: CGFloat)] = []
+        lineData.reserveCapacity(endLine - startLine + 1)
+
+        for lineNum in startLine...endLine {
+            let yPos = topInset + CGFloat(lineNum - 1) * lineHeight
+            lineData.append((lineNumber: lineNum, yPosition: yPos, height: lineHeight))
         }
 
         lineNumberView.lineData = lineData
@@ -2729,16 +2770,35 @@ public class KeystoneTextContainerViewMac: NSView {
     /// Tracks the previous line number to avoid redundant gutter updates
     private var previousLineNumber: Int = 0
 
+    /// Cached cursor position for line highlight calculations
+    private var lastHighlightCursorPosition: Int = -1
+
     func updateCurrentLineHighlight(_ cursorPosition: Int, highlightColor: NSColor?) {
         let text = textView.string
-        var currentLine = 1
+        let textLength = (text as NSString).length
 
-        // Find current line number
-        for (index, char) in text.enumerated() {
-            if index >= cursorPosition { break }
+        // Quick bounds check
+        guard cursorPosition >= 0 && cursorPosition <= textLength else {
+            return
+        }
+
+        // Skip if cursor hasn't moved
+        guard cursorPosition != lastHighlightCursorPosition else {
+            return
+        }
+        lastHighlightCursorPosition = cursorPosition
+
+        // For ASCII text, UTF-8 byte count == character count, so we can iterate bytes
+        // For large files at low cursor positions, this is fast
+        // For cursor at end of large file, we can estimate based on cached line count
+        var currentLine = 1
+        var charIndex = 0
+        for char in text {
+            if charIndex >= cursorPosition { break }
             if char == "\n" {
                 currentLine += 1
             }
+            charIndex += 1
         }
 
         // Early exit if line hasn't changed
