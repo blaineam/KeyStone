@@ -257,7 +257,16 @@ public struct KeystoneTextView: UIViewRepresentable {
         // Handle cursor position changes for search navigation or tail follow
         // When scrollToCursor is explicitly true, ALWAYS update cursor and scroll regardless of editing state
         // This ensures search navigation, go-to-line, and tail follow work correctly
-        if scrollToCursor {
+        //
+        // IMPORTANT: Capture scrollToCursor value FIRST and reset it IMMEDIATELY before doing any work.
+        // This prevents SwiftUI update loops caused by async state resets.
+        let shouldScrollToCursor = scrollToCursor
+        if shouldScrollToCursor {
+            // Reset IMMEDIATELY to prevent update loop - do this before any other work
+            scrollToCursor = false
+        }
+
+        if shouldScrollToCursor {
             let newLocation = min(cursorPosition.offset, bindingLength)
             let newLength = min(cursorPosition.selectionLength, max(0, bindingLength - newLocation))
             let newRange = NSRange(location: newLocation, length: newLength)
@@ -271,9 +280,8 @@ public struct KeystoneTextView: UIViewRepresentable {
                 containerView.textView.scrollRangeToVisible(newRange)
             }
 
-            // Reset the binding after scrolling once
+            // Reset flag after a brief delay to ensure selection change notification has fired
             DispatchQueue.main.async {
-                self.scrollToCursor = false
                 context.coordinator.isSettingCursorProgrammatically = false
             }
         } else if !isUserCurrentlyEditing {
@@ -315,11 +323,15 @@ public struct KeystoneTextView: UIViewRepresentable {
             context.coordinator.previousBracketMatch = nil
         }
 
-        // Update current line highlight
+        // Update current line highlight - only if cursor position changed
         if configuration.highlightCurrentLine {
-            let highlightColor = UIColor(configuration.theme.currentLineHighlight)
-            containerView.updateCurrentLineHighlight(cursorPosition.offset, highlightColor: highlightColor)
+            if cursorPosition.offset != context.coordinator.lastLineHighlightCursorOffset {
+                context.coordinator.lastLineHighlightCursorOffset = cursorPosition.offset
+                let highlightColor = UIColor(configuration.theme.currentLineHighlight)
+                containerView.updateCurrentLineHighlight(cursorPosition.offset, highlightColor: highlightColor)
+            }
         } else {
+            context.coordinator.lastLineHighlightCursorOffset = -1
             containerView.clearCurrentLineHighlight()
         }
 
@@ -505,6 +517,8 @@ public struct KeystoneTextView: UIViewRepresentable {
         /// Stores the actual NSRanges that were applied as search highlights.
         /// Used for clearing highlights reliably when text changes.
         var appliedSearchHighlightRanges: [NSRange] = []
+        /// Tracks the last cursor offset used for line highlight to avoid redundant calls
+        var lastLineHighlightCursorOffset: Int = -1
 
         public func textViewDidChange(_ textView: UITextView) {
             guard !isUpdating else { return }
@@ -1504,11 +1518,15 @@ public struct KeystoneTextView: NSViewRepresentable {
             context.coordinator.previousBracketMatch = nil
         }
 
-        // Update current line highlight
+        // Update current line highlight - only if cursor position changed
         if configuration.highlightCurrentLine {
-            let highlightColor = NSColor(configuration.theme.currentLineHighlight)
-            containerView.updateCurrentLineHighlight(cursorPosition.offset, highlightColor: highlightColor)
+            if cursorPosition.offset != context.coordinator.lastLineHighlightCursorOffset {
+                context.coordinator.lastLineHighlightCursorOffset = cursorPosition.offset
+                let highlightColor = NSColor(configuration.theme.currentLineHighlight)
+                containerView.updateCurrentLineHighlight(cursorPosition.offset, highlightColor: highlightColor)
+            }
         } else {
+            context.coordinator.lastLineHighlightCursorOffset = -1
             containerView.clearCurrentLineHighlight()
         }
 
@@ -1525,7 +1543,16 @@ public struct KeystoneTextView: NSViewRepresentable {
 
         // Handle cursor position changes for search navigation or tail follow
         // When scrollToCursor is explicitly true, ALWAYS update cursor and scroll
-        if scrollToCursor {
+        //
+        // IMPORTANT: Capture scrollToCursor value FIRST and reset it IMMEDIATELY before doing any work.
+        // This prevents SwiftUI update loops caused by async state resets.
+        let shouldScrollToCursor = scrollToCursor
+        if shouldScrollToCursor {
+            // Reset IMMEDIATELY to prevent update loop - do this before any other work
+            scrollToCursor = false
+        }
+
+        if shouldScrollToCursor {
             let newLocation = min(cursorPosition.offset, text.count)
             let newLength = min(cursorPosition.selectionLength, text.count - newLocation)
             let newRange = NSRange(location: newLocation, length: newLength)
@@ -1535,11 +1562,6 @@ public struct KeystoneTextView: NSViewRepresentable {
             NSAnimationContext.runAnimationGroup { context in
                 context.duration = 0
                 containerView.textView.scrollRangeToVisible(newRange)
-            }
-
-            // Reset the binding after scrolling once
-            DispatchQueue.main.async {
-                self.scrollToCursor = false
             }
         } else {
             // Normal cursor sync - only update position if it changed, don't scroll
@@ -1690,6 +1712,8 @@ public struct KeystoneTextView: NSViewRepresentable {
         /// Stores the actual NSRanges that were applied as search highlights.
         /// Used for clearing highlights reliably when text changes.
         var appliedSearchHighlightRanges: [NSRange] = []
+        /// Tracks the last cursor offset used for line highlight to avoid redundant calls
+        var lastLineHighlightCursorOffset: Int = -1
 
         // Cached highlighter to avoid recreating TreeSitter parser on every update
         private var cachedHighlighter: SyntaxHighlighter?
