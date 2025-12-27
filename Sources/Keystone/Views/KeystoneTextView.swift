@@ -266,6 +266,9 @@ public struct KeystoneTextView: UIViewRepresentable {
             scrollToCursor = false
         }
 
+        // Only update cursor position when explicitly requested (search, go-to-line, tail follow)
+        // The text view IS the source of truth for cursor position - we never sync FROM binding TO text view
+        // This prevents feedback loops that cause flickering
         if shouldScrollToCursor {
             let newLocation = min(cursorPosition.offset, bindingLength)
             let newLength = min(cursorPosition.selectionLength, max(0, bindingLength - newLocation))
@@ -284,25 +287,10 @@ public struct KeystoneTextView: UIViewRepresentable {
             DispatchQueue.main.async {
                 context.coordinator.isSettingCursorProgrammatically = false
             }
-        } else if !isUserCurrentlyEditing {
-            // Normal cursor sync when not explicitly scrolling - only update position if it changed
-            let currentRange = containerView.textView.selectedRange
-            let positionDiffers = currentRange.location != cursorPosition.offset
-            let selectionDiffers = currentRange.length != cursorPosition.selectionLength
-
-            if positionDiffers || selectionDiffers {
-                let newLocation = min(cursorPosition.offset, bindingLength)
-                let newLength = min(cursorPosition.selectionLength, max(0, bindingLength - newLocation))
-                let newRange = NSRange(location: newLocation, length: newLength)
-
-                context.coordinator.isSettingCursorProgrammatically = true
-                containerView.textView.selectedRange = newRange
-
-                DispatchQueue.main.async {
-                    context.coordinator.isSettingCursorProgrammatically = false
-                }
-            }
         }
+        // NOTE: Removed automatic cursor sync from binding to text view
+        // This was causing feedback loops: textViewDidChangeSelection -> cursorPosition update ->
+        // updateUIView -> selectedRange sync -> textViewDidChangeSelection -> loop
 
         // Only update line numbers when text actually changed (not on every SwiftUI update)
         if needsLineNumberUpdate {
@@ -633,12 +621,8 @@ public struct KeystoneTextView: UIViewRepresentable {
                     in: currentText,
                     selectionLength: selectedRange.length
                 )
-
-                // Immediately update current line highlight for responsive feedback
-                if parent.configuration.highlightCurrentLine, let containerView = containerView {
-                    let highlightColor = UIColor(parent.configuration.theme.currentLineHighlight)
-                    containerView.updateCurrentLineHighlight(selectedRange.location, highlightColor: highlightColor)
-                }
+                // NOTE: Line highlight is now handled by updateUIView with caching
+                // Removed duplicate call here to prevent double updates
             }
         }
 
@@ -1552,6 +1536,9 @@ public struct KeystoneTextView: NSViewRepresentable {
             scrollToCursor = false
         }
 
+        // Only update cursor position when explicitly requested (search, go-to-line, tail follow)
+        // The text view IS the source of truth for cursor position - we never sync FROM binding TO text view
+        // This prevents feedback loops that cause flickering
         if shouldScrollToCursor {
             let newLocation = min(cursorPosition.offset, text.count)
             let newLength = min(cursorPosition.selectionLength, text.count - newLocation)
@@ -1563,16 +1550,9 @@ public struct KeystoneTextView: NSViewRepresentable {
                 context.duration = 0
                 containerView.textView.scrollRangeToVisible(newRange)
             }
-        } else {
-            // Normal cursor sync - only update position if it changed, don't scroll
-            let currentRange = containerView.textView.selectedRange()
-            if currentRange.location != cursorPosition.offset || currentRange.length != cursorPosition.selectionLength {
-                let newLocation = min(cursorPosition.offset, text.count)
-                let newLength = min(cursorPosition.selectionLength, text.count - newLocation)
-                let newRange = NSRange(location: newLocation, length: newLength)
-                containerView.textView.setSelectedRange(newRange)
-            }
         }
+        // NOTE: Removed automatic cursor sync from binding to text view
+        // This was causing feedback loops that led to flickering
 
         containerView.updateLineNumbers()
 
@@ -1776,12 +1756,8 @@ public struct KeystoneTextView: NSViewRepresentable {
                 in: text,
                 selectionLength: selectedRange.length
             )
-
-            // Immediately update current line highlight for responsive feedback
-            if parent.configuration.highlightCurrentLine, let containerView = containerView {
-                let highlightColor = NSColor(parent.configuration.theme.currentLineHighlight)
-                containerView.updateCurrentLineHighlight(selectedRange.location, highlightColor: highlightColor)
-            }
+            // NOTE: Line highlight is now handled by updateNSView with caching
+            // Removed duplicate call here to prevent double updates
         }
 
         @objc func scrollViewDidScroll(_ notification: Notification) {
