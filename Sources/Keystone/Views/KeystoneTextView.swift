@@ -13,6 +13,76 @@ import UIKit
 
 // MARK: - Non-scrolling UITextView for embedding in UIScrollView
 
+/// A UIScrollView that blocks automatic scroll adjustments from UITextView
+/// while still allowing user-initiated (gesture) scrolling.
+class KeystoneScrollView: UIScrollView {
+    /// Track if we're in a user-initiated scroll gesture
+    private var isUserScrolling = false
+    /// Track if programmatic scrolling is allowed
+    private var programmaticScrollAllowed = false
+
+    /// Allow programmatic scrolling for the duration of the block
+    func scrollTo(_ offset: CGPoint, animated: Bool) {
+        programmaticScrollAllowed = true
+        super.setContentOffset(offset, animated: animated)
+        if !animated {
+            programmaticScrollAllowed = false
+        }
+    }
+
+    override func setContentOffset(_ contentOffset: CGPoint, animated: Bool) {
+        // Allow if: user is dragging, decelerating, or programmatic scroll is explicitly allowed
+        guard isUserScrolling || programmaticScrollAllowed || isTracking || isDecelerating || isDragging else {
+            return
+        }
+        super.setContentOffset(contentOffset, animated: animated)
+        if animated {
+            // Reset after animation completes
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+                self?.programmaticScrollAllowed = false
+            }
+        }
+    }
+
+    override var contentOffset: CGPoint {
+        get { return super.contentOffset }
+        set {
+            // Allow if: user is dragging, decelerating, or programmatic scroll is explicitly allowed
+            guard isUserScrolling || programmaticScrollAllowed || isTracking || isDecelerating || isDragging else {
+                return
+            }
+            super.contentOffset = newValue
+        }
+    }
+
+    override func scrollRectToVisible(_ rect: CGRect, animated: Bool) {
+        // Block all scrollRectToVisible calls - these come from UITextView
+        // We handle scrolling explicitly via scrollTo()
+    }
+
+    // MARK: - Gesture Tracking
+
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+        isUserScrolling = true
+        super.touchesBegan(touches, with: event)
+    }
+
+    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
+        super.touchesEnded(touches, with: event)
+        // Delay reset to allow deceleration
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+            if self?.isDecelerating == false {
+                self?.isUserScrolling = false
+            }
+        }
+    }
+
+    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
+        super.touchesCancelled(touches, with: event)
+        isUserScrolling = false
+    }
+}
+
 /// A UITextView with scrolling disabled, designed to be embedded in a parent UIScrollView.
 /// This approach gives us complete control over scrolling - UITextView can't scroll to cursor
 /// because its scrolling is disabled. The parent UIScrollView handles all scrolling.
@@ -866,8 +936,8 @@ public struct KeystoneTextView: UIViewRepresentable {
 /// The UITextView has scrolling disabled - the parent UIScrollView handles all scrolling.
 /// This completely eliminates UITextView's automatic scroll-to-cursor behavior.
 public class KeystoneTextContainerView: UIView {
-    /// The scroll view that handles all scrolling
-    let scrollView: UIScrollView
+    /// The scroll view that handles all scrolling (custom class to block unwanted scroll adjustments)
+    let scrollView: KeystoneScrollView
     /// The text view (with scrolling disabled) for text editing
     let textView: KeystoneUITextView
     /// The line number gutter
@@ -941,7 +1011,8 @@ public class KeystoneTextContainerView: UIView {
         self.configuration = configuration
 
         // Create scroll view - this handles ALL scrolling
-        self.scrollView = UIScrollView()
+        // Uses custom KeystoneScrollView to block unwanted automatic scrolling
+        self.scrollView = KeystoneScrollView()
 
         // Create text view with custom layout manager for invisible characters
         let textStorage = NSTextStorage()
@@ -1175,7 +1246,7 @@ public class KeystoneTextContainerView: UIView {
     func scrollToLine(_ lineNumber: Int, animated: Bool = false) {
         let yOffset = lineHeightCache.yOffset(forLine: lineNumber)
         let targetOffset = CGPoint(x: 0, y: max(0, yOffset - 50)) // 50pt padding
-        scrollView.setContentOffset(targetOffset, animated: animated)
+        scrollView.scrollTo(targetOffset, animated: animated)
     }
 
     /// Returns the line number at the given scroll offset
@@ -1218,10 +1289,10 @@ public class KeystoneTextContainerView: UIView {
 
         if animated {
             UIView.animate(withDuration: 0.25) {
-                self.scrollView.setContentOffset(targetOffset, animated: false)
+                self.scrollView.scrollTo(targetOffset, animated: false)
             }
         } else {
-            scrollView.setContentOffset(targetOffset, animated: false)
+            scrollView.scrollTo(targetOffset, animated: false)
         }
     }
 
@@ -1358,7 +1429,7 @@ public class KeystoneTextContainerView: UIView {
                 let targetY = max(0, rect.origin.y + textView.textContainerInset.top - 20) // 20pt padding from top
                 let maxY = max(0, scrollView.contentSize.height - scrollView.bounds.height)
                 let clampedY = min(targetY, maxY)
-                scrollView.setContentOffset(CGPoint(x: 0, y: clampedY), animated: false)
+                scrollView.scrollTo(CGPoint(x: 0, y: clampedY), animated: false)
             }
         }
     }
