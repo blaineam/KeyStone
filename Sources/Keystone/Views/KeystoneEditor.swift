@@ -348,17 +348,39 @@ public struct KeystoneEditor: View {
         let offset = cursorPosition.wrappedValue.offset
         let insertRange = NSRange(location: offset, length: 0)
 
+        // Check for auto-pair insertion (e.g., typing "{" should also insert "}")
+        var textToInsert = symbol
+        var cursorAdjustment = symbol.count
+
+        if symbol.count == 1, let char = symbol.first {
+            let nsText = text as NSString
+
+            // Check if we should skip over an existing closing character
+            if configuration.shouldSkipClosingPair(for: char, in: nsText, at: offset) {
+                // Just move cursor past the existing character
+                let newOffset = offset + 1
+                cursorPosition.wrappedValue = CursorPosition.from(offset: newOffset, in: text, selectionLength: 0)
+                return
+            }
+
+            // Check if we should auto-insert a closing pair
+            if let closingChar = configuration.shouldAutoInsertPair(for: char, in: nsText, at: offset) {
+                textToInsert = symbol + String(closingChar)
+                cursorAdjustment = 1 // Position cursor between the pair
+            }
+        }
+
         // Try to use undoController for proper undo registration
-        if let newText = undoController.replaceText(in: insertRange, with: symbol) {
+        if let newText = undoController.replaceText(in: insertRange, with: textToInsert) {
             text = newText
         } else {
             // Fallback: direct insertion (no undo support)
             let index = text.index(text.startIndex, offsetBy: min(offset, text.count))
-            text.insert(contentsOf: symbol, at: index)
+            text.insert(contentsOf: textToInsert, at: index)
         }
 
-        // Update cursor position to after the inserted symbol
-        let newOffset = offset + symbol.count
+        // Update cursor position
+        let newOffset = offset + cursorAdjustment
         cursorPosition.wrappedValue = CursorPosition.from(offset: newOffset, in: text, selectionLength: 0)
     }
 
