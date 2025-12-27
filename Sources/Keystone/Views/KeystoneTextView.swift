@@ -451,9 +451,21 @@ public struct KeystoneTextView: UIViewRepresentable {
             containerView.layoutIfNeeded()
             containerView.updateContentSize()
 
+            // Check if cursor is at the very end of the text (tail follow mode)
+            let isAtEnd = newLocation >= bindingLength
+
             // Scroll the scroll view to make the cursor visible
             UIView.performWithoutAnimation {
-                containerView.scrollToRange(newRange)
+                if isAtEnd {
+                    // For tail follow: scroll to absolute bottom
+                    let contentHeight = containerView.scrollView.contentSize.height
+                    let visibleHeight = containerView.scrollView.bounds.height
+                    let maxScrollY = max(0, contentHeight - visibleHeight)
+                    containerView.scrollView.scrollTo(CGPoint(x: 0, y: maxScrollY), animated: false)
+                } else {
+                    // For search/go-to-line: use scrollToRange
+                    containerView.scrollToRange(newRange)
+                }
             }
 
             // Reset flag after a brief delay to ensure selection change notification has fired
@@ -1993,8 +2005,19 @@ public struct KeystoneTextView: NSViewRepresentable {
 
             containerView.textView.setSelectedRange(newRange)
 
-            // Scroll to visible - use scrollRangeToVisible which properly handles the scroll view
-            containerView.textView.scrollRangeToVisible(newRange)
+            // Check if cursor is at the very end of the text (tail follow mode)
+            let isAtEnd = newLocation >= text.count
+
+            if isAtEnd {
+                // For tail follow: scroll to absolute bottom
+                let contentHeight = containerView.scrollView.documentView?.frame.height ?? 0
+                let visibleHeight = containerView.scrollView.contentView.bounds.height
+                let maxScrollY = max(0, contentHeight - visibleHeight)
+                containerView.scrollView.contentView.scroll(to: NSPoint(x: 0, y: maxScrollY))
+            } else {
+                // For search/go-to-line: use scrollRangeToVisible
+                containerView.textView.scrollRangeToVisible(newRange)
+            }
 
             // Force the scroll view to update
             containerView.scrollView.reflectScrolledClipView(containerView.scrollView.contentView)
@@ -2248,7 +2271,12 @@ public struct KeystoneTextView: NSViewRepresentable {
 
         @objc func scrollViewDidScroll(_ notification: Notification) {
             guard let clipView = notification.object as? NSClipView else { return }
-            parent.scrollOffset = clipView.bounds.origin.y
+
+            // Only update scrollOffset binding when not in the middle of a view update
+            // to avoid "Modifying state during view update" warnings
+            if !isUpdating {
+                parent.scrollOffset = clipView.bounds.origin.y
+            }
             containerView?.syncLineNumberScroll()
 
             // Capture values on main thread before async dispatch to avoid actor isolation issues
@@ -2644,19 +2672,27 @@ public class KeystoneTextContainerViewMac: NSView {
 
         let text = textView.string
 
-        // NOTE: Code folding analysis disabled for performance
-        // The current implementation only hides line numbers, not actual text content
-        // To properly implement code folding, we would need to modify the text container
-        // or use text attachment/exclusion paths
+        // Ensure layout is complete before iterating
+        if let textContainer = textView.textContainer {
+            layoutManager.ensureLayout(for: textContainer)
+        }
 
         var lineData: [(lineNumber: Int, yPosition: CGFloat, height: CGFloat)] = []
         var lineNumber = 1
         var glyphIndex = 0
         let numberOfGlyphs = layoutManager.numberOfGlyphs
+        var lastYPosition: CGFloat = -1 // Track last Y position to avoid duplicates
 
         while glyphIndex < numberOfGlyphs {
             var lineRange = NSRange()
             let lineRect = layoutManager.lineFragmentRect(forGlyphAt: glyphIndex, effectiveRange: &lineRange)
+
+            // Ensure we're making progress
+            let nextGlyphIndex = NSMaxRange(lineRange)
+            if nextGlyphIndex <= glyphIndex {
+                glyphIndex += 1
+                continue
+            }
 
             let yPosition = lineRect.origin.y + textView.textContainerInset.height
 
@@ -2665,17 +2701,22 @@ public class KeystoneTextContainerViewMac: NSView {
             let isFirstFragmentOfLine: Bool
             if charRange.location == 0 {
                 isFirstFragmentOfLine = true
-            } else {
+            } else if charRange.location > 0 && charRange.location <= text.count {
                 let prevChar = (text as NSString).substring(with: NSRange(location: charRange.location - 1, length: 1))
                 isFirstFragmentOfLine = prevChar == "\n"
+            } else {
+                isFirstFragmentOfLine = false
             }
 
-            if isFirstFragmentOfLine {
+            // Only add if this is a new logical line AND we haven't already added this Y position
+            // (prevents duplicates from layout edge cases)
+            if isFirstFragmentOfLine && abs(yPosition - lastYPosition) > 0.5 {
                 lineData.append((lineNumber: lineNumber, yPosition: yPosition, height: lineRect.height))
+                lastYPosition = yPosition
                 lineNumber += 1
             }
 
-            glyphIndex = NSMaxRange(lineRange)
+            glyphIndex = nextGlyphIndex
         }
 
         if text.isEmpty {
