@@ -2081,9 +2081,22 @@ public struct KeystoneTextView: NSViewRepresentable {
             let isAtEnd = newLocation >= textLength - 1
 
             if isAtEnd && textLength > 0 {
-                // For tail follow: scroll to absolute bottom using NSTextView's built-in method
-                // This properly handles layout and scrolls to show the very end
-                containerView.textView.scrollToEndOfDocument(nil)
+                // For tail follow: we need layout to be computed before scrolling.
+                // Force a layout pass to ensure the text view's frame is updated
+                // and the scroll view knows the correct content size.
+                containerView.scrollView.layoutSubtreeIfNeeded()
+
+                // Now scroll to the absolute bottom - use scrollRangeToVisible for more reliable behavior
+                let endRange = NSRange(location: textLength, length: 0)
+                containerView.textView.scrollRangeToVisible(endRange)
+
+                // For very reliable scrolling, also explicitly scroll to the bottom of the document rect
+                if let documentView = containerView.scrollView.documentView {
+                    let maxY = documentView.frame.maxY - containerView.scrollView.contentView.bounds.height
+                    if maxY > 0 {
+                        containerView.scrollView.contentView.scroll(to: NSPoint(x: 0, y: maxY))
+                    }
+                }
             } else {
                 // For search/go-to-line: use scrollRangeToVisible
                 containerView.textView.scrollRangeToVisible(newRange)
