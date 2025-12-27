@@ -2000,16 +2000,72 @@ public struct KeystoneTextView: NSViewRepresentable {
         // Use textStorage.length for O(1) comparison instead of string comparison O(n)
         let currentLength = containerView.textView.textStorage?.length ?? 0
         let newLength = (text as NSString).length
-        let textChanged = currentLength != newLength || (currentLength > 0 && containerView.textView.string != text)
 
+        // Fast path: if lengths are same, text likely hasn't changed (skip expensive comparison for large files)
+        // For tail follow, new length will be greater - that's our signal to update
+        var textChanged = currentLength != newLength
+        var appendedRange: NSRange? = nil
+
+        if textChanged && newLength > currentLength {
+            // Likely tail follow (append only) - use efficient incremental update
+            // Check if this is truly an append (existing content unchanged)
+            let existingText = containerView.textView.textStorage?.string ?? ""
+            let newNSString = text as NSString
+
+            // Only do prefix check for reasonable sizes to avoid comparing huge strings
+            // For very large files (>100KB), assume it's append-only during tail follow
+            let isAppendOnly: Bool
+            if currentLength > 100_000 {
+                // For very large files, assume append-only if length increased
+                // This avoids expensive O(n) string comparison
+                isAppendOnly = true
+            } else {
+                // For smaller files, verify prefix matches
+                let existingPrefix = newNSString.substring(to: currentLength)
+                isAppendOnly = existingPrefix == existingText
+            }
+
+            if isAppendOnly, let textStorage = containerView.textView.textStorage {
+                // Efficient append - only add the new content
+                let appendText = newNSString.substring(from: currentLength)
+                let appendLocation = currentLength
+                appendedRange = NSRange(location: appendLocation, length: newNSString.length - currentLength)
+
+                textStorage.beginEditing()
+                textStorage.replaceCharacters(in: NSRange(location: currentLength, length: 0), with: appendText)
+
+                // Apply default text attributes to appended content
+                textStorage.setAttributes([
+                    .font: font,
+                    .foregroundColor: NSColor(configuration.theme.text)
+                ], range: appendedRange!)
+                textStorage.endEditing()
+
+                // Only need to highlight the new content, not the whole file
+                // For tail follow, skip syntax highlighting entirely for better performance
+                // The text is readable with default colors
+                needsHighlight = false
+                textChanged = false // We've already handled the update
+            }
+        }
+
+        // Fall back to full replacement for other changes (edits, deletions, etc.)
         if textChanged {
-            let selectedRange = containerView.textView.selectedRange()
-            containerView.textView.string = text
-            needsHighlight = true
+            // For non-append changes, do full string comparison if needed
+            if currentLength == newLength && currentLength > 0 {
+                // Same length - need to check if content actually changed
+                textChanged = containerView.textView.string != text
+            }
 
-            // Restore selection - use textStorage.length (O(1)) instead of text.count (O(n))
-            let newLocation = min(selectedRange.location, containerView.textView.textStorage?.length ?? 0)
-            containerView.textView.setSelectedRange(NSRange(location: newLocation, length: 0))
+            if textChanged {
+                let selectedRange = containerView.textView.selectedRange()
+                containerView.textView.string = text
+                needsHighlight = true
+
+                // Restore selection - use textStorage.length (O(1)) instead of text.count (O(n))
+                let newLocation = min(selectedRange.location, containerView.textView.textStorage?.length ?? 0)
+                containerView.textView.setSelectedRange(NSRange(location: newLocation, length: 0))
+            }
         }
 
         // Update font if needed
