@@ -2729,15 +2729,20 @@ public class KeystoneTextContainerViewMac: NSView {
         }
 
         // Process visible glyphs
+        var lastProcessedCharIndex = charRangeBeforeVisible.location + charRangeBeforeVisible.length
         layoutManager.enumerateLineFragments(forGlyphRange: expandedGlyphRange) { rect, _, _, glyphRange, _ in
             let charRange = layoutManager.characterRange(forGlyphRange: glyphRange, actualGlyphRange: nil)
 
-            // Calculate line number for this fragment
+            // Calculate line number for this fragment - count newlines since last processed
             var lineForFragment = currentLine
-            for i in charRangeBeforeVisible.location + charRangeBeforeVisible.length..<charRange.location {
-                if i < textLength && (text as NSString).character(at: i) == 0x0A {
-                    currentLine += 1
-                    lineForFragment = currentLine
+            let startIdx = lastProcessedCharIndex
+            let endIdx = charRange.location
+            if startIdx < endIdx && endIdx <= textLength {
+                for i in startIdx..<endIdx {
+                    if (text as NSString).character(at: i) == 0x0A {
+                        currentLine += 1
+                        lineForFragment = currentLine
+                    }
                 }
             }
 
@@ -2749,11 +2754,16 @@ public class KeystoneTextContainerViewMac: NSView {
             }
 
             // Check for newlines within this fragment
-            for i in charRange.location..<min(charRange.location + charRange.length, textLength) {
-                if (text as NSString).character(at: i) == 0x0A {
-                    currentLine += 1
+            let fragStart = charRange.location
+            let fragEnd = min(charRange.location + charRange.length, textLength)
+            if fragStart < fragEnd {
+                for i in fragStart..<fragEnd {
+                    if (text as NSString).character(at: i) == 0x0A {
+                        currentLine += 1
+                    }
                 }
             }
+            lastProcessedCharIndex = fragEnd
         }
 
         // Sort by Y position to ensure correct order
