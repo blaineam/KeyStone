@@ -18,15 +18,21 @@ import UIKit
 /// because its scrolling is disabled. The parent UIScrollView handles all scrolling.
 class KeystoneUITextView: UITextView {
 
+    /// Reference to the parent scroll view that handles all scrolling
+    weak var parentScrollView: UIScrollView?
+
     override init(frame: CGRect, textContainer: NSTextContainer?) {
         super.init(frame: frame, textContainer: textContainer)
         // Disable scrolling - parent UIScrollView will handle it
         isScrollEnabled = false
+        // Prevent content inset adjustments
+        contentInsetAdjustmentBehavior = .never
     }
 
     required init?(coder: NSCoder) {
         super.init(coder: coder)
         isScrollEnabled = false
+        contentInsetAdjustmentBehavior = .never
     }
 
     /// Calculate the size needed to fit all content
@@ -52,6 +58,34 @@ class KeystoneUITextView: UITextView {
     /// Prevent scroll-to-caret behavior
     override func setContentOffset(_ contentOffset: CGPoint, animated: Bool) {
         // Do nothing - parent UIScrollView controls scrolling
+    }
+
+    /// Prevent UITextView from scrolling to show caret by overriding layoutSubviews
+    override func layoutSubviews() {
+        // Save parent scroll view's offset before layout
+        let savedOffset = parentScrollView?.contentOffset
+
+        super.layoutSubviews()
+
+        // Restore parent scroll view's offset if it was changed by UITextView internals
+        if let savedOffset = savedOffset, let parentScrollView = parentScrollView {
+            if parentScrollView.contentOffset != savedOffset {
+                parentScrollView.setContentOffset(savedOffset, animated: false)
+            }
+        }
+    }
+
+    /// Override to prevent the text view from requesting its superview to scroll
+    override func becomeFirstResponder() -> Bool {
+        let savedOffset = parentScrollView?.contentOffset
+        let result = super.becomeFirstResponder()
+        // Restore scroll position if it changed
+        if let savedOffset = savedOffset, let parentScrollView = parentScrollView {
+            if parentScrollView.contentOffset != savedOffset {
+                parentScrollView.setContentOffset(savedOffset, animated: false)
+            }
+        }
+        return result
     }
 }
 
@@ -992,6 +1026,9 @@ public class KeystoneTextContainerView: UIView {
         textView.isOpaque = false  // Allow transparency for proper rendering
         // Scrolling is disabled in KeystoneUITextView init - scroll view handles it
 
+        // Connect parent scroll view reference for scroll position preservation
+        textView.parentScrollView = scrollView
+
         scrollView.addSubview(textView)
     }
 
@@ -1233,6 +1270,7 @@ public class KeystoneTextContainerView: UIView {
     func updateConfiguration(_ config: KeystoneConfiguration) {
         // Compare against lastApplied values since config might be the same object reference
         let showLineNumbersChanged = lastAppliedShowLineNumbers != config.showLineNumbers
+        let lineWrappingChanged = lastAppliedLineWrapping != config.lineWrapping
         self.configuration = config
 
         // Update layout constraints if line numbers visibility changed
@@ -1269,6 +1307,21 @@ public class KeystoneTextContainerView: UIView {
             textView.setNeedsDisplay()
         }
 
+        // Find the first visible character position BEFORE changing line wrapping
+        // so we can scroll back to it after the layout changes
+        var firstVisibleCharacterOffset: Int?
+        if lineWrappingChanged {
+            let visibleY = scrollView.contentOffset.y + textView.textContainerInset.top
+            let layoutManager = textView.layoutManager
+            let textContainer = textView.textContainer
+
+            // Find the glyph at the visible Y position
+            let glyphIndex = layoutManager.glyphIndex(for: CGPoint(x: 0, y: visibleY), in: textContainer)
+            if glyphIndex < layoutManager.numberOfGlyphs {
+                firstVisibleCharacterOffset = layoutManager.characterIndexForGlyph(at: glyphIndex)
+            }
+        }
+
         // Update text wrapping - NEVER enable textView.isScrollEnabled as the scroll view handles all scrolling
         if config.lineWrapping {
             textView.textContainer.lineBreakMode = .byWordWrapping
@@ -1292,6 +1345,22 @@ public class KeystoneTextContainerView: UIView {
         setNeedsLayout()
         layoutIfNeeded()
         updateContentSize()
+
+        // Scroll back to the first visible character after line wrapping change
+        if lineWrappingChanged, let charOffset = firstVisibleCharacterOffset {
+            let layoutManager = textView.layoutManager
+            let textContainer = textView.textContainer
+
+            // Get the new position of the character after layout change
+            let glyphRange = layoutManager.glyphRange(forCharacterRange: NSRange(location: charOffset, length: 1), actualCharacterRange: nil)
+            if glyphRange.location < layoutManager.numberOfGlyphs {
+                let rect = layoutManager.boundingRect(forGlyphRange: glyphRange, in: textContainer)
+                let targetY = max(0, rect.origin.y + textView.textContainerInset.top - 20) // 20pt padding from top
+                let maxY = max(0, scrollView.contentSize.height - scrollView.bounds.height)
+                let clampedY = min(targetY, maxY)
+                scrollView.setContentOffset(CGPoint(x: 0, y: clampedY), animated: false)
+            }
+        }
     }
 
     // Cached line data to avoid full recalculation on every keystroke
