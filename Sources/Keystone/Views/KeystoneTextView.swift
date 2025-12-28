@@ -356,10 +356,12 @@ public struct KeystoneTextView: UIViewRepresentable {
             undoController.startUpdating()
         }
 
-        // Analyze text for code folding regions
-        DispatchQueue.main.async {
-            containerView.foldingManager.analyze(self.text)
-            containerView.lineNumberView.setNeedsDisplay()
+        // Analyze text for code folding regions (if enabled)
+        if configuration.showCodeFolding {
+            DispatchQueue.main.async {
+                containerView.foldingManager.analyze(self.text)
+                containerView.lineNumberView.setNeedsDisplay()
+            }
         }
 
         // Force initial layout on next run loop to ensure proper sizing
@@ -1007,17 +1009,19 @@ public struct KeystoneTextView: UIViewRepresentable {
             // Schedule syntax re-parse (uses incremental parsing for fast updates)
             scheduleSyntaxReparse()
 
-            // Update code folding regions (debounced for performance)
-            foldingWorkItem?.cancel()
-            let foldingWork = DispatchWorkItem { [weak self] in
-                guard let self = self, let containerView = self.containerView else { return }
-                let text = textView.text ?? ""
-                containerView.foldingManager.analyze(text)
-                containerView.applyFolding()
-                containerView.lineNumberView.setNeedsDisplay()
+            // Update code folding regions (debounced for performance, if enabled)
+            if parent.configuration.showCodeFolding {
+                foldingWorkItem?.cancel()
+                let foldingWork = DispatchWorkItem { [weak self] in
+                    guard let self = self, let containerView = self.containerView else { return }
+                    let text = textView.text ?? ""
+                    containerView.foldingManager.analyze(text)
+                    containerView.applyFolding()
+                    containerView.lineNumberView.setNeedsDisplay()
+                }
+                foldingWorkItem = foldingWork
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: foldingWork)
             }
-            foldingWorkItem = foldingWork
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: foldingWork)
         }
 
         /// Force sync text immediately (call before operations that need current text)
@@ -1835,6 +1839,7 @@ public class KeystoneTextContainerView: UIView {
     private var lastAppliedShowLineNumbers: Bool = true
     private var lastAppliedLineWrapping: Bool = true
     private var lastAppliedShowInvisibles: Bool = false
+    private var lastAppliedShowCodeFolding: Bool = true
 
     /// Only update configuration if something actually changed
     /// Returns true if syntax highlighting needs to be reapplied
@@ -1847,6 +1852,7 @@ public class KeystoneTextContainerView: UIView {
         if lastAppliedShowLineNumbers != config.showLineNumbers { needsUpdate = true; needsRehighlight = true }
         if lastAppliedLineWrapping != config.lineWrapping { needsUpdate = true; needsRehighlight = true }
         if lastAppliedShowInvisibles != config.showInvisibleCharacters { needsUpdate = true; needsRehighlight = true }
+        if lastAppliedShowCodeFolding != config.showCodeFolding { needsUpdate = true }
 
         if needsUpdate {
             updateConfiguration(config)
@@ -1854,6 +1860,7 @@ public class KeystoneTextContainerView: UIView {
             lastAppliedShowLineNumbers = config.showLineNumbers
             lastAppliedLineWrapping = config.lineWrapping
             lastAppliedShowInvisibles = config.showInvisibleCharacters
+            lastAppliedShowCodeFolding = config.showCodeFolding
         } else {
             // Always update background colors to catch theme changes (cheap operation)
             let bgColor = UIColor(config.theme.background)
@@ -1892,6 +1899,20 @@ public class KeystoneTextContainerView: UIView {
         lineNumberView.currentLineColor = UIColor.systemBlue
         lineNumberView.fontSize = config.fontSize
         lineNumberView.lineHeight = config.fontSize * config.lineHeightMultiplier
+
+        // Update code folding state
+        let codeFoldingChanged = lastAppliedShowCodeFolding != config.showCodeFolding
+        if codeFoldingChanged {
+            foldingManager.isEnabled = config.showCodeFolding
+            if config.showCodeFolding {
+                // Re-analyze when enabled
+                foldingManager.analyze(textView.text ?? "")
+            } else {
+                // Clear regions and unfold all when disabled
+                foldingManager.unfoldAll()
+            }
+            lineNumberView.setNeedsDisplay()
+        }
 
         // Update background colors for theme changes
         let bgColor = UIColor(config.theme.background)
@@ -3487,6 +3508,7 @@ public class KeystoneTextContainerViewMac: NSView {
     private var lastAppliedFontSize: CGFloat = 0
     private var lastAppliedLineWrapping: Bool = true
     private var lastAppliedShowInvisibles: Bool = false
+    private var lastAppliedShowCodeFolding: Bool = true
 
     // MARK: - Undo/Redo
 
@@ -4022,14 +4044,22 @@ public class KeystoneTextContainerViewMac: NSView {
             needsLayout = true
             layoutSubtreeIfNeeded()
 
-            // Sync code folding with line numbers visibility
-            // Code folding requires line numbers to be visible for the fold toggles
-            foldingManager.isEnabled = config.showLineNumbers
-            if !config.showLineNumbers {
-                // Unfold all when line numbers are hidden
+        }
+
+        // Handle code folding state changes
+        let codeFoldingChanged = lastAppliedShowCodeFolding != config.showCodeFolding
+        if codeFoldingChanged {
+            lastAppliedShowCodeFolding = config.showCodeFolding
+            foldingManager.isEnabled = config.showCodeFolding
+            if config.showCodeFolding {
+                // Re-analyze when enabled
+                foldingManager.analyze(textView.string)
+            } else {
+                // Unfold all when disabled
                 foldingManager.unfoldAll()
                 clearFoldingStyles()
             }
+            lineNumberView.needsDisplay = true
         }
 
         // Update tracking variables

@@ -28,6 +28,10 @@ public final class KeystoneConfiguration: ObservableObject {
     /// Whether to wrap long lines.
     @Published public var lineWrapping: Bool = true
 
+    /// Whether to show code folding indicators in the gutter.
+    /// Note: May impact scroll performance on iOS for large files.
+    @Published public var showCodeFolding: Bool = true
+
     // MARK: - Behavior Settings
 
     /// Whether to automatically insert matching pairs (brackets, quotes).
@@ -75,6 +79,7 @@ public final class KeystoneConfiguration: ObservableObject {
         static let highlightCurrentLine = "keystone.highlightCurrentLine"
         static let showInvisibleCharacters = "keystone.showInvisibleCharacters"
         static let lineWrapping = "keystone.lineWrapping"
+        static let showCodeFolding = "keystone.showCodeFolding"
         static let autoInsertPairs = "keystone.autoInsertPairs"
         static let highlightMatchingBrackets = "keystone.highlightMatchingBrackets"
         static let tabKeyInsertsTab = "keystone.tabKeyInsertsTab"
@@ -113,6 +118,9 @@ public final class KeystoneConfiguration: ObservableObject {
         if defaults.object(forKey: Keys.lineWrapping) != nil {
             lineWrapping = defaults.bool(forKey: Keys.lineWrapping)
         }
+        if defaults.object(forKey: Keys.showCodeFolding) != nil {
+            showCodeFolding = defaults.bool(forKey: Keys.showCodeFolding)
+        }
         if defaults.object(forKey: Keys.autoInsertPairs) != nil {
             autoInsertPairs = defaults.bool(forKey: Keys.autoInsertPairs)
         }
@@ -143,6 +151,7 @@ public final class KeystoneConfiguration: ObservableObject {
         defaults.set(highlightCurrentLine, forKey: Keys.highlightCurrentLine)
         defaults.set(showInvisibleCharacters, forKey: Keys.showInvisibleCharacters)
         defaults.set(lineWrapping, forKey: Keys.lineWrapping)
+        defaults.set(showCodeFolding, forKey: Keys.showCodeFolding)
         defaults.set(autoInsertPairs, forKey: Keys.autoInsertPairs)
         defaults.set(highlightMatchingBrackets, forKey: Keys.highlightMatchingBrackets)
         defaults.set(tabKeyInsertsTab, forKey: Keys.tabKeyInsertsTab)
@@ -169,6 +178,7 @@ public final class KeystoneConfiguration: ObservableObject {
         config.highlightCurrentLine = highlightCurrentLine
         config.showInvisibleCharacters = showInvisibleCharacters
         config.lineWrapping = lineWrapping
+        config.showCodeFolding = showCodeFolding
         config.autoInsertPairs = autoInsertPairs
         config.highlightMatchingBrackets = highlightMatchingBrackets
         config.tabKeyInsertsTab = tabKeyInsertsTab

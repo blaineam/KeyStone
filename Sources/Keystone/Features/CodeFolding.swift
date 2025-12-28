@@ -101,6 +101,15 @@ public class CodeFoldingManager: ObservableObject {
     /// The last analyzed text (to avoid re-analyzing unchanged text).
     private var lastAnalyzedText: String = ""
 
+    /// Dictionary for O(1) region lookup by start line.
+    private var regionsByStartLine: [Int: FoldableRegion] = [:]
+
+    /// Set of hidden line numbers for O(1) lookup (rebuilt when fold state changes).
+    private var hiddenLines: Set<Int> = []
+
+    /// Whether hidden lines cache needs to be rebuilt.
+    private var hiddenLinesCacheDirty = true
+
     public init() {}
 
     /// Analyzes the text and detects foldable regions.
@@ -240,6 +249,9 @@ public class CodeFoldingManager: ObservableObject {
             .filter { $0.lineCount >= 2 }
             .sorted { $0.startLine < $1.startLine }
 
+        // Build O(1) lookup dictionary
+        regionsByStartLine = Dictionary(uniqueKeysWithValues: regions.map { ($0.startLine, $0) })
+
         // Preserve fold state for existing regions with same start/end lines
         let oldFoldedIds = foldedRegionIds
         var newFoldedIds = Set<UUID>()
@@ -252,6 +264,7 @@ public class CodeFoldingManager: ObservableObject {
             }
         }
         foldedRegionIds = newFoldedIds
+        hiddenLinesCacheDirty = true
     }
 
     /// Finds a region from the previous analysis with matching line numbers.
@@ -301,6 +314,20 @@ public class CodeFoldingManager: ObservableObject {
         return line.isEmpty ? "..." : line
     }
 
+    /// Rebuilds the hidden lines cache from current fold state.
+    private func rebuildHiddenLinesCache() {
+        hiddenLines.removeAll()
+        for region in regions {
+            if foldedRegionIds.contains(region.id) {
+                // Lines after startLine up to and including endLine are hidden
+                for line in (region.startLine + 1)...region.endLine {
+                    hiddenLines.insert(line)
+                }
+            }
+        }
+        hiddenLinesCacheDirty = false
+    }
+
     /// Toggles the fold state of a region.
     /// - Parameter region: The region to toggle.
     public func toggleFold(_ region: FoldableRegion) {
@@ -309,42 +336,45 @@ public class CodeFoldingManager: ObservableObject {
         } else {
             foldedRegionIds.insert(region.id)
         }
+        hiddenLinesCacheDirty = true
     }
 
     /// Folds a specific region.
     /// - Parameter region: The region to fold.
     public func fold(_ region: FoldableRegion) {
         foldedRegionIds.insert(region.id)
+        hiddenLinesCacheDirty = true
     }
 
     /// Unfolds a specific region.
     /// - Parameter region: The region to unfold.
     public func unfold(_ region: FoldableRegion) {
         foldedRegionIds.remove(region.id)
+        hiddenLinesCacheDirty = true
     }
 
     /// Folds all regions.
     public func foldAll() {
         foldedRegionIds = Set(regions.map(\.id))
+        hiddenLinesCacheDirty = true
     }
 
     /// Unfolds all regions.
     public func unfoldAll() {
         foldedRegionIds.removeAll()
+        hiddenLinesCacheDirty = true
     }
 
     /// Checks if a line is hidden due to folding.
+    /// Uses cached Set for O(1) lookup.
     /// - Parameter lineNumber: The 1-based line number.
     /// - Returns: True if the line is hidden.
     public func isLineHidden(_ lineNumber: Int) -> Bool {
         guard isEnabled else { return false }
-        for region in regions {
-            if foldedRegionIds.contains(region.id) &&
-               lineNumber > region.startLine && lineNumber <= region.endLine {
-                return true
-            }
+        if hiddenLinesCacheDirty {
+            rebuildHiddenLinesCache()
         }
-        return false
+        return hiddenLines.contains(lineNumber)
     }
 
     /// Checks if a character offset is inside a folded region.
@@ -389,6 +419,9 @@ public class CodeFoldingManager: ObservableObject {
                 unfolded = true
             }
         }
+        if unfolded {
+            hiddenLinesCacheDirty = true
+        }
         return unfolded
     }
 
@@ -405,23 +438,28 @@ public class CodeFoldingManager: ObservableObject {
                 unfolded = true
             }
         }
+        if unfolded {
+            hiddenLinesCacheDirty = true
+        }
         return unfolded
     }
 
     /// Gets the region at a specific line, if any.
+    /// Uses cached dictionary for O(1) lookup.
     /// - Parameter lineNumber: The 1-based line number.
     /// - Returns: The foldable region starting at this line, if any.
     public func region(atLine lineNumber: Int) -> FoldableRegion? {
         guard isEnabled else { return nil }
-        return regions.first { $0.startLine == lineNumber }
+        return regionsByStartLine[lineNumber]
     }
 
     /// Checks if a line has a foldable region starting.
+    /// Uses cached dictionary for O(1) lookup.
     /// - Parameter lineNumber: The 1-based line number.
     /// - Returns: True if a foldable region starts at this line.
     public func hasFoldableRegion(atLine lineNumber: Int) -> Bool {
         guard isEnabled else { return false }
-        return regions.contains { $0.startLine == lineNumber }
+        return regionsByStartLine[lineNumber] != nil
     }
 
     /// Checks if a region is currently folded.

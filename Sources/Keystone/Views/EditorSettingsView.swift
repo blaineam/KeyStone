@@ -44,6 +44,7 @@ public struct EditorSettingsView: View {
                     Toggle("Highlight Current Line", isOn: $configuration.highlightCurrentLine)
                     Toggle("Show Invisible Characters", isOn: $configuration.showInvisibleCharacters)
                     Toggle("Line Wrapping", isOn: $configuration.lineWrapping)
+                    Toggle("Code Folding", isOn: $configuration.showCodeFolding)
 
                     HStack {
                         Text("Font Size")
@@ -166,6 +167,7 @@ public struct EditorSettingsView: View {
                             Toggle("Highlight Current Line", isOn: $configuration.highlightCurrentLine)
                             Toggle("Show Invisible Characters", isOn: $configuration.showInvisibleCharacters)
                             Toggle("Line Wrapping", isOn: $configuration.lineWrapping)
+                            Toggle("Code Folding", isOn: $configuration.showCodeFolding)
 
                             HStack {
                                 Text("Font Size")
