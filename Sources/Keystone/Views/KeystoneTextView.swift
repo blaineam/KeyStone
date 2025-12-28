@@ -437,11 +437,23 @@ public struct KeystoneTextView: UIViewRepresentable {
                 // After initial load, only set text if it was genuinely changed externally
                 // (e.g., file was reloaded, undo from outside text view)
                 // Skip if the text view is the one that made the change
-                if !context.coordinator.isSyncingFromInternalEdit {
+                //
+                // CRITICAL for undo: Also check if the binding text hash matches what we last synced.
+                // This prevents the race condition where:
+                // 1. We sync text to binding
+                // 2. isSyncingFromInternalEdit flag resets
+                // 3. A later SwiftUI update triggers updateUIView
+                // 4. We incorrectly set textView.text, clearing undo history
+                let bindingTextHash = text.hashValue
+                let isOurOwnSync = bindingTextHash == context.coordinator.lastSyncedTextHash
+
+                if !context.coordinator.isSyncingFromInternalEdit && !isOurOwnSync {
                     let selectedRange = containerView.textView.selectedRange
                     containerView.textView.text = text
                     needsHighlight = true
                     needsLineNumberUpdate = true
+                    // Reset the hash since we're loading external text
+                    context.coordinator.lastSyncedTextHash = 0
 
                     // Force immediate layout update to ensure text renders
                     containerView.setNeedsLayout()
@@ -768,6 +780,9 @@ public struct KeystoneTextView: UIViewRepresentable {
         var isSyncingFromInternalEdit = false
         // Flag to indicate user is actively editing - prevents updateUIView from overwriting
         var isUserEditing = false
+        // Track the hash of text that was last synced TO the binding
+        // This prevents updateUIView from setting text when the binding just reflects what we sent
+        var lastSyncedTextHash: Int = 0
         /// Stores the actual NSRanges that were applied as search highlights.
         /// Used for clearing highlights reliably when text changes.
         var appliedSearchHighlightRanges: [NSRange] = []
@@ -1002,6 +1017,9 @@ public struct KeystoneTextView: UIViewRepresentable {
                         self.lastSyncedLength = currentLength
                         // Only do O(n) text copy if text actually changed
                         let text = textView.text ?? ""
+                        // Record hash of text we're syncing TO the binding
+                        // This allows updateUIView to skip setting text when it's just our own sync
+                        self.lastSyncedTextHash = text.hashValue
                         self.parent.text = text
 
                         // Also sync cursor position using the text we already copied
@@ -2620,7 +2638,13 @@ public struct KeystoneTextView: NSViewRepresentable {
 
         // Fall back to full replacement for other changes (edits, deletions, etc.)
         // Skip if the change originated from the text view itself (prevents feedback loop)
-        if textChanged && !context.coordinator.isSyncingFromTextView {
+        //
+        // CRITICAL for undo: Also check if the binding text hash matches what we last synced.
+        // This prevents clearing undo history when the binding just reflects our own sync.
+        let bindingTextHash = text.hashValue
+        let isOurOwnSync = bindingTextHash == context.coordinator.lastSyncedTextHash
+
+        if textChanged && !context.coordinator.isSyncingFromTextView && !isOurOwnSync {
             // ALWAYS verify with string comparison before resetting text
             // This prevents race conditions where binding value is stale
             textChanged = containerView.textView.string != text
@@ -2629,6 +2653,8 @@ public struct KeystoneTextView: NSViewRepresentable {
                 let selectedRange = containerView.textView.selectedRange()
                 containerView.textView.string = text
                 needsHighlight = true
+                // Reset the hash since we're loading external text
+                context.coordinator.lastSyncedTextHash = 0
 
                 // Restore selection - use textStorage.length (O(1)) instead of text.count (O(n))
                 let newLocation = min(selectedRange.location, containerView.textView.textStorage?.length ?? 0)
@@ -3003,6 +3029,8 @@ public struct KeystoneTextView: NSViewRepresentable {
 
         // Flag to indicate text change originated from text view (not external binding)
         var isSyncingFromTextView = false
+        // Track the hash of text that was last synced TO the binding (preserves undo history)
+        var lastSyncedTextHash: Int = 0
 
         // Pending edit info for incremental parsing (captured in shouldChangeTextIn)
         private var pendingEdit: TextEdit?
@@ -3285,7 +3313,9 @@ public struct KeystoneTextView: NSViewRepresentable {
             isSyncingFromTextView = true
 
             // Sync text immediately - required for proper editing
-            parent.text = textView.string
+            let currentText = textView.string
+            lastSyncedTextHash = currentText.hashValue  // Track what we synced (preserves undo)
+            parent.text = currentText
             containerView?.updateLineNumbers()
 
             // Reset flag after next run loop to allow updateNSView to complete
