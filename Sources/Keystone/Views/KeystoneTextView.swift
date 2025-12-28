@@ -2804,8 +2804,16 @@ public struct KeystoneTextView: NSViewRepresentable {
                           let containerView = containerView,
                           let textStorage = containerView.textView.textStorage else { return }
 
-                    // Verify text hasn't changed while parsing (another reparse would be scheduled)
-                    guard textStorage.string == text else { return }
+                    // Get CURRENT text from textStorage (not the captured text)
+                    // The cache was populated with whatever text was parsed
+                    let currentText = textStorage.string
+                    guard !currentText.isEmpty else { return }
+
+                    // Check if cache is valid for current text
+                    guard highlighter.hasCachedHighlighting(for: currentText) else {
+                        // Cache doesn't match current text - another reparse will be scheduled
+                        return
+                    }
 
                     // Apply highlighting to the visible viewport immediately
                     let font = NSFont.monospacedSystemFont(
@@ -2842,7 +2850,7 @@ public struct KeystoneTextView: NSViewRepresentable {
                         length: highlightEnd - highlightStart
                     )
 
-                    // Apply highlighting (cache is now populated)
+                    // Apply highlighting (cache is now populated and valid)
                     textStorage.beginEditing()
                     textStorage.setAttributes([
                         .font: font,
@@ -2850,7 +2858,7 @@ public struct KeystoneTextView: NSViewRepresentable {
                     ], range: highlightRange)
                     highlighter.highlightRange(
                         textStorage: textStorage,
-                        text: text,
+                        text: currentText,
                         offset: highlightStart,
                         rangeToHighlight: highlightRange,
                         onParseComplete: nil
