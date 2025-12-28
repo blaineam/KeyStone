@@ -91,6 +91,10 @@ class KeystoneUITextView: UITextView {
     /// Reference to the parent scroll view that handles all scrolling
     weak var parentScrollView: UIScrollView?
 
+    /// Code folding support
+    weak var foldingManager: CodeFoldingManager?
+    var onFoldIndicatorClicked: ((FoldableRegion) -> Void)?
+
     override init(frame: CGRect, textContainer: NSTextContainer?) {
         super.init(frame: frame, textContainer: textContainer)
         // Disable scrolling - parent UIScrollView will handle it
@@ -156,6 +160,37 @@ class KeystoneUITextView: UITextView {
             }
         }
         return result
+    }
+
+    /// Handle touches to detect taps on fold indicators
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+        guard let touch = touches.first else {
+            super.touchesBegan(touches, with: event)
+            return
+        }
+
+        let point = touch.location(in: self)
+        let characterIndex = layoutManager.characterIndex(for: point, in: textContainer, fractionOfDistanceBetweenInsertionPoints: nil)
+
+        // Check if tap is on a fold indicator
+        if characterIndex < textStorage.length,
+           let regionId = textStorage.attribute(.foldIndicatorRegionId, at: characterIndex, effectiveRange: nil) as? UUID,
+           let manager = foldingManager,
+           let region = manager.regions.first(where: { $0.id == regionId }) {
+            onFoldIndicatorClicked?(region)
+            return
+        }
+
+        // Check if tap is on folded content
+        if characterIndex < textStorage.length,
+           let regionId = textStorage.attribute(.foldedRegionId, at: characterIndex, effectiveRange: nil) as? UUID,
+           let manager = foldingManager,
+           let region = manager.regions.first(where: { $0.id == regionId }) {
+            onFoldIndicatorClicked?(region)
+            return
+        }
+
+        super.touchesBegan(touches, with: event)
     }
 }
 
@@ -337,6 +372,9 @@ public struct KeystoneTextView: UIViewRepresentable {
     public func updateUIView(_ containerView: KeystoneTextContainerView, context: Context) {
         context.coordinator.parent = self
         context.coordinator.isUpdating = true
+
+        // Update current language for fold toggle re-highlighting
+        containerView.currentLanguage = language
 
         // Track if we're scrolling - used to skip non-essential work
         let isCurrentlyScrolling = context.coordinator.isScrolling
@@ -954,6 +992,8 @@ public class KeystoneTextContainerView: UIView {
     let textView: KeystoneUITextView
     /// The line number gutter
     let lineNumberView: LineNumberGutterView
+    /// Current language for syntax highlighting
+    public var currentLanguage: KeystoneLanguage = .plainText
     /// Coordinator reference for delegate callbacks
     var coordinator: KeystoneTextView.Coordinator?
     private var configuration: KeystoneConfiguration
@@ -1135,13 +1175,208 @@ public class KeystoneTextContainerView: UIView {
             self?.handleFoldToggle(region)
         }
         addSubview(lineNumberView)
+
+        // Set up text view fold click handling
+        textView.foldingManager = foldingManager
+        textView.onFoldIndicatorClicked = { [weak self] region in
+            self?.handleFoldToggle(region)
+        }
     }
 
     private func handleFoldToggle(_ region: FoldableRegion) {
         foldingManager.toggleFold(region)
         onFoldToggle?(region)
+        applyFoldingForRegion(region)
+        updateLineNumbers()
         lineNumberView.setNeedsDisplay()
         textView.setNeedsDisplay()
+    }
+
+    /// Efficiently applies/removes folding for a single region without full document re-processing
+    private func applyFoldingForRegion(_ region: FoldableRegion) {
+        guard let textStorage = textView.textStorage else { return }
+        guard foldingManager.isEnabled else { return }
+
+        let text = textStorage.string
+        let font = UIFont.monospacedSystemFont(ofSize: configuration.fontSize, weight: .regular)
+        let lineHeight = configuration.fontSize * configuration.lineHeightMultiplier
+
+        // Calculate the affected range
+        let firstLineEnd = findEndOfLine(region.startLine, in: text)
+        let lastLineEnd = findEndOfLine(region.endLine, in: text)
+
+        guard firstLineEnd < lastLineEnd && firstLineEnd < text.count else { return }
+
+        let hideStart = firstLineEnd
+        let hideEnd = min(lastLineEnd, text.count)
+        let affectedRange = NSRange(location: hideStart, length: hideEnd - hideStart)
+
+        guard affectedRange.location + affectedRange.length <= textStorage.length && affectedRange.length > 0 else { return }
+
+        textStorage.beginEditing()
+
+        if foldingManager.isFolded(region) {
+            // Apply folding - hide the content
+            let foldedParagraph = NSMutableParagraphStyle()
+            foldedParagraph.minimumLineHeight = 0.001
+            foldedParagraph.maximumLineHeight = 0.001
+            foldedParagraph.lineSpacing = 0
+            foldedParagraph.paragraphSpacing = 0
+            foldedParagraph.paragraphSpacingBefore = 0
+
+            textStorage.addAttributes([
+                .foldedContent: true,
+                .foldedRegionId: region.id,
+                .paragraphStyle: foldedParagraph,
+                .foregroundColor: UIColor.clear,
+                .font: UIFont.systemFont(ofSize: 0.001)
+            ], range: affectedRange)
+
+            // Add fold indicator on first line
+            addFoldIndicator(for: region, in: textStorage, text: text, font: font)
+        } else {
+            // Remove folding - restore visibility
+            let normalParagraph = NSMutableParagraphStyle()
+            normalParagraph.minimumLineHeight = lineHeight
+            normalParagraph.maximumLineHeight = lineHeight
+
+            textStorage.removeAttribute(.foldedContent, range: affectedRange)
+            textStorage.removeAttribute(.foldedRegionId, range: affectedRange)
+            textStorage.addAttribute(.paragraphStyle, value: normalParagraph, range: affectedRange)
+            textStorage.addAttribute(.font, value: font, range: affectedRange)
+            textStorage.addAttribute(.foregroundColor, value: UIColor(configuration.theme.text), range: affectedRange)
+
+            // Remove fold indicator background from first line
+            let indicatorRange = NSRange(location: max(0, firstLineEnd - 20), length: min(20, firstLineEnd))
+            if indicatorRange.location + indicatorRange.length <= textStorage.length {
+                textStorage.removeAttribute(.backgroundColor, range: indicatorRange)
+                textStorage.removeAttribute(.foldIndicatorRegionId, range: indicatorRange)
+            }
+
+            // Re-highlight just the affected range for proper syntax colors
+            let highlighter = SyntaxHighlighter(language: currentLanguage, theme: configuration.theme)
+            let affectedText = (text as NSString).substring(with: affectedRange)
+            highlighter.highlightRange(textStorage: textStorage, text: affectedText, offset: affectedRange.location)
+        }
+
+        textStorage.endEditing()
+
+        // Only invalidate layout for affected range
+        textView.layoutManager.invalidateLayout(forCharacterRange: affectedRange, actualCharacterRange: nil)
+    }
+
+    /// Applies folding styles to the text storage
+    public func applyFolding() {
+        guard let textStorage = textView.textStorage else { return }
+        guard foldingManager.isEnabled else { return }
+
+        let text = textStorage.string
+        let fullRange = NSRange(location: 0, length: textStorage.length)
+        guard fullRange.length > 0 else { return }
+
+        textStorage.beginEditing()
+
+        // First, reset ALL text to normal styling (this handles unfolding)
+        let font = UIFont.monospacedSystemFont(ofSize: configuration.fontSize, weight: .regular)
+        let lineHeight = configuration.fontSize * configuration.lineHeightMultiplier
+        let normalParagraph = NSMutableParagraphStyle()
+        normalParagraph.minimumLineHeight = lineHeight
+        normalParagraph.maximumLineHeight = lineHeight
+        normalParagraph.lineSpacing = 0
+        normalParagraph.paragraphSpacing = 0
+        normalParagraph.paragraphSpacingBefore = 0
+
+        textStorage.removeAttribute(.foldedContent, range: fullRange)
+        textStorage.removeAttribute(.foldedRegionId, range: fullRange)
+        textStorage.removeAttribute(.foldIndicatorRegionId, range: fullRange)
+        textStorage.removeAttribute(.backgroundColor, range: fullRange)
+        textStorage.addAttribute(.paragraphStyle, value: normalParagraph, range: fullRange)
+        // Restore font and color for any previously hidden text
+        textStorage.addAttribute(.font, value: font, range: fullRange)
+        textStorage.addAttribute(.foregroundColor, value: UIColor(configuration.theme.text), range: fullRange)
+
+        // Apply folding to each folded region
+        for region in foldingManager.foldedRegions {
+            let firstLineEnd = findEndOfLine(region.startLine, in: text)
+            let lastLineEnd = findEndOfLine(region.endLine, in: text)
+
+            if firstLineEnd < lastLineEnd && firstLineEnd < text.count {
+                let hideStart = firstLineEnd
+                let hideEnd = min(lastLineEnd, text.count)
+                let hideRange = NSRange(location: hideStart, length: hideEnd - hideStart)
+
+                if hideRange.location + hideRange.length <= textStorage.length && hideRange.length > 0 {
+                    let foldedParagraph = NSMutableParagraphStyle()
+                    foldedParagraph.minimumLineHeight = 0.001
+                    foldedParagraph.maximumLineHeight = 0.001
+                    foldedParagraph.lineSpacing = 0
+                    foldedParagraph.paragraphSpacing = 0
+                    foldedParagraph.paragraphSpacingBefore = 0
+
+                    textStorage.addAttributes([
+                        .foldedContent: true,
+                        .foldedRegionId: region.id,
+                        .paragraphStyle: foldedParagraph,
+                        .foregroundColor: UIColor.clear,
+                        .font: UIFont.systemFont(ofSize: 0.001)
+                    ], range: hideRange)
+                }
+            }
+
+            // Add fold indicator
+            addFoldIndicator(for: region, in: textStorage, text: text, font: font)
+        }
+
+        textStorage.endEditing()
+        textView.layoutManager.invalidateLayout(forCharacterRange: fullRange, actualCharacterRange: nil)
+        textView.setNeedsDisplay()
+    }
+
+    private func addFoldIndicator(for region: FoldableRegion, in textStorage: NSTextStorage, text: String, font: UIFont) {
+        let firstLineEnd = findEndOfLine(region.startLine, in: text)
+        var indicatorPosition = firstLineEnd
+
+        if firstLineEnd > 0 {
+            let lineStart = foldingManager.getLineStartOffset(region.startLine)
+            let lineText = String(text.dropFirst(lineStart).prefix(firstLineEnd - lineStart))
+
+            if let lastBrace = lineText.lastIndex(of: "{") {
+                indicatorPosition = lineStart + lineText.distance(from: lineText.startIndex, to: lastBrace) + 1
+            } else if let lastBracket = lineText.lastIndex(of: "[") {
+                indicatorPosition = lineStart + lineText.distance(from: lineText.startIndex, to: lastBracket) + 1
+            } else if let lastParen = lineText.lastIndex(of: "(") {
+                indicatorPosition = lineStart + lineText.distance(from: lineText.startIndex, to: lastParen) + 1
+            }
+        }
+
+        if indicatorPosition > 0 && indicatorPosition < textStorage.length {
+            let ellipsisBackground = UIColor.quaternaryLabel
+            let braceRange = NSRange(location: indicatorPosition - 1, length: firstLineEnd - indicatorPosition + 1)
+            if braceRange.location >= 0 && braceRange.location + braceRange.length <= textStorage.length && braceRange.length > 0 {
+                textStorage.addAttributes([
+                    .backgroundColor: ellipsisBackground,
+                    .foldIndicatorRegionId: region.id
+                ], range: braceRange)
+            }
+        }
+    }
+
+    private func findEndOfLine(_ lineNumber: Int, in text: String) -> Int {
+        var currentLine = 1
+        var offset = 0
+        for char in text {
+            if currentLine == lineNumber && char == "\n" {
+                return offset
+            }
+            if char == "\n" {
+                currentLine += 1
+            }
+            offset += 1
+        }
+        if currentLine == lineNumber {
+            return offset
+        }
+        return 0
     }
 
     private func setupLayout() {
@@ -1727,23 +1962,8 @@ class LineNumberGutterView: UIView {
                     isFolded: manager.isFolded(region)
                 )
 
-                // If this region is folded, add placeholder text
-                if manager.isFolded(region) {
-                    drawFoldedPlaceholder(at: CGPoint(x: 0, y: yPosition), height: data.height, lineCount: region.lineCount - 1)
-                }
             }
         }
-    }
-
-    private func drawFoldedPlaceholder(at point: CGPoint, height: CGFloat, lineCount: Int) {
-        let placeholderFont = UIFont.monospacedSystemFont(ofSize: fontSize * 0.8, weight: .regular)
-        let placeholderText = "... \(lineCount) lines"
-        let attributes: [NSAttributedString.Key: Any] = [
-            .font: placeholderFont,
-            .foregroundColor: textColor.withAlphaComponent(0.6)
-        ]
-        let rect = CGRect(x: 4, y: point.y + height + 2, width: bounds.width - 8, height: height)
-        placeholderText.draw(in: rect, withAttributes: attributes)
     }
 
     private func drawFoldIndicator(at point: CGPoint, height: CGFloat, isFolded: Bool) {
@@ -1957,11 +2177,11 @@ public struct KeystoneTextView: NSViewRepresentable {
             undoController.startUpdating()
         }
 
-        // Code folding disabled for performance testing
-        // DispatchQueue.main.async {
-        //     containerView.foldingManager.analyze(self.text)
-        //     containerView.lineNumberView.needsDisplay = true
-        // }
+        // Initial code folding analysis
+        DispatchQueue.main.async {
+            containerView.foldingManager.analyze(self.text)
+            containerView.lineNumberView.needsDisplay = true
+        }
 
         // Register for scroll notifications to trigger syntax highlighting when scrolling stops
         containerView.scrollView.contentView.postsBoundsChangedNotifications = true
@@ -1987,6 +2207,9 @@ public struct KeystoneTextView: NSViewRepresentable {
     public func updateNSView(_ containerView: KeystoneTextContainerViewMac, context: Context) {
         context.coordinator.parent = self
         context.coordinator.isUpdating = true
+
+        // Update current language for fold toggle re-highlighting
+        containerView.currentLanguage = language
 
         // Check if config changes need rehighlighting
         let configNeedsRehighlight = containerView.updateConfiguration(configuration)
@@ -2085,6 +2308,8 @@ public struct KeystoneTextView: NSViewRepresentable {
             containerView.foldingManager.analyze(text)
             // Apply folding styles after analysis
             containerView.applyFolding()
+            // Refresh gutter to show fold indicators
+            containerView.lineNumberView.needsDisplay = true
         }
 
         // Clear previous bracket highlights
@@ -2399,15 +2624,15 @@ public struct KeystoneTextView: NSViewRepresentable {
             lastHighlightedRange = NSRange(location: 0, length: 0)
             containerView?.updateLineNumbers()
 
-            // Code folding disabled for performance testing
-            // foldingWorkItem?.cancel()
-            // let foldingWork = DispatchWorkItem { [weak self] in
-            //     guard let self = self, let containerView = self.containerView else { return }
-            //     containerView.foldingManager.analyze(textView.string)
-            //     containerView.lineNumberView.needsDisplay = true
-            // }
-            // foldingWorkItem = foldingWork
-            // DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: foldingWork)
+            // Update code folding regions (debounced)
+            foldingWorkItem?.cancel()
+            let foldingWork = DispatchWorkItem { [weak self] in
+                guard let self = self, let containerView = self.containerView else { return }
+                containerView.foldingManager.analyze(textView.string)
+                containerView.lineNumberView.needsDisplay = true
+            }
+            foldingWorkItem = foldingWork
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: foldingWork)
         }
 
         public func textViewDidChangeSelection(_ notification: Notification) {
@@ -2566,9 +2791,11 @@ public struct KeystoneTextView: NSViewRepresentable {
 /// Container view that holds text view and line number gutter for macOS
 public class KeystoneTextContainerViewMac: NSView {
     let scrollView: NSScrollView
-    let textView: NSTextView
+    let textView: KeystoneNSTextView
     let lineNumberView: LineNumberGutterViewMac
     private var configuration: KeystoneConfiguration
+    /// Current language for syntax highlighting
+    public var currentLanguage: KeystoneLanguage = .plainText
 
     private let baseGutterWidth: CGFloat = 16 // Padding + fold indicator space
     private let foldIndicatorWidth: CGFloat = 12
@@ -2644,7 +2871,7 @@ public class KeystoneTextContainerViewMac: NSView {
         invisibleLayoutManager.addTextContainer(textContainer)
         textStorage.addLayoutManager(invisibleLayoutManager)
 
-        self.textView = NSTextView(frame: .zero, textContainer: textContainer)
+        self.textView = KeystoneNSTextView(frame: .zero, textContainer: textContainer)
 
         super.init(frame: .zero)
 
@@ -2712,15 +2939,94 @@ public class KeystoneTextContainerViewMac: NSView {
             self?.handleFoldToggle(region)
         }
         addSubview(lineNumberView)
+
+        // Set up text view fold click handling
+        textView.foldingManager = foldingManager
+        textView.onFoldIndicatorClicked = { [weak self] region in
+            self?.handleFoldToggle(region)
+        }
     }
 
     private func handleFoldToggle(_ region: FoldableRegion) {
         foldingManager.toggleFold(region)
         onFoldToggle?(region)
-        applyFolding()
+        applyFoldingForRegion(region)
         updateLineNumbers()
         lineNumberView.needsDisplay = true
         textView.needsDisplay = true
+    }
+
+    /// Efficiently applies/removes folding for a single region without full document re-processing
+    private func applyFoldingForRegion(_ region: FoldableRegion) {
+        guard let textStorage = textView.textStorage else { return }
+        guard foldingManager.isEnabled else { return }
+
+        let text = textStorage.string
+        let font = NSFont.monospacedSystemFont(ofSize: configuration.fontSize, weight: .regular)
+        let lineHeight = configuration.fontSize * configuration.lineHeightMultiplier
+
+        // Calculate the affected range
+        let firstLineEnd = findEndOfLine(region.startLine, in: text)
+        let lastLineEnd = findEndOfLine(region.endLine, in: text)
+
+        guard firstLineEnd < lastLineEnd && firstLineEnd < text.count else { return }
+
+        let hideStart = firstLineEnd
+        let hideEnd = min(lastLineEnd, text.count)
+        let affectedRange = NSRange(location: hideStart, length: hideEnd - hideStart)
+
+        guard affectedRange.location + affectedRange.length <= textStorage.length && affectedRange.length > 0 else { return }
+
+        textStorage.beginEditing()
+
+        if foldingManager.isFolded(region) {
+            // Apply folding - hide the content
+            let foldedParagraph = NSMutableParagraphStyle()
+            foldedParagraph.minimumLineHeight = 0.001
+            foldedParagraph.maximumLineHeight = 0.001
+            foldedParagraph.lineSpacing = 0
+            foldedParagraph.paragraphSpacing = 0
+            foldedParagraph.paragraphSpacingBefore = 0
+
+            textStorage.addAttributes([
+                .foldedContent: true,
+                .foldedRegionId: region.id,
+                .paragraphStyle: foldedParagraph,
+                .foregroundColor: NSColor.clear,
+                .font: NSFont.systemFont(ofSize: 0.001)
+            ], range: affectedRange)
+
+            // Add fold indicator on first line
+            addFoldIndicator(for: region, in: textStorage, text: text, font: font)
+        } else {
+            // Remove folding - restore visibility
+            let normalParagraph = NSMutableParagraphStyle()
+            normalParagraph.minimumLineHeight = lineHeight
+            normalParagraph.maximumLineHeight = lineHeight
+
+            textStorage.removeAttribute(.foldedContent, range: affectedRange)
+            textStorage.removeAttribute(.foldedRegionId, range: affectedRange)
+            textStorage.addAttribute(.paragraphStyle, value: normalParagraph, range: affectedRange)
+            textStorage.addAttribute(.font, value: font, range: affectedRange)
+            textStorage.addAttribute(.foregroundColor, value: NSColor(configuration.theme.text), range: affectedRange)
+
+            // Remove fold indicator background from first line
+            let indicatorRange = NSRange(location: max(0, firstLineEnd - 20), length: min(20, firstLineEnd))
+            if indicatorRange.location + indicatorRange.length <= textStorage.length {
+                textStorage.removeAttribute(.backgroundColor, range: indicatorRange)
+                textStorage.removeAttribute(.foldIndicatorRegionId, range: indicatorRange)
+            }
+
+            // Re-highlight just the affected range for proper syntax colors
+            let highlighter = SyntaxHighlighter(language: currentLanguage, theme: configuration.theme)
+            let affectedText = (text as NSString).substring(with: affectedRange)
+            highlighter.highlightRange(textStorage: textStorage, text: affectedText, offset: affectedRange.location)
+        }
+
+        textStorage.endEditing()
+
+        // Only invalidate layout for affected range
+        textView.layoutManager?.invalidateLayout(forCharacterRange: affectedRange, actualCharacterRange: nil)
     }
 
     /// Applies folding styles to hide folded content using paragraph styles.
@@ -2735,20 +3041,32 @@ public class KeystoneTextContainerViewMac: NSView {
 
         let text = textStorage.string
         let fullRange = NSRange(location: 0, length: textStorage.length)
+        guard fullRange.length > 0 else { return }
 
-        // First, clear previous folding styles
         textStorage.beginEditing()
 
-        // Reset paragraph styles for all text
+        // First, reset ALL text to normal styling (this handles unfolding)
+        let font = NSFont.monospacedSystemFont(ofSize: configuration.fontSize, weight: .regular)
+        let lineHeight = configuration.fontSize * configuration.lineHeightMultiplier
         let normalParagraph = NSMutableParagraphStyle()
-        normalParagraph.minimumLineHeight = 0
-        normalParagraph.maximumLineHeight = .greatestFiniteMagnitude
+        normalParagraph.minimumLineHeight = lineHeight
+        normalParagraph.maximumLineHeight = lineHeight
+        normalParagraph.lineSpacing = 0
+        normalParagraph.paragraphSpacing = 0
+        normalParagraph.paragraphSpacingBefore = 0
+
         textStorage.removeAttribute(.foldedContent, range: fullRange)
+        textStorage.removeAttribute(.foldedRegionId, range: fullRange)
+        textStorage.removeAttribute(.foldIndicatorRegionId, range: fullRange)
+        textStorage.removeAttribute(.backgroundColor, range: fullRange)
+        textStorage.addAttribute(.paragraphStyle, value: normalParagraph, range: fullRange)
+        // Restore font and color for any previously hidden text
+        textStorage.addAttribute(.font, value: font, range: fullRange)
+        textStorage.addAttribute(.foregroundColor, value: NSColor(configuration.theme.text), range: fullRange)
 
         // Apply folding to each folded region
         for region in foldingManager.foldedRegions {
             // Calculate the range to hide (from end of first line to end of region)
-            // We hide lines 2 through endLine of the region
             let firstLineEnd = findEndOfLine(region.startLine, in: text)
             let lastLineEnd = findEndOfLine(region.endLine, in: text)
 
@@ -2758,7 +3076,7 @@ public class KeystoneTextContainerViewMac: NSView {
                 let hideEnd = min(lastLineEnd, text.count)
                 let hideRange = NSRange(location: hideStart, length: hideEnd - hideStart)
 
-                if hideRange.location + hideRange.length <= textStorage.length {
+                if hideRange.location + hideRange.length <= textStorage.length && hideRange.length > 0 {
                     // Create a paragraph style that collapses lines
                     let foldedParagraph = NSMutableParagraphStyle()
                     foldedParagraph.minimumLineHeight = 0.001
@@ -2778,14 +3096,15 @@ public class KeystoneTextContainerViewMac: NSView {
                 }
             }
 
-            // Add ellipsis indicator at end of first line (before the hidden content)
-            addFoldIndicator(for: region, in: textStorage, text: text)
+            // Add ellipsis indicator at end of first line
+            addFoldIndicator(for: region, in: textStorage, text: text, font: font)
         }
 
         textStorage.endEditing()
 
         // Force layout update
         textView.layoutManager?.invalidateLayout(forCharacterRange: fullRange, actualCharacterRange: nil)
+        textView.needsDisplay = true
     }
 
     /// Clears all folding styles from the text storage.
@@ -2813,12 +3132,50 @@ public class KeystoneTextContainerViewMac: NSView {
     }
 
     /// Adds a visual fold indicator (ellipsis) at the end of a folded region's first line.
-    private func addFoldIndicator(for region: FoldableRegion, in textStorage: NSTextStorage, text: String) {
+    private func addFoldIndicator(for region: FoldableRegion, in textStorage: NSTextStorage, text: String, font: NSFont) {
         // Find position just before the newline at end of first line
         let firstLineEnd = findEndOfLine(region.startLine, in: text)
-        if firstLineEnd > 0 && firstLineEnd <= text.count {
-            // We'll draw the indicator in the gutter and add tooltip
-            // The actual "..." is shown in the line number view
+
+        // Find a good position to show the ellipsis - at the opening brace/bracket
+        // Look backwards from firstLineEnd to find the last { or [
+        var indicatorPosition = firstLineEnd
+        if firstLineEnd > 0 {
+            let lineStart = foldingManager.getLineStartOffset(region.startLine)
+            let lineText = String(text.dropFirst(lineStart).prefix(firstLineEnd - lineStart))
+
+            // Find the last opening brace/bracket on this line
+            if let lastBrace = lineText.lastIndex(of: "{") {
+                indicatorPosition = lineStart + lineText.distance(from: lineText.startIndex, to: lastBrace) + 1
+            } else if let lastBracket = lineText.lastIndex(of: "[") {
+                indicatorPosition = lineStart + lineText.distance(from: lineText.startIndex, to: lastBracket) + 1
+            } else if let lastParen = lineText.lastIndex(of: "(") {
+                indicatorPosition = lineStart + lineText.distance(from: lineText.startIndex, to: lastParen) + 1
+            }
+        }
+
+        // Style the ellipsis indicator - we'll show it by replacing text temporarily
+        // Actually, we'll use a text attachment approach for the ellipsis
+        // For now, we'll add a visible indicator by styling the character after the brace
+        if indicatorPosition > 0 && indicatorPosition < textStorage.length {
+            // Create an ellipsis attachment
+            let lineCount = region.endLine - region.startLine
+            let ellipsisText = " ⋯\(lineCount) lines "
+
+            // Create attributed string for ellipsis
+            let ellipsisColor = NSColor.secondaryLabelColor
+            let ellipsisBackground = NSColor.quaternaryLabelColor
+            let ellipsisFont = NSFont.monospacedSystemFont(ofSize: font.pointSize * 0.85, weight: .medium)
+
+            // Style the brace and add clickable indicator
+            // Highlight from the brace to end of line to make it obvious code is folded
+            let braceRange = NSRange(location: indicatorPosition - 1, length: firstLineEnd - indicatorPosition + 1)
+            if braceRange.location >= 0 && braceRange.location + braceRange.length <= textStorage.length && braceRange.length > 0 {
+                textStorage.addAttributes([
+                    .backgroundColor: ellipsisBackground,
+                    .foldIndicatorRegionId: region.id,
+                    .toolTip: "Folded: \(lineCount) lines hidden. Click to expand."
+                ], range: braceRange)
+            }
         }
     }
 
@@ -3176,6 +3533,41 @@ public class KeystoneTextContainerViewMac: NSView {
     }
 }
 
+/// Custom NSTextView that handles clicks on fold indicators
+class KeystoneNSTextView: NSTextView {
+    weak var foldingManager: CodeFoldingManager?
+    var onFoldIndicatorClicked: ((FoldableRegion) -> Void)?
+
+    override func mouseDown(with event: NSEvent) {
+        // Check if click is on a fold indicator
+        let point = convert(event.locationInWindow, from: nil)
+        let characterIndex = characterIndexForInsertion(at: point)
+
+        if characterIndex < textStorage?.length ?? 0,
+           let textStorage = textStorage,
+           let regionId = textStorage.attribute(.foldIndicatorRegionId, at: characterIndex, effectiveRange: nil) as? UUID,
+           let manager = foldingManager,
+           let region = manager.regions.first(where: { $0.id == regionId }) {
+            // Click was on a fold indicator - toggle the fold
+            onFoldIndicatorClicked?(region)
+            return
+        }
+
+        // Also check if clicking on a folded content attribute (hidden text area)
+        if characterIndex < textStorage?.length ?? 0,
+           let textStorage = textStorage,
+           let regionId = textStorage.attribute(.foldedRegionId, at: characterIndex, effectiveRange: nil) as? UUID,
+           let manager = foldingManager,
+           let region = manager.regions.first(where: { $0.id == regionId }) {
+            // Click was on folded content - unfold it
+            onFoldIndicatorClicked?(region)
+            return
+        }
+
+        super.mouseDown(with: event)
+    }
+}
+
 /// Custom view for drawing line numbers with code folding on macOS
 class LineNumberGutterViewMac: NSView {
     var lineData: [(lineNumber: Int, yPosition: CGFloat, height: CGFloat)] = []
@@ -3253,25 +3645,10 @@ class LineNumberGutterViewMac: NSView {
                     isFolded: manager.isFolded(region)
                 )
 
-                // If this region is folded, add placeholder text
-                if manager.isFolded(region) {
-                    drawFoldedPlaceholder(at: CGPoint(x: 0, y: yPosition), height: data.height, lineCount: region.lineCount - 1)
-                }
             }
         }
 
         NSGraphicsContext.restoreGraphicsState()
-    }
-
-    private func drawFoldedPlaceholder(at point: CGPoint, height: CGFloat, lineCount: Int) {
-        let placeholderFont = NSFont.monospacedSystemFont(ofSize: fontSize * 0.8, weight: .regular)
-        let placeholderText = "... \(lineCount) lines"
-        let attributes: [NSAttributedString.Key: Any] = [
-            .font: placeholderFont,
-            .foregroundColor: textColor.withAlphaComponent(0.6)
-        ]
-        let rect = NSRect(x: 4, y: point.y + height + 2, width: bounds.width - 8, height: height)
-        placeholderText.draw(in: rect, withAttributes: attributes)
     }
 
     private func drawFoldIndicator(at point: CGPoint, height: CGFloat, isFolded: Bool) {

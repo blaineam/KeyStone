@@ -13,10 +13,11 @@ import AppKit
 import UIKit
 #endif
 
-/// Custom attribute key for marking folded content
+/// Custom attribute keys for code folding
 public extension NSAttributedString.Key {
     static let foldedContent = NSAttributedString.Key("KeystoneFoldedContent")
     static let foldedRegionId = NSAttributedString.Key("KeystoneFoldedRegionId")
+    static let foldIndicatorRegionId = NSAttributedString.Key("KeystoneFoldIndicatorRegionId")
 }
 
 /// Represents a foldable region in the code.
