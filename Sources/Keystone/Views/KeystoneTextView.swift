@@ -485,12 +485,14 @@ public struct KeystoneTextView: UIViewRepresentable {
         // When scrollToCursor is explicitly true, ALWAYS update cursor and scroll regardless of editing state
         // This ensures search navigation, go-to-line, and tail follow work correctly
         //
-        // IMPORTANT: Capture scrollToCursor value FIRST and reset it IMMEDIATELY before doing any work.
-        // This prevents SwiftUI update loops caused by async state resets.
+        // IMPORTANT: Capture scrollToCursor value and reset it AFTER the current update cycle.
+        // We must defer the reset to avoid "Modifying state during view update" warning.
         let shouldScrollToCursor = scrollToCursor
         if shouldScrollToCursor {
-            // Reset IMMEDIATELY to prevent update loop - do this before any other work
-            scrollToCursor = false
+            // Reset after current update cycle to avoid SwiftUI warning
+            DispatchQueue.main.async {
+                self.scrollToCursor = false
+            }
         }
 
         // Only update cursor position when explicitly requested (search, go-to-line, tail follow)
