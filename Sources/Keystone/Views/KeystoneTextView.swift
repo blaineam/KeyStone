@@ -1253,10 +1253,44 @@ public class KeystoneTextContainerView: UIView {
                 textStorage.removeAttribute(.foldIndicatorRegionId, range: indicatorRange)
             }
 
-            // Re-highlight just the affected range for proper syntax colors
+            // Re-apply syntax highlighting using TreeSitter for the affected range
             let highlighter = SyntaxHighlighter(language: currentLanguage, theme: configuration.theme)
-            let affectedText = (text as NSString).substring(with: affectedRange)
-            highlighter.highlightRange(textStorage: textStorage, text: affectedText, offset: affectedRange.location)
+            highlighter.highlight(textStorage: textStorage, text: text)
+
+            // Re-apply folding for any nested regions that are still folded
+            for nestedRegion in foldingManager.foldedRegions {
+                // Check if this nested region is within the range we just unfolded
+                if nestedRegion.startLine > region.startLine && nestedRegion.endLine < region.endLine {
+                    let nestedFirstLineEnd = findEndOfLine(nestedRegion.startLine, in: text)
+                    let nestedLastLineEnd = findEndOfLine(nestedRegion.endLine, in: text)
+
+                    if nestedFirstLineEnd < nestedLastLineEnd && nestedFirstLineEnd < text.count {
+                        let nestedHideStart = nestedFirstLineEnd
+                        let nestedHideEnd = min(nestedLastLineEnd, text.count)
+                        let nestedRange = NSRange(location: nestedHideStart, length: nestedHideEnd - nestedHideStart)
+
+                        if nestedRange.location + nestedRange.length <= textStorage.length && nestedRange.length > 0 {
+                            let foldedParagraph = NSMutableParagraphStyle()
+                            foldedParagraph.minimumLineHeight = 0.001
+                            foldedParagraph.maximumLineHeight = 0.001
+                            foldedParagraph.lineSpacing = 0
+                            foldedParagraph.paragraphSpacing = 0
+                            foldedParagraph.paragraphSpacingBefore = 0
+
+                            textStorage.addAttributes([
+                                .foldedContent: true,
+                                .foldedRegionId: nestedRegion.id,
+                                .paragraphStyle: foldedParagraph,
+                                .foregroundColor: UIColor.clear,
+                                .font: UIFont.systemFont(ofSize: 0.001)
+                            ], range: nestedRange)
+
+                            // Re-add fold indicator for nested region
+                            addFoldIndicator(for: nestedRegion, in: textStorage, text: text, font: font)
+                        }
+                    }
+                }
+            }
         }
 
         textStorage.endEditing()
@@ -3017,10 +3051,44 @@ public class KeystoneTextContainerViewMac: NSView {
                 textStorage.removeAttribute(.foldIndicatorRegionId, range: indicatorRange)
             }
 
-            // Re-highlight just the affected range for proper syntax colors
+            // Re-apply syntax highlighting using TreeSitter for the affected range
             let highlighter = SyntaxHighlighter(language: currentLanguage, theme: configuration.theme)
-            let affectedText = (text as NSString).substring(with: affectedRange)
-            highlighter.highlightRange(textStorage: textStorage, text: affectedText, offset: affectedRange.location)
+            highlighter.highlight(textStorage: textStorage, text: text)
+
+            // Re-apply folding for any nested regions that are still folded
+            for nestedRegion in foldingManager.foldedRegions {
+                // Check if this nested region is within the range we just unfolded
+                if nestedRegion.startLine > region.startLine && nestedRegion.endLine < region.endLine {
+                    let nestedFirstLineEnd = findEndOfLine(nestedRegion.startLine, in: text)
+                    let nestedLastLineEnd = findEndOfLine(nestedRegion.endLine, in: text)
+
+                    if nestedFirstLineEnd < nestedLastLineEnd && nestedFirstLineEnd < text.count {
+                        let nestedHideStart = nestedFirstLineEnd
+                        let nestedHideEnd = min(nestedLastLineEnd, text.count)
+                        let nestedRange = NSRange(location: nestedHideStart, length: nestedHideEnd - nestedHideStart)
+
+                        if nestedRange.location + nestedRange.length <= textStorage.length && nestedRange.length > 0 {
+                            let foldedParagraph = NSMutableParagraphStyle()
+                            foldedParagraph.minimumLineHeight = 0.001
+                            foldedParagraph.maximumLineHeight = 0.001
+                            foldedParagraph.lineSpacing = 0
+                            foldedParagraph.paragraphSpacing = 0
+                            foldedParagraph.paragraphSpacingBefore = 0
+
+                            textStorage.addAttributes([
+                                .foldedContent: true,
+                                .foldedRegionId: nestedRegion.id,
+                                .paragraphStyle: foldedParagraph,
+                                .foregroundColor: NSColor.clear,
+                                .font: NSFont.systemFont(ofSize: 0.001)
+                            ], range: nestedRange)
+
+                            // Re-add fold indicator for nested region
+                            addFoldIndicator(for: nestedRegion, in: textStorage, text: text, font: font)
+                        }
+                    }
+                }
+            }
         }
 
         textStorage.endEditing()
