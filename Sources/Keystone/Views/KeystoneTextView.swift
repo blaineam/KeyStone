@@ -769,6 +769,180 @@ public struct KeystoneTextView: UIViewRepresentable {
         // Debounce timer for syntax re-highlighting after text changes
         private var syntaxHighlightWorkItem: DispatchWorkItem?
 
+        /// Captures edit information for incremental TreeSitter parsing.
+        /// This must be called BEFORE the edit is applied (in shouldChangeTextIn).
+        private func captureEditInfo(in textStorage: NSTextStorage, range: NSRange, replacementText: String) {
+            let oldText = textStorage.string
+
+            // Calculate byte offsets
+            let startIndex = oldText.index(oldText.startIndex, offsetBy: min(range.location, oldText.count), limitedBy: oldText.endIndex) ?? oldText.endIndex
+            let startByte = oldText.utf8.distance(from: oldText.utf8.startIndex, to: startIndex.samePosition(in: oldText.utf8) ?? oldText.utf8.endIndex)
+
+            let endLocation = min(range.location + range.length, oldText.count)
+            let endIndex = oldText.index(oldText.startIndex, offsetBy: endLocation, limitedBy: oldText.endIndex) ?? oldText.endIndex
+            let oldEndByte = oldText.utf8.distance(from: oldText.utf8.startIndex, to: endIndex.samePosition(in: oldText.utf8) ?? oldText.utf8.endIndex)
+
+            let replacementBytes = replacementText.utf8.count
+            let newEndByte = startByte + replacementBytes
+
+            // Calculate row/column positions
+            let (startRow, startColumn) = rowColumn(at: range.location, in: oldText)
+            let (oldEndRow, oldEndColumn) = rowColumn(at: endLocation, in: oldText)
+
+            // For the new end position, we need to calculate based on the replacement text
+            let newText = (oldText as NSString).replacingCharacters(in: range, with: replacementText)
+            let newEndLocation = range.location + replacementText.count
+            let (newEndRow, newEndColumn) = rowColumn(at: min(newEndLocation, newText.count), in: newText)
+
+            pendingEdit = TextEdit(
+                startByte: startByte,
+                oldEndByte: oldEndByte,
+                newEndByte: newEndByte,
+                startRow: startRow,
+                startColumn: startColumn,
+                oldEndRow: oldEndRow,
+                oldEndColumn: oldEndColumn,
+                newEndRow: newEndRow,
+                newEndColumn: newEndColumn
+            )
+            preEditText = oldText
+        }
+
+        /// Helper to calculate row and column from a character offset
+        private func rowColumn(at offset: Int, in text: String) -> (row: Int, column: Int) {
+            var row = 0
+            var column = 0
+            var currentOffset = 0
+
+            for char in text {
+                if currentOffset >= offset {
+                    break
+                }
+                if char == "\n" {
+                    row += 1
+                    column = 0
+                } else {
+                    column += 1
+                }
+                currentOffset += 1
+            }
+
+            return (row, column)
+        }
+
+        /// Schedules a debounced syntax re-highlight after text changes.
+        /// Uses incremental parsing when possible for much faster updates.
+        func scheduleSyntaxReparse() {
+            syntaxHighlightWorkItem?.cancel()
+
+            // Capture the pending edit before the work item runs
+            let capturedEdit = self.pendingEdit
+            self.pendingEdit = nil
+            self.preEditText = nil
+
+            let work = DispatchWorkItem { [weak self] in
+                guard let self = self,
+                      let containerView = self.containerView else { return }
+
+                let textStorage = containerView.textView.textStorage
+
+                // Reset tracking state
+                self.lastHighlightedRange = NSRange(location: 0, length: 0)
+
+                // Get the current text
+                let text = textStorage.string
+                guard !text.isEmpty else { return }
+
+                let highlighter = self.getHighlighter(
+                    language: self.parent.language,
+                    theme: self.parent.configuration.theme
+                )
+
+                // Use incremental parsing if we have edit info AND a tree exists
+                if let edit = capturedEdit, highlighter.hasTree {
+                    highlighter.updateAsync(text, with: edit) { [weak self, weak containerView] in
+                        self?.applyHighlightingAfterParse(containerView: containerView, highlighter: highlighter)
+                    }
+                } else {
+                    // Fall back to full parse
+                    highlighter.parseAsync(text) { [weak self, weak containerView] in
+                        self?.applyHighlightingAfterParse(containerView: containerView, highlighter: highlighter)
+                    }
+                }
+            }
+            syntaxHighlightWorkItem = work
+            // Very short delay (50ms) - incremental parsing is fast enough
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05, execute: work)
+        }
+
+        /// Applies highlighting after async parse completes
+        private func applyHighlightingAfterParse(containerView: KeystoneTextContainerView?, highlighter: SyntaxHighlighter) {
+            guard let containerView = containerView else { return }
+
+            let textStorage = containerView.textView.textStorage
+
+            // Get CURRENT text from textStorage
+            let currentText = textStorage.string
+            guard !currentText.isEmpty else { return }
+
+            // Check if cache is valid for current text
+            guard highlighter.hasCachedHighlighting(for: currentText) else {
+                return
+            }
+
+            // Apply highlighting to the visible viewport
+            let font = UIFont.monospacedSystemFont(
+                ofSize: parent.configuration.fontSize,
+                weight: .regular
+            )
+            let theme = parent.configuration.theme
+
+            let visibleRect = containerView.scrollView.bounds
+            guard let layoutManager = containerView.textView.layoutManager,
+                  let textContainer = containerView.textView.textContainer,
+                  layoutManager.numberOfGlyphs > 0 else {
+                containerView.textView.setNeedsDisplay()
+                return
+            }
+
+            let visibleGlyphRange = layoutManager.glyphRange(
+                forBoundingRect: visibleRect,
+                in: textContainer
+            )
+            let visibleCharRange = layoutManager.characterRange(
+                forGlyphRange: visibleGlyphRange,
+                actualGlyphRange: nil
+            )
+
+            let bufferSize = 2000
+            let highlightStart = max(0, visibleCharRange.location - bufferSize)
+            let highlightEnd = min(
+                textStorage.length,
+                visibleCharRange.location + visibleCharRange.length + bufferSize
+            )
+            let highlightRange = NSRange(
+                location: highlightStart,
+                length: highlightEnd - highlightStart
+            )
+
+            // Apply highlighting
+            textStorage.beginEditing()
+            textStorage.setAttributes([
+                .font: font,
+                .foregroundColor: UIColor(theme.text)
+            ], range: highlightRange)
+            highlighter.highlightRange(
+                textStorage: textStorage,
+                text: currentText,
+                offset: highlightStart,
+                rangeToHighlight: highlightRange,
+                onParseComplete: nil
+            )
+            textStorage.endEditing()
+            lastHighlightedRange = highlightRange
+            containerView.textView.setNeedsDisplay()
+        }
+
         public func textViewDidChange(_ textView: UITextView) {
             guard !isUpdating else { return }
 
@@ -829,6 +1003,9 @@ public struct KeystoneTextView: UIViewRepresentable {
             textSyncWorkItem = workItem
             // Debounce - 250ms to batch keystrokes. O(n) operations happen when this fires.
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: workItem)
+
+            // Schedule syntax re-parse (uses incremental parsing for fast updates)
+            scheduleSyntaxReparse()
 
             // Code folding disabled for performance testing
             // foldingWorkItem?.cancel()
@@ -967,8 +1144,11 @@ public struct KeystoneTextView: UIViewRepresentable {
             textStorage.endEditing()
         }
 
-        // Handle character pair insertion
+        // Handle character pair insertion and capture edit info for incremental parsing
         public func textView(_ textView: UITextView, shouldChangeTextIn range: NSRange, replacementText text: String) -> Bool {
+            // Capture edit info for incremental TreeSitter parsing
+            captureEditInfo(in: textView.textStorage, range: range, replacementText: text)
+
             let config = parent.configuration
             let nsText = textView.textStorage.string as NSString
 
