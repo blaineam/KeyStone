@@ -759,6 +759,16 @@ public struct KeystoneTextView: UIViewRepresentable {
         var isDragging = false
         var isDecelerating = false
 
+        /// Track last highlighted range to avoid redundant highlighting
+        var lastHighlightedRange: NSRange = NSRange(location: 0, length: 0)
+
+        // Pending edit info for incremental parsing (captured in shouldChangeTextIn)
+        private var pendingEdit: TextEdit?
+        private var preEditText: String?
+
+        // Debounce timer for syntax re-highlighting after text changes
+        private var syntaxHighlightWorkItem: DispatchWorkItem?
+
         public func textViewDidChange(_ textView: UITextView) {
             guard !isUpdating else { return }
 
@@ -1217,7 +1227,7 @@ public class KeystoneTextContainerView: UIView {
 
     /// Efficiently applies/removes folding for a single region without full document re-processing
     private func applyFoldingForRegion(_ region: FoldableRegion) {
-        guard let textStorage = textView.textStorage else { return }
+        let textStorage = textView.textStorage
         guard foldingManager.isEnabled else { return }
 
         let text = textStorage.string
@@ -1347,7 +1357,7 @@ public class KeystoneTextContainerView: UIView {
 
     /// Applies folding styles to the text storage
     public func applyFolding() {
-        guard let textStorage = textView.textStorage else { return }
+        let textStorage = textView.textStorage
         guard foldingManager.isEnabled else { return }
 
         let text = textStorage.string
