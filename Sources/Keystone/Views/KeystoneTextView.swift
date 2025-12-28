@@ -572,18 +572,32 @@ public struct KeystoneTextView: UIViewRepresentable {
 
     /// Applies syntax highlighting only to visible content plus a buffer for smooth scrolling.
     /// For small files (< 5000 chars), highlights the entire document.
+    /// Creates a paragraph style with proper line height settings.
+    private func makeParagraphStyle() -> NSMutableParagraphStyle {
+        let lineHeight = configuration.fontSize * configuration.lineHeightMultiplier
+        let paragraphStyle = NSMutableParagraphStyle()
+        paragraphStyle.minimumLineHeight = lineHeight
+        paragraphStyle.maximumLineHeight = lineHeight
+        paragraphStyle.lineSpacing = 0
+        paragraphStyle.paragraphSpacing = 0
+        paragraphStyle.paragraphSpacingBefore = 0
+        return paragraphStyle
+    }
+
     /// For large files, only highlights visible viewport + buffer to maintain 60fps.
     private func applyViewportSyntaxHighlighting(to containerView: KeystoneTextContainerView, text: String, font: UIFont, highlighter: SyntaxHighlighter) {
         let textStorage = containerView.textView.textStorage
         let theme = configuration.theme
         let fullLength = textStorage.length
+        let paragraphStyle = makeParagraphStyle()
 
         // For small files, just highlight everything (fast enough)
         if fullLength < 5000 {
             textStorage.beginEditing()
             textStorage.setAttributes([
                 .font: font,
-                .foregroundColor: UIColor(theme.text)
+                .foregroundColor: UIColor(theme.text),
+                .paragraphStyle: paragraphStyle
             ], range: NSRange(location: 0, length: fullLength))
             highlighter.highlight(textStorage: textStorage, text: text)
             textStorage.endEditing()
@@ -608,10 +622,11 @@ public struct KeystoneTextView: UIViewRepresentable {
 
         textStorage.beginEditing()
 
-        // Only reset attributes in the range we're highlighting
+        // Only reset attributes in the range we're highlighting - MUST include paragraphStyle
         textStorage.setAttributes([
             .font: font,
-            .foregroundColor: UIColor(theme.text)
+            .foregroundColor: UIColor(theme.text),
+            .paragraphStyle: paragraphStyle
         ], range: highlightRange)
 
         // Apply syntax highlighting - parse full text for context, but only apply to visible range
@@ -623,13 +638,15 @@ public struct KeystoneTextView: UIViewRepresentable {
     private func applySyntaxHighlighting(to textStorage: NSTextStorage, text: String, font: UIFont, highlighter: SyntaxHighlighter) {
         let theme = configuration.theme
         let fullRange = NSRange(location: 0, length: textStorage.length)
+        let paragraphStyle = makeParagraphStyle()
 
         textStorage.beginEditing()
 
-        // Reset to default
+        // Reset to default - MUST include paragraphStyle to preserve line height
         textStorage.setAttributes([
             .font: font,
-            .foregroundColor: UIColor(theme.text)
+            .foregroundColor: UIColor(theme.text),
+            .paragraphStyle: paragraphStyle
         ], range: fullRange)
 
         // Apply syntax highlighting using cached highlighter
@@ -927,11 +944,20 @@ public struct KeystoneTextView: UIViewRepresentable {
                 length: highlightEnd - highlightStart
             )
 
-            // Apply highlighting
+            // Apply highlighting - MUST include paragraphStyle to preserve line height
+            let lineHeight = parent.configuration.fontSize * parent.configuration.lineHeightMultiplier
+            let paragraphStyle = NSMutableParagraphStyle()
+            paragraphStyle.minimumLineHeight = lineHeight
+            paragraphStyle.maximumLineHeight = lineHeight
+            paragraphStyle.lineSpacing = 0
+            paragraphStyle.paragraphSpacing = 0
+            paragraphStyle.paragraphSpacingBefore = 0
+
             textStorage.beginEditing()
             textStorage.setAttributes([
                 .font: font,
-                .foregroundColor: UIColor(theme.text)
+                .foregroundColor: UIColor(theme.text),
+                .paragraphStyle: paragraphStyle
             ], range: highlightRange)
             highlighter.highlightRange(
                 textStorage: textStorage,
@@ -1136,10 +1162,20 @@ public struct KeystoneTextView: UIViewRepresentable {
             let highlightEnd = min(fullLength, visibleCharRange.location + visibleCharRange.length + bufferSize)
             let highlightRange = NSRange(location: highlightStart, length: highlightEnd - highlightStart)
 
+            // Create paragraph style to preserve line height
+            let lineHeight = parent.configuration.fontSize * parent.configuration.lineHeightMultiplier
+            let paragraphStyle = NSMutableParagraphStyle()
+            paragraphStyle.minimumLineHeight = lineHeight
+            paragraphStyle.maximumLineHeight = lineHeight
+            paragraphStyle.lineSpacing = 0
+            paragraphStyle.paragraphSpacing = 0
+            paragraphStyle.paragraphSpacingBefore = 0
+
             textStorage.beginEditing()
             textStorage.setAttributes([
                 .font: font,
-                .foregroundColor: UIColor(parent.configuration.theme.text)
+                .foregroundColor: UIColor(parent.configuration.theme.text),
+                .paragraphStyle: paragraphStyle
             ], range: highlightRange)
 
             if let swiftRange = Range(highlightRange, in: text) {
