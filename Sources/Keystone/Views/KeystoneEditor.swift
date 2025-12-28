@@ -28,9 +28,16 @@ public struct KeystoneEditor: View {
     /// The text content being edited.
     @Binding public var text: String
 
-    /// The programming language for syntax highlighting.
-    /// Can be bound externally to allow language changes, or passed as constant for auto-detection.
-    @Binding public var language: KeystoneLanguage
+    /// External language binding (optional - for two-way sync with parent)
+    private var externalLanguage: Binding<KeystoneLanguage>?
+
+    /// Internal language state that can always be modified
+    @State private var internalLanguage: KeystoneLanguage
+
+    /// The effective language (synced with external if provided)
+    private var effectiveLanguage: KeystoneLanguage {
+        get { internalLanguage }
+    }
 
     /// The editor configuration.
     @ObservedObject public var configuration: KeystoneConfiguration
@@ -107,7 +114,7 @@ public struct KeystoneEditor: View {
 
     // MARK: - Initialization
 
-    /// Creates a new code editor.
+    /// Creates a new code editor with a language binding for two-way sync.
     /// - Parameters:
     ///   - text: Binding to the text content.
     ///   - language: Binding to the programming language for syntax highlighting.
@@ -140,7 +147,8 @@ public struct KeystoneEditor: View {
         onConvertIndentation: ((IndentationSettings) -> Void)? = nil
     ) {
         self._text = text
-        self._language = language
+        self.externalLanguage = language
+        self._internalLanguage = State(initialValue: language.wrappedValue)
         self.configuration = configuration
         self.findReplaceManager = findReplaceManager
         self.externalCursorPosition = cursorPosition
@@ -155,8 +163,8 @@ public struct KeystoneEditor: View {
         self.onConvertIndentation = onConvertIndentation
     }
 
-    /// Convenience initializer that accepts a constant language value.
-    /// Use this when you don't need to change the language dynamically.
+    /// Creates a new code editor with an initial language value.
+    /// The language can still be changed via the status bar dropdown.
     public init(
         text: Binding<String>,
         language: KeystoneLanguage = .plainText,
@@ -174,7 +182,8 @@ public struct KeystoneEditor: View {
         onConvertIndentation: ((IndentationSettings) -> Void)? = nil
     ) {
         self._text = text
-        self._language = .constant(language)
+        self.externalLanguage = nil
+        self._internalLanguage = State(initialValue: language)
         self.configuration = configuration
         self.findReplaceManager = findReplaceManager
         self.externalCursorPosition = cursorPosition
@@ -241,7 +250,7 @@ public struct KeystoneEditor: View {
             // Main editor area (line numbers are integrated in KeystoneTextView)
             KeystoneTextView(
                 text: $text,
-                language: language,
+                language: internalLanguage,
                 configuration: configuration,
                 cursorPosition: cursorPosition,
                 scrollOffset: $scrollOffset,
@@ -268,15 +277,23 @@ public struct KeystoneEditor: View {
                 cursorPosition: cursorPosition.wrappedValue,
                 lineCount: lineCount,
                 configuration: configuration,
-                language: language,
+                language: internalLanguage,
                 onLanguageChange: { newLanguage in
-                    language = newLanguage
+                    internalLanguage = newLanguage
+                    // Sync to external binding if provided
+                    externalLanguage?.wrappedValue = newLanguage
                 }
             )
         }
         .clipped() // Prevent content from extending beyond bounds
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(configuration.theme.background)
+        .onChange(of: externalLanguage?.wrappedValue) { _, newValue in
+            // Sync from external binding if it changes
+            if let newValue = newValue, newValue != internalLanguage {
+                internalLanguage = newValue
+            }
+        }
         .onChange(of: text) { _, newValue in
             updateLineCount(from: newValue)
             // Only search when find panel is visible (avoid expensive operation on every keystroke)
@@ -1179,14 +1196,13 @@ struct KeystoneEditorToolbarBar: View {
 #Preview("Keystone Editor") {
     struct PreviewWrapper: View {
         @State private var text = "func hello() {\n    print(\"Hello, World!\")\n}\n\nhello()"
-        @State private var language: KeystoneLanguage = .swift
         @StateObject private var config = KeystoneConfiguration()
         @StateObject private var findReplace = FindReplaceManager()
 
         var body: some View {
             KeystoneEditor(
                 text: $text,
-                language: $language,
+                language: .swift,  // Uses constant, but language can still be changed via dropdown
                 configuration: config,
                 findReplaceManager: findReplace
             )

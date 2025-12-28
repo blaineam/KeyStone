@@ -119,10 +119,10 @@ public struct EditorStatusBar: View {
                 }
                 .padding(.horizontal)
                 // Ensure content fills available width (allows Spacer to work) but can exceed it for scrolling
-                .frame(minWidth: geometry.size.width, alignment: .leading)
+                .frame(minWidth: geometry.size.width, minHeight: geometry.size.height, alignment: .center)
             }
         }
-        .frame(height: 28) // Fixed height for the status bar
+        .frame(height: 32) // Fixed height for the status bar with proper vertical padding
         .background(Color.keystoneStatusBar)
     }
 }
