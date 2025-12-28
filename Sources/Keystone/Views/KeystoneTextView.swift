@@ -305,6 +305,8 @@ public struct KeystoneTextView: UIViewRepresentable {
 
     public func makeUIView(context: Context) -> KeystoneTextContainerView {
         let containerView = KeystoneTextContainerView(configuration: configuration)
+        // Set current language immediately for fold toggle re-highlighting
+        containerView.currentLanguage = language
         // Text view delegate for text editing callbacks
         containerView.textView.delegate = context.coordinator
         // Scroll view delegate for scroll callbacks (scroll view handles all scrolling now)
@@ -714,6 +716,26 @@ public struct KeystoneTextView: UIViewRepresentable {
                 cachedTheme = theme
             }
             return cachedHighlighter!
+        }
+
+        /// Requests syntax re-highlighting after fold/unfold operations.
+        /// Triggers a minimal viewport re-highlight to avoid blocking on full TreeSitter parse.
+        func requestSyntaxHighlight() {
+            guard let containerView = containerView else { return }
+
+            // Force text view to redisplay - the normal viewport highlighting will
+            // pick up the changes on the next scroll or interaction
+            containerView.textView.setNeedsDisplay()
+
+            // Trigger a cursor position update to force SwiftUI to re-render
+            // This will cause updateUIView to run with proper viewport highlighting
+            let currentPosition = parent.cursorPosition
+            parent.cursorPosition = CursorPosition(
+                line: currentPosition.line,
+                column: currentPosition.column,
+                selectionLength: currentPosition.selectionLength,
+                offset: currentPosition.offset
+            )
         }
 
         // Debounce timer for text sync to avoid triggering SwiftUI on every keystroke
@@ -1253,10 +1275,6 @@ public class KeystoneTextContainerView: UIView {
                 textStorage.removeAttribute(.foldIndicatorRegionId, range: indicatorRange)
             }
 
-            // Re-apply syntax highlighting using TreeSitter for the affected range
-            let highlighter = SyntaxHighlighter(language: currentLanguage, theme: configuration.theme)
-            highlighter.highlight(textStorage: textStorage, text: text)
-
             // Re-apply folding for any nested regions that are still folded
             for nestedRegion in foldingManager.foldedRegions {
                 // Check if this nested region is within the range we just unfolded
@@ -1297,6 +1315,14 @@ public class KeystoneTextContainerView: UIView {
 
         // Only invalidate layout for affected range
         textView.layoutManager.invalidateLayout(forCharacterRange: affectedRange, actualCharacterRange: nil)
+
+        // Request async syntax re-highlight for unfold (avoids blocking on full TreeSitter parse)
+        if !foldingManager.isFolded(region) {
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self else { return }
+                self.coordinator?.requestSyntaxHighlight()
+            }
+        }
     }
 
     /// Applies folding styles to the text storage
@@ -2169,7 +2195,10 @@ public struct KeystoneTextView: NSViewRepresentable {
 
     public func makeNSView(context: Context) -> KeystoneTextContainerViewMac {
         let containerView = KeystoneTextContainerViewMac(configuration: configuration)
+        // Set current language immediately for fold toggle re-highlighting
+        containerView.currentLanguage = language
         containerView.textView.delegate = context.coordinator
+        containerView.coordinator = context.coordinator
         context.coordinator.containerView = containerView
 
         // Connect the undo controller to the container view's undo functionality
@@ -2636,6 +2665,26 @@ public struct KeystoneTextView: NSViewRepresentable {
             return cachedHighlighter!
         }
 
+        /// Requests syntax re-highlighting after fold/unfold operations.
+        /// Triggers a minimal viewport re-highlight to avoid blocking on full TreeSitter parse.
+        func requestSyntaxHighlight() {
+            guard let containerView = containerView else { return }
+
+            // Force text view to redisplay - the normal viewport highlighting will
+            // pick up the changes on the next scroll or interaction
+            containerView.textView.needsDisplay = true
+
+            // Trigger a cursor position update to force SwiftUI to re-render
+            // This will cause updateNSView to run with proper viewport highlighting
+            let currentPosition = parent.cursorPosition
+            parent.cursorPosition = CursorPosition(
+                line: currentPosition.line,
+                column: currentPosition.column,
+                selectionLength: currentPosition.selectionLength,
+                offset: currentPosition.offset
+            )
+        }
+
         // Debounce timer for code folding analysis (runs less frequently)
         private var foldingWorkItem: DispatchWorkItem?
 
@@ -2830,6 +2879,8 @@ public class KeystoneTextContainerViewMac: NSView {
     private var configuration: KeystoneConfiguration
     /// Current language for syntax highlighting
     public var currentLanguage: KeystoneLanguage = .plainText
+    /// Coordinator reference for delegate callbacks
+    var coordinator: KeystoneTextView.Coordinator?
 
     private let baseGutterWidth: CGFloat = 16 // Padding + fold indicator space
     private let foldIndicatorWidth: CGFloat = 12
@@ -3051,10 +3102,6 @@ public class KeystoneTextContainerViewMac: NSView {
                 textStorage.removeAttribute(.foldIndicatorRegionId, range: indicatorRange)
             }
 
-            // Re-apply syntax highlighting using TreeSitter for the affected range
-            let highlighter = SyntaxHighlighter(language: currentLanguage, theme: configuration.theme)
-            highlighter.highlight(textStorage: textStorage, text: text)
-
             // Re-apply folding for any nested regions that are still folded
             for nestedRegion in foldingManager.foldedRegions {
                 // Check if this nested region is within the range we just unfolded
@@ -3095,6 +3142,14 @@ public class KeystoneTextContainerViewMac: NSView {
 
         // Only invalidate layout for affected range
         textView.layoutManager?.invalidateLayout(forCharacterRange: affectedRange, actualCharacterRange: nil)
+
+        // Request async syntax re-highlight for unfold (avoids blocking on full TreeSitter parse)
+        if !foldingManager.isFolded(region) {
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self else { return }
+                self.coordinator?.requestSyntaxHighlight()
+            }
+        }
     }
 
     /// Applies folding styles to hide folded content using paragraph styles.
