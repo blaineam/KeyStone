@@ -29,8 +29,12 @@ public final class KeystoneConfiguration: ObservableObject {
     @Published public var lineWrapping: Bool = true
 
     /// Whether to show code folding indicators in the gutter.
-    /// Note: May impact scroll performance on iOS for large files.
+    /// Note: Disabled by default on iOS due to performance/sync issues.
+    #if os(iOS)
+    @Published public var showCodeFolding: Bool = false
+    #else
     @Published public var showCodeFolding: Bool = true
+    #endif
 
     // MARK: - Behavior Settings
 
