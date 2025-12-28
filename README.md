@@ -42,7 +42,8 @@
 - **Find & Replace** — Full-featured find and replace with regex support, case sensitivity, and whole word matching
 - **Code Folding** — Collapse and expand code regions based on syntax structure
 - **Undo/Redo History** — Persistent undo/redo with optional disk persistence
-- **TreeSitter Integration** — Advanced syntax analysis and highlighting
+- **TreeSitter Integration** — Advanced syntax analysis with incremental parsing for real-time highlighting
+- **Comment Toggle** — Toggle line/block comments with Cmd+/ (macOS) or toolbar button
 
 ### UI Components
 - **Status Bar** — Shows cursor position, line count, line ending type, and indentation settings

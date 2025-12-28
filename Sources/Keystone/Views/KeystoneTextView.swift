@@ -898,9 +898,9 @@ public struct KeystoneTextView: UIViewRepresentable {
             let theme = parent.configuration.theme
 
             let visibleRect = containerView.scrollView.bounds
-            guard let layoutManager = containerView.textView.layoutManager,
-                  let textContainer = containerView.textView.textContainer,
-                  layoutManager.numberOfGlyphs > 0 else {
+            let layoutManager = containerView.textView.layoutManager
+            let textContainer = containerView.textView.textContainer
+            guard layoutManager.numberOfGlyphs > 0 else {
                 containerView.textView.setNeedsDisplay()
                 return
             }
