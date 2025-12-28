@@ -321,4 +321,134 @@ final class TreeSitterHighlighterTests: XCTestCase {
             )
         }
     }
+
+    // MARK: - Async Parsing Tests
+
+    func testParseAsync() {
+        let highlighter = TreeSitterHighlighter(
+            language: .swift,
+            theme: KeystoneTheme.default
+        )
+        let code = "func hello() { return 42 }"
+        let expectation = XCTestExpectation(description: "Parse async completes")
+
+        highlighter.parseAsync(code) { ranges in
+            XCTAssertFalse(ranges.isEmpty, "Async parse should return ranges")
+            expectation.fulfill()
+        }
+
+        wait(for: [expectation], timeout: 2.0)
+    }
+
+    func testParseAsyncCaching() {
+        let highlighter = TreeSitterHighlighter(
+            language: .swift,
+            theme: KeystoneTheme.default
+        )
+        let code = "let x = 1"
+
+        // First parse
+        let expectation1 = XCTestExpectation(description: "First parse")
+        highlighter.parseAsync(code) { _ in
+            expectation1.fulfill()
+        }
+        wait(for: [expectation1], timeout: 2.0)
+
+        // Verify cache is populated
+        XCTAssertTrue(highlighter.hasCachedRanges(for: code))
+
+        // Second parse should use cache (faster)
+        let expectation2 = XCTestExpectation(description: "Cached parse")
+        highlighter.parseAsync(code) { ranges in
+            XCTAssertFalse(ranges.isEmpty)
+            expectation2.fulfill()
+        }
+        wait(for: [expectation2], timeout: 0.1) // Much shorter timeout for cached result
+    }
+
+    func testHasTree() {
+        let highlighter = TreeSitterHighlighter(
+            language: .swift,
+            theme: KeystoneTheme.default
+        )
+
+        // Before parsing, hasTree should be false
+        XCTAssertFalse(highlighter.hasTree)
+
+        // After parsing, hasTree should be true
+        _ = highlighter.parse("let x = 1")
+        XCTAssertTrue(highlighter.hasTree)
+    }
+
+    func testInvalidateCache() {
+        let highlighter = TreeSitterHighlighter(
+            language: .swift,
+            theme: KeystoneTheme.default
+        )
+        let code = "let x = 1"
+
+        // Parse and verify cache
+        _ = highlighter.parse(code)
+        XCTAssertTrue(highlighter.hasCachedRanges(for: code))
+
+        // Invalidate and verify cache is cleared
+        highlighter.invalidateCache()
+        XCTAssertFalse(highlighter.hasCachedRanges(for: code))
+    }
+
+    // MARK: - Performance Tests
+
+    func testByteToCharConversionPerformance() {
+        let highlighter = TreeSitterHighlighter(
+            language: .swift,
+            theme: KeystoneTheme.default
+        )
+
+        // Generate a large code sample (100KB+)
+        var largeCode = ""
+        for i in 0..<2000 {
+            largeCode += "let variable\(i) = \(i) // This is line number \(i)\n"
+        }
+
+        // This should complete in under 1 second thanks to O(n) fix
+        // Previously with O(n²) bug, this would take minutes
+        measure {
+            _ = highlighter.parse(largeCode)
+        }
+    }
+
+    // MARK: - Incremental Update Async Tests
+
+    func testUpdateAsync() {
+        let highlighter = TreeSitterHighlighter(
+            language: .swift,
+            theme: KeystoneTheme.default
+        )
+
+        // Initial parse to create tree
+        _ = highlighter.parse("let x = 1")
+        XCTAssertTrue(highlighter.hasTree)
+
+        // Async update
+        let expectation = XCTestExpectation(description: "Update async completes")
+        let newCode = "let x = 42"
+        let edit = TextEdit(
+            startByte: 8,
+            oldEndByte: 9,
+            newEndByte: 10,
+            startRow: 0,
+            startColumn: 8,
+            oldEndRow: 0,
+            oldEndColumn: 9,
+            newEndRow: 0,
+            newEndColumn: 10
+        )
+
+        highlighter.updateAsync(newCode, with: edit) { ranges in
+            XCTAssertFalse(ranges.isEmpty)
+            expectation.fulfill()
+        }
+
+        wait(for: [expectation], timeout: 2.0)
+    }
 }
