@@ -375,8 +375,13 @@ public struct KeystoneTextView: UIViewRepresentable {
         context.coordinator.parent = self
         context.coordinator.isUpdating = true
 
-        // Update current language for fold toggle re-highlighting
-        containerView.currentLanguage = language
+        // Check if language changed - need to re-highlight with new syntax
+        let languageChanged = containerView.currentLanguage != language
+        if languageChanged {
+            containerView.currentLanguage = language
+            // Reset highlight tracking so we force a re-highlight
+            context.coordinator.lastHighlightedRange = NSRange(location: 0, length: 0)
+        }
 
         // Track if we're scrolling - used to skip non-essential work
         let isCurrentlyScrolling = context.coordinator.isScrolling
@@ -395,7 +400,7 @@ public struct KeystoneTextView: UIViewRepresentable {
         let bindingLength = (text as NSString).length
 
         // Track if we need to re-highlight or update line numbers
-        var needsHighlight = configNeedsRehighlight
+        var needsHighlight = configNeedsRehighlight || languageChanged
         var needsLineNumberUpdate = false
 
         // CRITICAL: Skip text overwriting if user is editing!
@@ -2271,8 +2276,13 @@ public struct KeystoneTextView: NSViewRepresentable {
         context.coordinator.parent = self
         context.coordinator.isUpdating = true
 
-        // Update current language for fold toggle re-highlighting
-        containerView.currentLanguage = language
+        // Check if language changed - need to re-highlight with new syntax
+        let languageChanged = containerView.currentLanguage != language
+        if languageChanged {
+            containerView.currentLanguage = language
+            // Reset highlight tracking so we force a re-highlight
+            context.coordinator.lastHighlightedRange = NSRange(location: 0, length: 0)
+        }
 
         // Check if config changes need rehighlighting
         let configNeedsRehighlight = containerView.updateConfiguration(configuration)
@@ -2280,7 +2290,7 @@ public struct KeystoneTextView: NSViewRepresentable {
         let font = NSFont.monospacedSystemFont(ofSize: configuration.fontSize, weight: .regular)
 
         // Track if we need to re-highlight
-        var needsHighlight = configNeedsRehighlight
+        var needsHighlight = configNeedsRehighlight || languageChanged
 
         // Only update if text actually changed
         // Use textStorage.length for O(1) comparison instead of string comparison O(n)
