@@ -210,9 +210,11 @@ public struct KeystoneEditor: View {
                 showSymbolKeyboard: $showSymbolKeyboard,
                 undoController: undoController,
                 isTailFollowEnabled: isTailFollowEnabled,
+                language: internalLanguage,
                 onGoToLine: { showGoToLine.wrappedValue = true },
                 onShowSettings: { showSettings = true },
-                onToggleTailFollow: onToggleTailFollow
+                onToggleTailFollow: onToggleTailFollow,
+                onToggleComment: toggleComment
             )
             #else
             // Editor toolbar for macOS
@@ -221,9 +223,11 @@ public struct KeystoneEditor: View {
                 findReplaceManager: findReplaceManager,
                 undoController: undoController,
                 isTailFollowEnabled: isTailFollowEnabled,
+                language: internalLanguage,
                 onGoToLine: { showGoToLine.wrappedValue = true },
                 onShowSettings: { showSettings = true },
-                onToggleTailFollow: onToggleTailFollow
+                onToggleTailFollow: onToggleTailFollow,
+                onToggleComment: toggleComment
             )
             #endif
 
@@ -488,6 +492,35 @@ public struct KeystoneEditor: View {
         // Update cursor position
         let newOffset = offset + cursorAdjustment
         cursorPosition.wrappedValue = CursorPosition.from(offset: newOffset, in: text, selectionLength: 0)
+    }
+
+    /// Toggles comments on the current line or selection.
+    private func toggleComment() {
+        let cursor = cursorPosition.wrappedValue
+        let selectedRange = NSRange(location: cursor.offset, length: cursor.selectionLength)
+
+        guard let result = CommentToggle.toggleComment(
+            text: text,
+            selectedRange: selectedRange,
+            language: internalLanguage
+        ) else {
+            return // Language doesn't support comments
+        }
+
+        // Use undo controller for proper undo support
+        let fullRange = NSRange(location: 0, length: (text as NSString).length)
+        if let newText = undoController.replaceText(in: fullRange, with: result.newText) {
+            text = newText
+        } else {
+            text = result.newText
+        }
+
+        // Update cursor/selection
+        cursorPosition.wrappedValue = CursorPosition.from(
+            offset: result.newSelection.location,
+            in: text,
+            selectionLength: result.newSelection.length
+        )
     }
 
     /// Parses input in format "line" or "line:column" and navigates to that position.
@@ -960,9 +993,11 @@ struct KeystoneEditorToolbarBar: View {
     @ObservedObject var findReplaceManager: FindReplaceManager
     @ObservedObject var undoController: UndoController
     var isTailFollowEnabled: Binding<Bool>?
+    var language: KeystoneLanguage = .plainText
     var onGoToLine: (() -> Void)?
     var onShowSettings: (() -> Void)?
     var onToggleTailFollow: (() -> Void)?
+    var onToggleComment: (() -> Void)?
 
     var body: some View {
         HStack(spacing: 8) {
@@ -974,6 +1009,13 @@ struct KeystoneEditorToolbarBar: View {
             // Redo
             toolbarButton(icon: "arrow.uturn.forward", tooltip: "Redo", enabled: undoController.canRedo) {
                 undoController.redo()
+            }
+
+            // Toggle Comment (only show if language supports comments)
+            if language.supportsComments {
+                toolbarButton(icon: "text.bubble", tooltip: "Toggle Comment (⌘/)", enabled: true) {
+                    onToggleComment?()
+                }
             }
 
             Divider().frame(height: 18)
@@ -1057,6 +1099,11 @@ struct KeystoneEditorToolbarBar: View {
                 // Cmd+L: Go to Line
                 Button("", action: { onGoToLine?() })
                     .keyboardShortcut("l", modifiers: .command)
+                // Cmd+/: Toggle Comment (only if language supports comments)
+                if language.supportsComments, let onToggleComment = onToggleComment {
+                    Button("", action: { onToggleComment() })
+                        .keyboardShortcut("/", modifiers: .command)
+                }
                 // Cmd+Shift+T: Toggle follow (if available)
                 if let onToggleTailFollow = onToggleTailFollow {
                     Button("", action: { onToggleTailFollow() })
@@ -1094,9 +1141,11 @@ struct KeystoneEditorToolbarBar: View {
     @Binding var showSymbolKeyboard: Bool
     @ObservedObject var undoController: UndoController
     var isTailFollowEnabled: Binding<Bool>?
+    var language: KeystoneLanguage = .plainText
     var onGoToLine: (() -> Void)?
     var onShowSettings: (() -> Void)?
     var onToggleTailFollow: (() -> Void)?
+    var onToggleComment: (() -> Void)?
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
@@ -1109,6 +1158,13 @@ struct KeystoneEditorToolbarBar: View {
                 // Redo
                 toolbarButton(icon: "arrow.uturn.forward", enabled: undoController.canRedo) {
                     undoController.redo()
+                }
+
+                // Toggle Comment (only show if language supports comments)
+                if language.supportsComments {
+                    toolbarButton(icon: "text.bubble", enabled: true) {
+                        onToggleComment?()
+                    }
                 }
 
                 Divider().frame(height: 24)

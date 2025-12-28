@@ -5,6 +5,26 @@
 
 import Foundation
 
+/// Represents comment syntax for a programming language.
+public struct CommentSyntax: Sendable {
+    /// The line comment prefix (e.g., "//", "#", "--").
+    /// If nil, the language doesn't support line comments.
+    public let lineComment: String?
+
+    /// The block comment delimiters (start, end) (e.g., ("/*", "*/"), ("<!--", "-->")).
+    /// If nil, the language doesn't support block comments.
+    public let blockComment: (start: String, end: String)?
+
+    public init(lineComment: String? = nil, blockComment: (String, String)? = nil) {
+        self.lineComment = lineComment
+        if let block = blockComment {
+            self.blockComment = (start: block.0, end: block.1)
+        } else {
+            self.blockComment = nil
+        }
+    }
+}
+
 /// Represents a programming language for syntax highlighting.
 public enum KeystoneLanguage: String, CaseIterable, Identifiable, Sendable {
     case plainText = "text"
@@ -113,6 +133,34 @@ public enum KeystoneLanguage: String, CaseIterable, Identifiable, Sendable {
         default:
             return []
         }
+    }
+
+    /// Comment syntax for the language.
+    /// Returns nil if the language doesn't support comments.
+    public var commentSyntax: CommentSyntax? {
+        switch self {
+        case .plainText:
+            return nil  // Plain text doesn't support comments
+        case .swift, .kotlin, .java, .c, .cpp, .go, .rust, .javascript, .typescript, .php:
+            return CommentSyntax(lineComment: "//", blockComment: ("/*", "*/"))
+        case .python, .ruby, .shell, .yaml, .conf:
+            return CommentSyntax(lineComment: "#")
+        case .html, .xml:
+            return CommentSyntax(blockComment: ("<!--", "-->"))
+        case .css:
+            return CommentSyntax(blockComment: ("/*", "*/"))
+        case .sql:
+            return CommentSyntax(lineComment: "--", blockComment: ("/*", "*/"))
+        case .markdown:
+            return CommentSyntax(blockComment: ("<!--", "-->"))
+        case .json:
+            return nil  // JSON doesn't support comments
+        }
+    }
+
+    /// Whether this language supports line commenting.
+    public var supportsComments: Bool {
+        commentSyntax != nil
     }
 
     /// Built-in types for the language.
