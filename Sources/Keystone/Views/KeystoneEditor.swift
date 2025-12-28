@@ -499,7 +499,7 @@ public struct KeystoneEditor: View {
         let cursor = cursorPosition.wrappedValue
         let selectedRange = NSRange(location: cursor.offset, length: cursor.selectionLength)
 
-        guard let result = CommentToggle.toggleComment(
+        guard let result = CommentToggle.toggleCommentWithRange(
             text: text,
             selectedRange: selectedRange,
             language: internalLanguage
@@ -507,20 +507,18 @@ public struct KeystoneEditor: View {
             return // Language doesn't support comments
         }
 
-        // Use undo controller for proper undo support
-        let fullRange = NSRange(location: 0, length: (text as NSString).length)
-        if let newText = undoController.replaceText(in: fullRange, with: result.newText) {
+        // Use undo controller for proper undo support - only replace the affected range
+        if let newText = undoController.replaceText(in: result.replacedRange, with: result.replacementText) {
             text = newText
         } else {
-            text = result.newText
+            // Fallback: apply the change manually
+            let nsText = text as NSString
+            text = nsText.replacingCharacters(in: result.replacedRange, with: result.replacementText)
         }
 
-        // Update cursor/selection
-        cursorPosition.wrappedValue = CursorPosition.from(
-            offset: result.newSelection.location,
-            in: text,
-            selectionLength: result.newSelection.length
-        )
+        // Note: We don't update cursorPosition here because the text view will maintain
+        // the cursor position relative to the edit. The cursor binding will be updated
+        // by the text view delegate when the cursor actually moves.
     }
 
     /// Parses input in format "line" or "line:column" and navigates to that position.

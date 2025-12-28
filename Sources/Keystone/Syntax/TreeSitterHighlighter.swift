@@ -31,6 +31,23 @@ public class TreeSitterHighlighter {
     private let theme: KeystoneTheme
     private var hasLanguage: Bool = false
 
+    // Caching for performance - byte-based ranges from TreeSitter
+    private var cachedRanges: [HighlightRange] = []
+    private var cachedTextHash: Int = 0
+    private let cacheLock = NSLock()
+
+    // Pre-converted character ranges for fast highlighting (avoids O(n) conversions on main thread)
+    private var cachedCharRanges: [(range: NSRange, tokenType: TokenType)] = []
+
+    // Background parsing
+    private static let parseQueue = DispatchQueue(label: "com.keystone.treesitter.parse", qos: .userInitiated)
+    private var isParsing = false
+    private var pendingParseText: String?
+
+    // Embedded language parsers for HTML
+    private var cssParser: OpaquePointer?
+    private var jsParser: OpaquePointer?
+
     public init(language: KeystoneLanguage, theme: KeystoneTheme) {
         self.language = language
         self.theme = theme
@@ -39,6 +56,18 @@ public class TreeSitterHighlighter {
         // Set the language grammar
         if let parser = self.parser {
             self.hasLanguage = Self.setLanguage(parser: parser, language: language)
+        }
+
+        // Initialize embedded language parsers for HTML
+        if language == .html {
+            cssParser = ts_parser_new()
+            jsParser = ts_parser_new()
+            if let css = cssParser {
+                _ = ts_parser_set_language(css, tree_sitter_css())
+            }
+            if let js = jsParser {
+                _ = ts_parser_set_language(js, tree_sitter_javascript())
+            }
         }
     }
 
@@ -49,11 +78,185 @@ public class TreeSitterHighlighter {
         if let parser = parser {
             ts_parser_delete(parser)
         }
+        if let cssParser = cssParser {
+            ts_parser_delete(cssParser)
+        }
+        if let jsParser = jsParser {
+            ts_parser_delete(jsParser)
+        }
+    }
+
+    /// Invalidates the cache, forcing a re-parse on next call
+    public func invalidateCache() {
+        cacheLock.lock()
+        cachedTextHash = 0
+        cachedRanges = []
+        cachedCharRanges = []
+        cacheLock.unlock()
+    }
+
+    /// Returns pre-converted character ranges for fast highlighting
+    public func getCachedCharRanges() -> [(range: NSRange, tokenType: TokenType)] {
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
+        return cachedCharRanges
     }
 
     /// Returns whether TreeSitter parsing is available for this language
     public var isTreeSitterAvailable: Bool {
         hasLanguage
+    }
+
+    /// Returns cached ranges if available, otherwise returns empty array
+    /// Use parseAsync to trigger background parsing
+    public func getCachedRanges() -> [HighlightRange] {
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
+        return cachedRanges
+    }
+
+    /// Returns true if cache is valid for the given text
+    public func hasCachedRanges(for text: String) -> Bool {
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
+        return text.hashValue == cachedTextHash && !cachedRanges.isEmpty
+    }
+
+    /// Parses text on a background thread and calls completion when done
+    /// - Parameters:
+    ///   - text: The source code to parse
+    ///   - completion: Called on main thread when parsing completes with pre-converted character ranges
+    public func parseAsync(_ text: String, completion: @escaping ([(range: NSRange, tokenType: TokenType)]) -> Void) {
+        // Check cache first
+        cacheLock.lock()
+        let textHash = text.hashValue
+        if textHash == cachedTextHash && !cachedCharRanges.isEmpty {
+            let charRanges = cachedCharRanges
+            cacheLock.unlock()
+            DispatchQueue.main.async {
+                completion(charRanges)
+            }
+            return
+        }
+
+        // Already parsing? Store pending request
+        if isParsing {
+            pendingParseText = text
+            cacheLock.unlock()
+            return
+        }
+
+        isParsing = true
+        cacheLock.unlock()
+
+        // Parse on background thread
+        Self.parseQueue.async { [weak self] in
+            guard let self = self else { return }
+
+            let ranges = self.parseSync(text)
+
+            // Convert byte ranges to character ranges on background thread (expensive operation)
+            let charRanges = self.convertToCharRanges(ranges, in: text)
+
+            self.cacheLock.lock()
+            self.cachedTextHash = textHash
+            self.cachedRanges = ranges
+            self.cachedCharRanges = charRanges
+            self.isParsing = false
+
+            // Check for pending parse request
+            let pending = self.pendingParseText
+            self.pendingParseText = nil
+            self.cacheLock.unlock()
+
+            DispatchQueue.main.async {
+                completion(charRanges)
+            }
+
+            // Handle pending request if text changed while parsing
+            if let pendingText = pending, pendingText.hashValue != textHash {
+                self.parseAsync(pendingText, completion: completion)
+            }
+        }
+    }
+
+    /// Converts byte-based ranges to character-based NSRanges (expensive, do on background thread)
+    private func convertToCharRanges(_ ranges: [HighlightRange], in text: String) -> [(range: NSRange, tokenType: TokenType)] {
+        // Build a byte-to-character offset mapping for efficient conversion
+        // This is O(n) once instead of O(n) per range
+        let utf8 = text.utf8
+        var byteToCharOffset: [Int] = []
+        byteToCharOffset.reserveCapacity(utf8.count + 1)
+
+        var charOffset = 0
+        for (byteIndex, _) in utf8.enumerated() {
+            while byteToCharOffset.count <= byteIndex {
+                byteToCharOffset.append(charOffset)
+            }
+            // Count characters (UTF-8 continuation bytes don't start new characters)
+            let byte = utf8[utf8.index(utf8.startIndex, offsetBy: byteIndex)]
+            if (byte & 0xC0) != 0x80 { // Not a continuation byte
+                charOffset += 1
+            }
+        }
+        // Add final entry for end of string
+        byteToCharOffset.append(charOffset)
+
+        var result: [(range: NSRange, tokenType: TokenType)] = []
+        result.reserveCapacity(ranges.count)
+
+        let utf8Count = utf8.count
+
+        for range in ranges {
+            guard range.start >= 0 && range.end <= utf8Count else { continue }
+            guard range.start < byteToCharOffset.count && range.end <= byteToCharOffset.count else { continue }
+
+            let startChar = byteToCharOffset[range.start]
+            let endChar = range.end < byteToCharOffset.count ? byteToCharOffset[range.end] : charOffset
+
+            let nsRange = NSRange(location: startChar, length: endChar - startChar)
+            guard nsRange.length > 0 else { continue }
+
+            result.append((range: nsRange, tokenType: range.tokenType))
+        }
+
+        return result
+    }
+
+    /// Synchronous parsing (called on background thread)
+    private func parseSync(_ text: String) -> [HighlightRange] {
+        guard let parser = parser, hasLanguage else { return [] }
+
+        // Delete previous tree if exists
+        if let oldTree = tree {
+            ts_tree_delete(oldTree)
+            self.tree = nil
+        }
+
+        // Parse the text
+        let bytes = Array(text.utf8)
+        tree = bytes.withUnsafeBufferPointer { buffer in
+            ts_parser_parse_string(
+                parser,
+                nil,
+                buffer.baseAddress,
+                UInt32(buffer.count)
+            )
+        }
+
+        guard let tree = tree else { return [] }
+
+        // Walk the tree and extract highlight ranges
+        let rootNode = ts_tree_root_node(tree)
+        var ranges: [HighlightRange] = []
+        walkTree(node: rootNode, in: text, ranges: &ranges)
+
+        // For HTML, also parse embedded CSS and JavaScript
+        if language == .html {
+            parseEmbeddedLanguages(text: text, ranges: &ranges)
+        }
+
+        return ranges
     }
 
     /// Sets the TreeSitter language on the parser
@@ -95,36 +298,130 @@ public class TreeSitterHighlighter {
     }
 
     /// Parses the given text and returns syntax highlighting ranges.
+    /// This method parses synchronously if there's no cache, but caches results.
+    /// For UI code, prefer using parseAsync to avoid blocking the main thread.
     /// - Parameter text: The source code to parse.
     /// - Returns: An array of highlight ranges with their associated token types.
     public func parse(_ text: String) -> [HighlightRange] {
-        guard let parser = parser, hasLanguage else { return [] }
+        guard hasLanguage else { return [] }
 
-        // Delete previous tree if exists
-        if let oldTree = tree {
-            ts_tree_delete(oldTree)
-            self.tree = nil
+        // Check cache first
+        cacheLock.lock()
+        let textHash = text.hashValue
+        if textHash == cachedTextHash && !cachedRanges.isEmpty {
+            let result = cachedRanges
+            cacheLock.unlock()
+            return result
         }
+        cacheLock.unlock()
 
-        // Parse the text
-        let bytes = Array(text.utf8)
-        tree = bytes.withUnsafeBufferPointer { buffer in
-            ts_parser_parse_string(
-                parser,
-                nil,
-                buffer.baseAddress,
-                UInt32(buffer.count)
-            )
-        }
+        // Parse synchronously (for backwards compatibility and tests)
+        let ranges = parseSync(text)
 
-        guard let tree = tree else { return [] }
-
-        // Walk the tree and extract highlight ranges
-        let rootNode = ts_tree_root_node(tree)
-        var ranges: [HighlightRange] = []
-        walkTree(node: rootNode, in: text, ranges: &ranges)
+        // Cache results
+        cacheLock.lock()
+        cachedTextHash = textHash
+        cachedRanges = ranges
+        cacheLock.unlock()
 
         return ranges
+    }
+
+    /// Parses embedded CSS in <style> tags and JavaScript in <script> tags
+    private func parseEmbeddedLanguages(text: String, ranges: inout [HighlightRange]) {
+        // Find <style> blocks and parse as CSS
+        parseEmbeddedBlocks(text: text, tagName: "style", parser: cssParser, language: .css, ranges: &ranges)
+
+        // Find <script> blocks and parse as JavaScript
+        parseEmbeddedBlocks(text: text, tagName: "script", parser: jsParser, language: .javascript, ranges: &ranges)
+    }
+
+    private func parseEmbeddedBlocks(text: String, tagName: String, parser: OpaquePointer?, language: KeystoneLanguage, ranges: inout [HighlightRange]) {
+        guard let parser = parser else { return }
+
+        // Pattern to match opening and closing tags
+        let openPattern = "<\(tagName)[^>]*>"
+        let closePattern = "</\(tagName)>"
+
+        guard let openRegex = try? NSRegularExpression(pattern: openPattern, options: .caseInsensitive),
+              let closeRegex = try? NSRegularExpression(pattern: closePattern, options: .caseInsensitive) else {
+            return
+        }
+
+        let nsText = text as NSString
+        let fullRange = NSRange(location: 0, length: nsText.length)
+
+        let openMatches = openRegex.matches(in: text, options: [], range: fullRange)
+        let closeMatches = closeRegex.matches(in: text, options: [], range: fullRange)
+
+        // Match opening tags with their corresponding closing tags
+        for openMatch in openMatches {
+            let openEnd = openMatch.range.location + openMatch.range.length
+
+            // Find the next closing tag after this opening tag
+            guard let closeMatch = closeMatches.first(where: { $0.range.location > openEnd }) else {
+                continue
+            }
+
+            let contentStart = openEnd
+            let contentEnd = closeMatch.range.location
+            let contentLength = contentEnd - contentStart
+
+            guard contentLength > 0 else { continue }
+
+            // Extract the content between tags
+            let contentRange = NSRange(location: contentStart, length: contentLength)
+            let content = nsText.substring(with: contentRange)
+
+            // Convert contentStart from UTF-16 to UTF-8 byte offset
+            let swiftStartIndex = String.Index(utf16Offset: contentStart, in: text)
+            guard swiftStartIndex < text.endIndex,
+                  let utf8Index = swiftStartIndex.samePosition(in: text.utf8) else {
+                continue
+            }
+            let byteOffset = text.utf8.distance(from: text.utf8.startIndex, to: utf8Index)
+
+            // Parse the content with the appropriate language parser
+            let contentBytes = Array(content.utf8)
+            guard let embeddedTree = contentBytes.withUnsafeBufferPointer({ buffer in
+                ts_parser_parse_string(
+                    parser,
+                    nil,
+                    buffer.baseAddress,
+                    UInt32(buffer.count)
+                )
+            }) else {
+                continue
+            }
+
+            // Walk the embedded tree and collect ranges with offset
+            let rootNode = ts_tree_root_node(embeddedTree)
+            walkEmbeddedTree(node: rootNode, in: content, byteOffset: byteOffset, language: language, ranges: &ranges)
+
+            ts_tree_delete(embeddedTree)
+        }
+    }
+
+    private func walkEmbeddedTree(node: TSNode, in text: String, byteOffset: Int, language: KeystoneLanguage, ranges: inout [HighlightRange]) {
+        let nodeType = String(cString: ts_node_type(node))
+        let startByte = Int(ts_node_start_byte(node))
+        let endByte = Int(ts_node_end_byte(node))
+
+        // Map node type to token type using the embedded language's mappings
+        if let tokenType = mapNodeTypeToToken(nodeType, language: language) {
+            ranges.append(HighlightRange(
+                start: startByte + byteOffset,
+                end: endByte + byteOffset,
+                tokenType: tokenType
+            ))
+        }
+
+        // Recursively process children
+        let childCount = ts_node_child_count(node)
+        for i in 0..<childCount {
+            let child = ts_node_child(node, i)
+            walkEmbeddedTree(node: child, in: text, byteOffset: byteOffset, language: language, ranges: &ranges)
+        }
     }
 
     private func walkTree(node: TSNode, in text: String, ranges: inout [HighlightRange]) {
