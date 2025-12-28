@@ -36,89 +36,93 @@ public struct EditorStatusBar: View {
     }
 
     public var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 12) {
-                // Line count
-                Text("Lines: \(lineCount)")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-
-                // Cursor position
-                Text("Ln \(cursorPosition.line), Col \(cursorPosition.column)")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-
-                // Selection length
-                if cursorPosition.selectionLength > 0 {
-                    Text("Sel: \(cursorPosition.selectionLength)")
+        GeometryReader { geometry in
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 12) {
+                    // Line count
+                    Text("Lines: \(lineCount)")
                         .font(.caption)
-                        .foregroundColor(.accentColor)
-                }
+                        .foregroundColor(.secondary)
 
-                Spacer(minLength: 20)
+                    // Cursor position
+                    Text("Ln \(cursorPosition.line), Col \(cursorPosition.column)")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
 
-                // Language selector
-                Menu {
-                    ForEach(KeystoneLanguage.allCases, id: \.self) { lang in
-                        Button(action: {
-                            onLanguageChange?(lang)
-                        }) {
-                            HStack {
-                                Text(lang.displayName)
-                                if lang == language {
-                                    Image(systemName: "checkmark")
+                    // Selection length
+                    if cursorPosition.selectionLength > 0 {
+                        Text("Sel: \(cursorPosition.selectionLength)")
+                            .font(.caption)
+                            .foregroundColor(.accentColor)
+                    }
+
+                    Spacer(minLength: 20)
+
+                    // Language selector
+                    Menu {
+                        ForEach(KeystoneLanguage.allCases, id: \.self) { lang in
+                            Button(action: {
+                                onLanguageChange?(lang)
+                            }) {
+                                HStack {
+                                    Text(lang.displayName)
+                                    if lang == language {
+                                        Image(systemName: "checkmark")
+                                    }
                                 }
                             }
                         }
+                    } label: {
+                        HStack(spacing: 4) {
+                            Text(language.displayName)
+                                .font(.caption)
+                            Image(systemName: "chevron.down")
+                                .font(.caption2)
+                        }
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Color.secondary.opacity(0.2))
+                        .cornerRadius(4)
                     }
-                } label: {
-                    HStack(spacing: 4) {
-                        Text(language.displayName)
+                    .menuStyle(.borderlessButton)
+                    #if os(macOS)
+                    .menuIndicator(.hidden)
+                    #endif
+
+                    // Line ending indicator
+                    Button(action: { onSettingsTap?() }) {
+                        Text(configuration.lineEnding.rawValue)
                             .font(.caption)
-                        Image(systemName: "chevron.down")
-                            .font(.caption2)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color.secondary.opacity(0.2))
+                            .cornerRadius(4)
                     }
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(Color.secondary.opacity(0.2))
-                    .cornerRadius(4)
-                }
-                .menuStyle(.borderlessButton)
-                #if os(macOS)
-                .menuIndicator(.hidden)
-                #endif
+                    .buttonStyle(.plain)
 
-                // Line ending indicator
-                Button(action: { onSettingsTap?() }) {
-                    Text(configuration.lineEnding.rawValue)
-                        .font(.caption)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(Color.secondary.opacity(0.2))
-                        .cornerRadius(4)
-                }
-                .buttonStyle(.plain)
+                    // Indentation indicator
+                    Button(action: { onSettingsTap?() }) {
+                        Text(configuration.indentation.type == .tabs ? "Tab" : "\(configuration.indentation.width) Spaces")
+                            .font(.caption)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color.secondary.opacity(0.2))
+                            .cornerRadius(4)
+                    }
+                    .buttonStyle(.plain)
 
-                // Indentation indicator
-                Button(action: { onSettingsTap?() }) {
-                    Text(configuration.indentation.type == .tabs ? "Tab" : "\(configuration.indentation.width) Spaces")
-                        .font(.caption)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(Color.secondary.opacity(0.2))
-                        .cornerRadius(4)
+                    if hasUnsavedChanges {
+                        Text("Modified")
+                            .font(.caption)
+                            .foregroundColor(.orange)
+                    }
                 }
-                .buttonStyle(.plain)
-
-                if hasUnsavedChanges {
-                    Text("Modified")
-                        .font(.caption)
-                        .foregroundColor(.orange)
-                }
+                .padding(.horizontal)
+                // Ensure content fills available width (allows Spacer to work) but can exceed it for scrolling
+                .frame(minWidth: geometry.size.width, alignment: .leading)
             }
-            .padding(.horizontal)
         }
-        .padding(.vertical, 6)
+        .frame(height: 28) // Fixed height for the status bar
         .background(Color.keystoneStatusBar)
     }
 }

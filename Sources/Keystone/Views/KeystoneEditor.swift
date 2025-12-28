@@ -29,7 +29,8 @@ public struct KeystoneEditor: View {
     @Binding public var text: String
 
     /// The programming language for syntax highlighting.
-    public let language: KeystoneLanguage
+    /// Can be bound externally to allow language changes, or passed as constant for auto-detection.
+    @Binding public var language: KeystoneLanguage
 
     /// The editor configuration.
     @ObservedObject public var configuration: KeystoneConfiguration
@@ -109,7 +110,7 @@ public struct KeystoneEditor: View {
     /// Creates a new code editor.
     /// - Parameters:
     ///   - text: Binding to the text content.
-    ///   - language: The programming language for syntax highlighting.
+    ///   - language: Binding to the programming language for syntax highlighting.
     ///   - configuration: The editor configuration.
     ///   - findReplaceManager: The find/replace manager.
     ///   - cursorPosition: Optional binding for external cursor position control (e.g., for scroll-to-end).
@@ -122,6 +123,40 @@ public struct KeystoneEditor: View {
     ///   - onToggleTailFollow: Optional callback to toggle tail follow mode.
     ///   - onConvertLineEndings: Optional callback when user requests line ending conversion.
     ///   - onConvertIndentation: Optional callback when user requests indentation conversion.
+    public init(
+        text: Binding<String>,
+        language: Binding<KeystoneLanguage>,
+        configuration: KeystoneConfiguration,
+        findReplaceManager: FindReplaceManager,
+        cursorPosition: Binding<CursorPosition>? = nil,
+        scrollToCursor: Binding<Bool>? = nil,
+        showGoToLine: Binding<Bool>? = nil,
+        isTailFollowEnabled: Binding<Bool>? = nil,
+        onCursorChange: ((CursorPosition) -> Void)? = nil,
+        onScrollChange: ((CGFloat) -> Void)? = nil,
+        onTextChange: ((String) -> Void)? = nil,
+        onToggleTailFollow: (() -> Void)? = nil,
+        onConvertLineEndings: ((LineEnding) -> Void)? = nil,
+        onConvertIndentation: ((IndentationSettings) -> Void)? = nil
+    ) {
+        self._text = text
+        self._language = language
+        self.configuration = configuration
+        self.findReplaceManager = findReplaceManager
+        self.externalCursorPosition = cursorPosition
+        self.externalScrollToCursor = scrollToCursor
+        self.externalShowGoToLine = showGoToLine
+        self.isTailFollowEnabled = isTailFollowEnabled
+        self.onCursorChange = onCursorChange
+        self.onScrollChange = onScrollChange
+        self.onTextChange = onTextChange
+        self.onToggleTailFollow = onToggleTailFollow
+        self.onConvertLineEndings = onConvertLineEndings
+        self.onConvertIndentation = onConvertIndentation
+    }
+
+    /// Convenience initializer that accepts a constant language value.
+    /// Use this when you don't need to change the language dynamically.
     public init(
         text: Binding<String>,
         language: KeystoneLanguage = .plainText,
@@ -139,7 +174,7 @@ public struct KeystoneEditor: View {
         onConvertIndentation: ((IndentationSettings) -> Void)? = nil
     ) {
         self._text = text
-        self.language = language
+        self._language = .constant(language)
         self.configuration = configuration
         self.findReplaceManager = findReplaceManager
         self.externalCursorPosition = cursorPosition
@@ -232,7 +267,11 @@ public struct KeystoneEditor: View {
             EditorStatusBar(
                 cursorPosition: cursorPosition.wrappedValue,
                 lineCount: lineCount,
-                configuration: configuration
+                configuration: configuration,
+                language: language,
+                onLanguageChange: { newLanguage in
+                    language = newLanguage
+                }
             )
         }
         .clipped() // Prevent content from extending beyond bounds
@@ -1140,13 +1179,14 @@ struct KeystoneEditorToolbarBar: View {
 #Preview("Keystone Editor") {
     struct PreviewWrapper: View {
         @State private var text = "func hello() {\n    print(\"Hello, World!\")\n}\n\nhello()"
+        @State private var language: KeystoneLanguage = .swift
         @StateObject private var config = KeystoneConfiguration()
         @StateObject private var findReplace = FindReplaceManager()
 
         var body: some View {
             KeystoneEditor(
                 text: $text,
-                language: .swift,
+                language: $language,
                 configuration: config,
                 findReplaceManager: findReplace
             )
