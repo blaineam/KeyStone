@@ -52,6 +52,28 @@ public class SyntaxHighlighter {
         }
     }
 
+    /// Whether we have a parsed tree available for incremental updates.
+    /// If true, updateAsync will be much faster than parseAsync.
+    public var hasTree: Bool {
+        treeSitterHighlighter?.hasTree ?? false
+    }
+
+    /// Performs an incremental update after a text edit.
+    /// This is MUCH faster than a full reparse for small edits.
+    /// - Parameters:
+    ///   - text: The new text content after the edit.
+    ///   - edit: Description of the edit that was made.
+    ///   - completion: Called when parsing completes.
+    public func updateAsync(_ text: String, with edit: TextEdit, completion: @escaping () -> Void) {
+        guard let tsHighlighter = treeSitterHighlighter, tsHighlighter.isTreeSitterAvailable else {
+            completion()
+            return
+        }
+        tsHighlighter.updateAsync(text, with: edit) { _ in
+            completion()
+        }
+    }
+
     /// Applies syntax highlighting to the text storage using cached results.
     /// If no cached results exist, triggers async parsing and returns immediately.
     /// - Parameters:

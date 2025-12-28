@@ -729,6 +729,118 @@ public enum TokenType: String, Sendable {
 // MARK: - Incremental Parsing Support
 
 extension TreeSitterHighlighter {
+    /// Whether we have a valid tree for incremental updates
+    public var hasTree: Bool {
+        tree != nil
+    }
+
+    /// Updates the syntax tree incrementally after an edit (async version).
+    /// This is MUCH faster than a full reparse for small edits.
+    /// - Parameters:
+    ///   - text: The new text content after the edit.
+    ///   - edit: The edit that was made.
+    ///   - completion: Called on main thread when parsing completes.
+    public func updateAsync(_ text: String, with edit: TextEdit, completion: @escaping ([(range: NSRange, tokenType: TokenType)]) -> Void) {
+        // If no tree exists, fall back to full parse
+        guard tree != nil else {
+            parseAsync(text, completion: completion)
+            return
+        }
+
+        cacheLock.lock()
+        // If already parsing, queue this as pending
+        if isParsing {
+            pendingParseText = text
+            pendingCompletion = completion
+            cacheLock.unlock()
+            return
+        }
+        isParsing = true
+        cacheLock.unlock()
+
+        // Do incremental parse on background thread
+        Self.parseQueue.async { [weak self] in
+            guard let self = self else { return }
+
+            let ranges = self.updateSync(text, with: edit)
+            let charRanges = self.convertToCharRanges(ranges, in: text)
+            let textHash = text.hashValue
+
+            self.cacheLock.lock()
+            self.cachedTextHash = textHash
+            self.cachedRanges = ranges
+            self.cachedCharRanges = charRanges
+            self.isParsing = false
+
+            let pending = self.pendingParseText
+            let pendingComp = self.pendingCompletion
+            self.pendingParseText = nil
+            self.pendingCompletion = nil
+            self.cacheLock.unlock()
+
+            DispatchQueue.main.async {
+                completion(charRanges)
+            }
+
+            // Handle pending request
+            if let pendingText = pending, let pendingCallback = pendingComp {
+                if pendingText.hashValue != textHash {
+                    self.parseAsync(pendingText, completion: pendingCallback)
+                } else {
+                    DispatchQueue.main.async {
+                        pendingCallback(charRanges)
+                    }
+                }
+            }
+        }
+    }
+
+    /// Synchronous incremental update (called on background thread)
+    private func updateSync(_ text: String, with edit: TextEdit) -> [HighlightRange] {
+        guard let parser = parser, let oldTree = tree, hasLanguage else {
+            return parseSync(text)
+        }
+
+        // Create TSInputEdit
+        var inputEdit = TSInputEdit(
+            start_byte: UInt32(edit.startByte),
+            old_end_byte: UInt32(edit.oldEndByte),
+            new_end_byte: UInt32(edit.newEndByte),
+            start_point: TSPoint(row: UInt32(edit.startRow), column: UInt32(edit.startColumn)),
+            old_end_point: TSPoint(row: UInt32(edit.oldEndRow), column: UInt32(edit.oldEndColumn)),
+            new_end_point: TSPoint(row: UInt32(edit.newEndRow), column: UInt32(edit.newEndColumn))
+        )
+
+        ts_tree_edit(oldTree, &inputEdit)
+
+        // Re-parse with the old tree for incremental parsing (FAST!)
+        let bytes = Array(text.utf8)
+        let newTree = bytes.withUnsafeBufferPointer { buffer in
+            ts_parser_parse_string(
+                parser,
+                oldTree,
+                buffer.baseAddress,
+                UInt32(buffer.count)
+            )
+        }
+
+        ts_tree_delete(oldTree)
+        self.tree = newTree
+
+        guard let tree = self.tree else { return [] }
+
+        let rootNode = ts_tree_root_node(tree)
+        var ranges: [HighlightRange] = []
+        walkTree(node: rootNode, in: text, ranges: &ranges)
+
+        // For HTML, also parse embedded CSS and JavaScript
+        if language == .html {
+            parseEmbeddedLanguages(text: text, ranges: &ranges)
+        }
+
+        return ranges
+    }
+
     /// Updates the syntax tree incrementally after an edit.
     /// - Parameters:
     ///   - text: The new text content.
