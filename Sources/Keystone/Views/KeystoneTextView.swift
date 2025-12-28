@@ -1566,9 +1566,8 @@ public class KeystoneTextContainerView: UIView {
         textStorage.removeAttribute(.foldIndicatorRegionId, range: fullRange)
         textStorage.removeAttribute(.backgroundColor, range: fullRange)
         textStorage.addAttribute(.paragraphStyle, value: normalParagraph, range: fullRange)
-        // Restore font and color for any previously hidden text
+        // Restore font for any previously hidden text (but NOT foreground color - that would wipe syntax highlighting)
         textStorage.addAttribute(.font, value: font, range: fullRange)
-        textStorage.addAttribute(.foregroundColor, value: UIColor(configuration.theme.text), range: fullRange)
 
         // Apply folding to each folded region
         for region in foldingManager.foldedRegions {
