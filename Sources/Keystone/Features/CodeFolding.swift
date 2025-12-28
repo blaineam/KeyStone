@@ -249,8 +249,13 @@ public class CodeFoldingManager: ObservableObject {
             .filter { $0.lineCount >= 2 }
             .sorted { $0.startLine < $1.startLine }
 
-        // Build O(1) lookup dictionary
-        regionsByStartLine = Dictionary(uniqueKeysWithValues: regions.map { ($0.startLine, $0) })
+        // Build O(1) lookup dictionary (keep first region if duplicates exist)
+        regionsByStartLine = [:]
+        for region in regions {
+            if regionsByStartLine[region.startLine] == nil {
+                regionsByStartLine[region.startLine] = region
+            }
+        }
 
         // Preserve fold state for existing regions with same start/end lines
         let oldFoldedIds = foldedRegionIds
