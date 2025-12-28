@@ -43,6 +43,7 @@ public class TreeSitterHighlighter {
     private static let parseQueue = DispatchQueue(label: "com.keystone.treesitter.parse", qos: .userInitiated)
     private var isParsing = false
     private var pendingParseText: String?
+    private var pendingCompletion: (([(range: NSRange, tokenType: TokenType)]) -> Void)?
 
     // Embedded language parsers for HTML
     private var cssParser: OpaquePointer?
@@ -139,9 +140,10 @@ public class TreeSitterHighlighter {
             return
         }
 
-        // Already parsing? Store pending request
+        // Already parsing? Store pending request and completion
         if isParsing {
             pendingParseText = text
+            pendingCompletion = completion
             cacheLock.unlock()
             return
         }
@@ -166,7 +168,9 @@ public class TreeSitterHighlighter {
 
             // Check for pending parse request
             let pending = self.pendingParseText
+            let pendingComp = self.pendingCompletion
             self.pendingParseText = nil
+            self.pendingCompletion = nil
             self.cacheLock.unlock()
 
             DispatchQueue.main.async {
@@ -174,8 +178,16 @@ public class TreeSitterHighlighter {
             }
 
             // Handle pending request if text changed while parsing
-            if let pendingText = pending, pendingText.hashValue != textHash {
-                self.parseAsync(pendingText, completion: completion)
+            if let pendingText = pending {
+                let compToUse = pendingComp ?? completion
+                if pendingText.hashValue != textHash {
+                    self.parseAsync(pendingText, completion: compToUse)
+                } else {
+                    // Same text, just call the pending completion with cached results
+                    DispatchQueue.main.async {
+                        compToUse(charRanges)
+                    }
+                }
             }
         }
     }

@@ -1267,7 +1267,26 @@ public class KeystoneTextContainerView: UIView {
             textStorage.removeAttribute(.foldedRegionId, range: affectedRange)
             textStorage.addAttribute(.paragraphStyle, value: normalParagraph, range: affectedRange)
             textStorage.addAttribute(.font, value: font, range: affectedRange)
-            textStorage.addAttribute(.foregroundColor, value: UIColor(configuration.theme.text), range: affectedRange)
+
+            // Try to apply cached syntax highlighting directly instead of white
+            // This avoids the white flash while waiting for async re-parse
+            if let highlighter = coordinator?.getHighlighter(
+                language: currentLanguage,
+                theme: configuration.theme
+            ), highlighter.hasCachedHighlighting(for: text) {
+                // Apply default color first, then syntax colors
+                textStorage.addAttribute(.foregroundColor, value: UIColor(configuration.theme.text), range: affectedRange)
+                highlighter.highlightRange(
+                    textStorage: textStorage,
+                    text: text,
+                    offset: 0,
+                    rangeToHighlight: affectedRange,
+                    onParseComplete: nil
+                )
+            } else {
+                // No cache available - set to default color (async will fix it)
+                textStorage.addAttribute(.foregroundColor, value: UIColor(configuration.theme.text), range: affectedRange)
+            }
 
             // Remove fold indicator background from first line
             let indicatorRange = NSRange(location: max(0, firstLineEnd - 20), length: min(20, firstLineEnd))
@@ -2038,20 +2057,31 @@ class LineNumberGutterView: UIView {
 
         let path = UIBezierPath(roundedRect: rect, cornerRadius: 2)
 
-        // Background
-        UIColor.secondarySystemBackground.setFill()
+        // Use tint color background when folded to draw attention
+        if isFolded {
+            UIColor.tintColor.withAlphaComponent(0.2).setFill()
+        } else {
+            UIColor.secondarySystemBackground.setFill()
+        }
         path.fill()
 
-        // Border
-        textColor.withAlphaComponent(0.5).setStroke()
+        // Border - use tint color when folded
+        if isFolded {
+            UIColor.tintColor.setStroke()
+        } else {
+            textColor.withAlphaComponent(0.5).setStroke()
+        }
         path.lineWidth = 1
         path.stroke()
 
-        // Draw triangle or minus sign
+        // Draw triangle
         let symbolPath = UIBezierPath()
         let inset: CGFloat = 2.5
         let centerX = rect.midX
         let centerY = rect.midY
+
+        // Use tint color for folded indicator to make it stand out
+        let triangleColor = isFolded ? UIColor.tintColor : textColor
 
         if isFolded {
             // Right-pointing triangle (collapsed)
@@ -2059,7 +2089,7 @@ class LineNumberGutterView: UIView {
             symbolPath.addLine(to: CGPoint(x: rect.maxX - inset, y: centerY))
             symbolPath.addLine(to: CGPoint(x: rect.minX + inset, y: rect.maxY - inset))
             symbolPath.close()
-            textColor.setFill()
+            triangleColor.setFill()
             symbolPath.fill()
         } else {
             // Down-pointing triangle (expanded)
@@ -2067,7 +2097,7 @@ class LineNumberGutterView: UIView {
             symbolPath.addLine(to: CGPoint(x: rect.maxX - inset, y: rect.minY + inset))
             symbolPath.addLine(to: CGPoint(x: centerX, y: rect.maxY - inset))
             symbolPath.close()
-            textColor.setFill()
+            triangleColor.setFill()
             symbolPath.fill()
         }
     }
@@ -2342,12 +2372,11 @@ public struct KeystoneTextView: NSViewRepresentable {
         }
 
         // Fall back to full replacement for other changes (edits, deletions, etc.)
-        if textChanged {
-            // For non-append changes, do full string comparison if needed
-            if currentLength == newLength && currentLength > 0 {
-                // Same length - need to check if content actually changed
-                textChanged = containerView.textView.string != text
-            }
+        // Skip if the change originated from the text view itself (prevents feedback loop)
+        if textChanged && !context.coordinator.isSyncingFromTextView {
+            // ALWAYS verify with string comparison before resetting text
+            // This prevents race conditions where binding value is stale
+            textChanged = containerView.textView.string != text
 
             if textChanged {
                 let selectedRange = containerView.textView.selectedRange()
@@ -2367,13 +2396,16 @@ public struct KeystoneTextView: NSViewRepresentable {
         }
 
         // Only re-highlight when necessary - use viewport-based highlighting
-        if needsHighlight, let textStorage = containerView.textView.textStorage {
+        // Skip when syncing from text view (the debounced reparse handles it)
+        if needsHighlight && !context.coordinator.isSyncingFromTextView,
+           let textStorage = containerView.textView.textStorage {
             let highlighter = context.coordinator.getHighlighter(language: language, theme: configuration.theme)
             applyViewportSyntaxHighlightingMac(to: containerView, text: text, font: font, highlighter: highlighter)
         }
 
-        // Analyze text for foldable regions (only if text changed and folding is enabled)
-        if (textChanged || needsHighlight) && containerView.foldingManager.isEnabled {
+        // Analyze text for foldable regions (only if text changed externally and folding is enabled)
+        // Skip when syncing from text view (it's debounced in textDidChange)
+        if (textChanged || needsHighlight) && !context.coordinator.isSyncingFromTextView && containerView.foldingManager.isEnabled {
             containerView.foldingManager.analyze(text)
             // Apply folding styles after analysis
             containerView.applyFolding()
@@ -2506,19 +2538,32 @@ public struct KeystoneTextView: NSViewRepresentable {
 
         // For small files, just highlight everything (fast enough)
         if fullLength < 5000 {
-            textStorage.beginEditing()
-            textStorage.setAttributes([
-                .font: font,
-                .foregroundColor: NSColor(theme.text)
-            ], range: NSRange(location: 0, length: fullLength))
-            highlighter.highlightRange(
-                textStorage: textStorage,
-                text: text,
-                offset: 0,
-                rangeToHighlight: nil,
-                onParseComplete: onParseComplete
-            )
-            textStorage.endEditing()
+            let fullRange = NSRange(location: 0, length: fullLength)
+            if highlighter.hasCachedHighlighting(for: text) {
+                textStorage.beginEditing()
+                textStorage.setAttributes([
+                    .font: font,
+                    .foregroundColor: NSColor(theme.text)
+                ], range: fullRange)
+                highlighter.highlightRange(
+                    textStorage: textStorage,
+                    text: text,
+                    offset: 0,
+                    rangeToHighlight: nil,
+                    onParseComplete: nil
+                )
+                textStorage.endEditing()
+            } else {
+                highlighter.highlightRange(
+                    textStorage: textStorage,
+                    text: text,
+                    offset: 0,
+                    rangeToHighlight: nil,
+                    onParseComplete: { [weak containerView] in
+                        containerView?.textView.needsDisplay = true
+                    }
+                )
+            }
             return
         }
 
@@ -2536,19 +2581,31 @@ public struct KeystoneTextView: NSViewRepresentable {
             // Highlight just the beginning - don't trigger full layout
             let initialHighlightLength = min(fullLength, 10000)
             let initialRange = NSRange(location: 0, length: initialHighlightLength)
-            textStorage.beginEditing()
-            textStorage.setAttributes([
-                .font: font,
-                .foregroundColor: NSColor(theme.text)
-            ], range: initialRange)
-            highlighter.highlightRange(
-                textStorage: textStorage,
-                text: text,
-                offset: 0,
-                rangeToHighlight: initialRange,
-                onParseComplete: onParseComplete
-            )
-            textStorage.endEditing()
+            if highlighter.hasCachedHighlighting(for: text) {
+                textStorage.beginEditing()
+                textStorage.setAttributes([
+                    .font: font,
+                    .foregroundColor: NSColor(theme.text)
+                ], range: initialRange)
+                highlighter.highlightRange(
+                    textStorage: textStorage,
+                    text: text,
+                    offset: 0,
+                    rangeToHighlight: initialRange,
+                    onParseComplete: nil
+                )
+                textStorage.endEditing()
+            } else {
+                highlighter.highlightRange(
+                    textStorage: textStorage,
+                    text: text,
+                    offset: 0,
+                    rangeToHighlight: initialRange,
+                    onParseComplete: { [weak containerView] in
+                        containerView?.textView.needsDisplay = true
+                    }
+                )
+            }
             return
         }
 
@@ -2562,25 +2619,34 @@ public struct KeystoneTextView: NSViewRepresentable {
         let highlightEnd = min(fullLength, visibleCharRange.location + visibleCharRange.length + bufferSize)
         let highlightRange = NSRange(location: highlightStart, length: highlightEnd - highlightStart)
 
-        textStorage.beginEditing()
-
-        // Only reset attributes in the range we're highlighting
-        textStorage.setAttributes([
-            .font: font,
-            .foregroundColor: NSColor(theme.text)
-        ], range: highlightRange)
-
-        // Apply syntax highlighting - parse full text for context, but only apply to visible range
-        // Uses async parsing to avoid blocking the main thread
-        highlighter.highlightRange(
-            textStorage: textStorage,
-            text: text,
-            offset: highlightStart,
-            rangeToHighlight: highlightRange,
-            onParseComplete: onParseComplete
-        )
-
-        textStorage.endEditing()
+        // Only reset and apply if we have cached results ready
+        // This prevents white flash while waiting for async parse
+        if highlighter.hasCachedHighlighting(for: text) {
+            textStorage.beginEditing()
+            textStorage.setAttributes([
+                .font: font,
+                .foregroundColor: NSColor(theme.text)
+            ], range: highlightRange)
+            highlighter.highlightRange(
+                textStorage: textStorage,
+                text: text,
+                offset: highlightStart,
+                rangeToHighlight: highlightRange,
+                onParseComplete: nil
+            )
+            textStorage.endEditing()
+        } else {
+            // No cache - trigger async parse, then force redraw when done
+            highlighter.highlightRange(
+                textStorage: textStorage,
+                text: text,
+                offset: highlightStart,
+                rangeToHighlight: highlightRange,
+                onParseComplete: { [weak containerView] in
+                    containerView?.textView.needsDisplay = true
+                }
+            )
+        }
     }
 
     private func applySyntaxHighlighting(to textStorage: NSTextStorage, text: String, font: NSFont, highlighter: SyntaxHighlighter) {
@@ -2680,6 +2746,17 @@ public struct KeystoneTextView: NSViewRepresentable {
         private var syntaxHighlightWorkItem: DispatchWorkItem?
         private var needsSyntaxReparse = false
 
+        // Debounce timer for text sync to avoid triggering SwiftUI on every keystroke
+        private var textSyncWorkItem: DispatchWorkItem?
+        private var lastSyncedLength: Int = 0
+
+        // Debounce timer for cursor position updates
+        private var cursorUpdateWorkItem: DispatchWorkItem?
+        private var lastSyncedCursorOffset: Int = -1
+
+        // Flag to indicate text change originated from text view (not external binding)
+        var isSyncingFromTextView = false
+
         init(_ parent: KeystoneTextView) {
             self.parent = parent
         }
@@ -2704,36 +2781,150 @@ public struct KeystoneTextView: NSViewRepresentable {
         func scheduleSyntaxReparse() {
             syntaxHighlightWorkItem?.cancel()
             let work = DispatchWorkItem { [weak self] in
-                guard let self = self else { return }
-                self.invalidateSyntaxCache()
+                guard let self = self,
+                      let containerView = self.containerView,
+                      let textStorage = containerView.textView.textStorage else { return }
+
+                // Reset tracking state
                 self.lastHighlightedRange = NSRange(location: 0, length: 0)
-                self.containerView?.textView.needsDisplay = true
+
+                // Get the current text and proactively start background parsing
+                // This populates the cache so scrolling is instant
+                let text = textStorage.string
+                guard !text.isEmpty else { return }
+
+                let highlighter = self.getHighlighter(
+                    language: self.parent.language,
+                    theme: self.parent.configuration.theme
+                )
+
+                // Trigger async parse to pre-populate the cache
+                highlighter.parseAsync(text) { [weak self, weak containerView] in
+                    guard let self = self,
+                          let containerView = containerView,
+                          let textStorage = containerView.textView.textStorage else { return }
+
+                    // Verify text hasn't changed while parsing (another reparse would be scheduled)
+                    guard textStorage.string == text else { return }
+
+                    // Apply highlighting to the visible viewport immediately
+                    let font = NSFont.monospacedSystemFont(
+                        ofSize: self.parent.configuration.fontSize,
+                        weight: .regular
+                    )
+                    let theme = self.parent.configuration.theme
+
+                    let visibleRect = containerView.scrollView.documentVisibleRect
+                    guard let layoutManager = containerView.textView.layoutManager,
+                          let textContainer = containerView.textView.textContainer,
+                          layoutManager.numberOfGlyphs > 0 else {
+                        containerView.textView.needsDisplay = true
+                        return
+                    }
+
+                    let visibleGlyphRange = layoutManager.glyphRange(
+                        forBoundingRect: visibleRect,
+                        in: textContainer
+                    )
+                    let visibleCharRange = layoutManager.characterRange(
+                        forGlyphRange: visibleGlyphRange,
+                        actualGlyphRange: nil
+                    )
+
+                    let bufferSize = 2000
+                    let highlightStart = max(0, visibleCharRange.location - bufferSize)
+                    let highlightEnd = min(
+                        textStorage.length,
+                        visibleCharRange.location + visibleCharRange.length + bufferSize
+                    )
+                    let highlightRange = NSRange(
+                        location: highlightStart,
+                        length: highlightEnd - highlightStart
+                    )
+
+                    // Apply highlighting (cache is now populated)
+                    textStorage.beginEditing()
+                    textStorage.setAttributes([
+                        .font: font,
+                        .foregroundColor: NSColor(theme.text)
+                    ], range: highlightRange)
+                    highlighter.highlightRange(
+                        textStorage: textStorage,
+                        text: text,
+                        offset: highlightStart,
+                        rangeToHighlight: highlightRange,
+                        onParseComplete: nil
+                    )
+                    textStorage.endEditing()
+                    self.lastHighlightedRange = highlightRange
+                    containerView.textView.needsDisplay = true
+                }
             }
             syntaxHighlightWorkItem = work
-            // Delay re-parsing by 1.5 seconds after user stops typing
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5, execute: work)
+            // Shorter delay (0.3s) to start background parsing sooner
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: work)
         }
 
         /// Requests syntax re-highlighting after fold/unfold operations.
-        /// Triggers a viewport re-highlight by invalidating the highlight cache.
+        /// Directly applies syntax highlighting to the visible viewport.
         func requestSyntaxHighlight() {
-            guard let containerView = containerView else { return }
+            guard let containerView = containerView,
+                  let textStorage = containerView.textView.textStorage else { return }
 
             // Reset highlighted range to force the viewport highlighter to re-run
             lastHighlightedRange = NSRange(location: 0, length: 0)
 
-            // Force text view to redisplay
-            containerView.textView.needsDisplay = true
+            // Get current text and apply highlighting directly
+            let text = textStorage.string
+            let font = NSFont.monospacedSystemFont(ofSize: parent.configuration.fontSize, weight: .regular)
+            let highlighter = getHighlighter(language: parent.language, theme: parent.configuration.theme)
+            let theme = parent.configuration.theme
 
-            // Trigger a cursor position update to force SwiftUI to re-render
-            // This will cause updateNSView to run with proper viewport highlighting
-            let currentPosition = parent.cursorPosition
-            parent.cursorPosition = CursorPosition(
-                line: currentPosition.line,
-                column: currentPosition.column,
-                selectionLength: currentPosition.selectionLength,
-                offset: currentPosition.offset
-            )
+            // Apply syntax highlighting to the visible range
+            let visibleRect = containerView.scrollView.documentVisibleRect
+            guard let layoutManager = containerView.textView.layoutManager,
+                  let textContainer = containerView.textView.textContainer,
+                  layoutManager.numberOfGlyphs > 0 else {
+                containerView.textView.needsDisplay = true
+                return
+            }
+
+            let visibleGlyphRange = layoutManager.glyphRange(forBoundingRect: visibleRect, in: textContainer)
+            let visibleCharRange = layoutManager.characterRange(forGlyphRange: visibleGlyphRange, actualGlyphRange: nil)
+
+            let bufferSize = 2000
+            let highlightStart = max(0, visibleCharRange.location - bufferSize)
+            let highlightEnd = min(textStorage.length, visibleCharRange.location + visibleCharRange.length + bufferSize)
+            let highlightRange = NSRange(location: highlightStart, length: highlightEnd - highlightStart)
+
+            // Only reset colors to white if we have cached results to apply immediately
+            // This prevents white flash while waiting for async parse
+            if highlighter.hasCachedHighlighting(for: text) {
+                textStorage.beginEditing()
+                textStorage.setAttributes([
+                    .font: font,
+                    .foregroundColor: NSColor(theme.text)
+                ], range: highlightRange)
+                highlighter.highlightRange(
+                    textStorage: textStorage,
+                    text: text,
+                    offset: highlightStart,
+                    rangeToHighlight: highlightRange,
+                    onParseComplete: nil
+                )
+                textStorage.endEditing()
+            } else {
+                // No cache - trigger async parse without resetting colors
+                highlighter.highlightRange(
+                    textStorage: textStorage,
+                    text: text,
+                    offset: highlightStart,
+                    rangeToHighlight: highlightRange,
+                    onParseComplete: { [weak containerView] in
+                        containerView?.textView.needsDisplay = true
+                    }
+                )
+            }
         }
 
         // Debounce timer for code folding analysis (runs less frequently)
@@ -2753,11 +2944,19 @@ public struct KeystoneTextView: NSViewRepresentable {
         public func textDidChange(_ notification: Notification) {
             guard !isUpdating, let textView = notification.object as? NSTextView else { return }
 
+            // Mark that we're syncing from the text view to prevent updateNSView from resetting
+            isSyncingFromTextView = true
+
+            // Sync text immediately - required for proper editing
             parent.text = textView.string
             containerView?.updateLineNumbers()
 
+            // Reset flag after next run loop to allow updateNSView to complete
+            DispatchQueue.main.async { [weak self] in
+                self?.isSyncingFromTextView = false
+            }
+
             // Schedule syntax re-parse with debounce (1.5 second idle delay)
-            // This invalidates the cache and forces a full re-highlight
             scheduleSyntaxReparse()
 
             // Update code folding regions (debounced)
@@ -2782,8 +2981,6 @@ public struct KeystoneTextView: NSViewRepresentable {
                 in: text,
                 selectionLength: selectedRange.length
             )
-            // NOTE: Line highlight is now handled by updateNSView with caching
-            // Removed duplicate call here to prevent double updates
         }
 
         // Debounce work item for scroll-triggered highlighting
@@ -2830,14 +3027,37 @@ public struct KeystoneTextView: NSViewRepresentable {
                 if lastHighlightedRange.location == 0 && lastHighlightedRange.length == fullLength {
                     return
                 }
-                textStorage.beginEditing()
-                textStorage.setAttributes([
-                    .font: font,
-                    .foregroundColor: NSColor(theme.text)
-                ], range: NSRange(location: 0, length: fullLength))
-                highlighter.highlight(textStorage: textStorage, text: text)
-                textStorage.endEditing()
-                lastHighlightedRange = NSRange(location: 0, length: fullLength)
+                let fullRange = NSRange(location: 0, length: fullLength)
+                // Only reset colors if we have cached results to apply immediately
+                if highlighter.hasCachedHighlighting(for: text) {
+                    textStorage.beginEditing()
+                    textStorage.setAttributes([
+                        .font: font,
+                        .foregroundColor: NSColor(theme.text)
+                    ], range: fullRange)
+                    highlighter.highlightRange(
+                        textStorage: textStorage,
+                        text: text,
+                        offset: 0,
+                        rangeToHighlight: nil,
+                        onParseComplete: nil
+                    )
+                    textStorage.endEditing()
+                    lastHighlightedRange = fullRange
+                } else {
+                    // No cache - trigger async parse without resetting colors
+                    let rangeToMark = fullRange
+                    highlighter.highlightRange(
+                        textStorage: textStorage,
+                        text: text,
+                        offset: 0,
+                        rangeToHighlight: nil,
+                        onParseComplete: { [weak self, weak containerView] in
+                            self?.lastHighlightedRange = rangeToMark
+                            containerView?.textView.needsDisplay = true
+                        }
+                    )
+                }
                 return
             }
 
@@ -2862,17 +3082,37 @@ public struct KeystoneTextView: NSViewRepresentable {
                 return
             }
 
-            textStorage.beginEditing()
-            textStorage.setAttributes([
-                .font: font,
-                .foregroundColor: NSColor(theme.text)
-            ], range: highlightRange)
-
-            // Apply syntax highlighting - parse full text for context, but only apply to visible range
-            highlighter.highlightRange(textStorage: textStorage, text: text, offset: highlightStart, rangeToHighlight: highlightRange)
-
-            textStorage.endEditing()
-            lastHighlightedRange = highlightRange
+            // Only reset colors if we have cached results to apply immediately
+            if highlighter.hasCachedHighlighting(for: text) {
+                textStorage.beginEditing()
+                textStorage.setAttributes([
+                    .font: font,
+                    .foregroundColor: NSColor(theme.text)
+                ], range: highlightRange)
+                highlighter.highlightRange(
+                    textStorage: textStorage,
+                    text: text,
+                    offset: highlightStart,
+                    rangeToHighlight: highlightRange,
+                    onParseComplete: nil
+                )
+                textStorage.endEditing()
+                lastHighlightedRange = highlightRange
+            } else {
+                // No cache - trigger async parse without resetting colors
+                // Update lastHighlightedRange after async completes so next scroll knows this area is handled
+                let rangeToMark = highlightRange
+                highlighter.highlightRange(
+                    textStorage: textStorage,
+                    text: text,
+                    offset: highlightStart,
+                    rangeToHighlight: highlightRange,
+                    onParseComplete: { [weak self, weak containerView] in
+                        self?.lastHighlightedRange = rangeToMark
+                        containerView?.textView.needsDisplay = true
+                    }
+                )
+            }
         }
 
         // Handle character pair insertion
@@ -3145,7 +3385,26 @@ public class KeystoneTextContainerViewMac: NSView {
             textStorage.removeAttribute(.foldedRegionId, range: affectedRange)
             textStorage.addAttribute(.paragraphStyle, value: normalParagraph, range: affectedRange)
             textStorage.addAttribute(.font, value: font, range: affectedRange)
-            textStorage.addAttribute(.foregroundColor, value: NSColor(configuration.theme.text), range: affectedRange)
+
+            // Try to apply cached syntax highlighting directly instead of white
+            // This avoids the white flash while waiting for async re-parse
+            if let highlighter = coordinator?.getHighlighter(
+                language: currentLanguage,
+                theme: configuration.theme
+            ), highlighter.hasCachedHighlighting(for: text) {
+                // Apply default color first, then syntax colors
+                textStorage.addAttribute(.foregroundColor, value: NSColor(configuration.theme.text), range: affectedRange)
+                highlighter.highlightRange(
+                    textStorage: textStorage,
+                    text: text,
+                    offset: 0,
+                    rangeToHighlight: affectedRange,
+                    onParseComplete: nil
+                )
+            } else {
+                // No cache available - set to default color (async will fix it)
+                textStorage.addAttribute(.foregroundColor, value: NSColor(configuration.theme.text), range: affectedRange)
+            }
 
             // Remove fold indicator background from first line
             let indicatorRange = NSRange(location: max(0, firstLineEnd - 20), length: min(20, firstLineEnd))
@@ -3574,6 +3833,13 @@ public class KeystoneTextContainerViewMac: NSView {
         return low + 1 // Convert 0-based index to 1-based line number
     }
 
+    /// Lightweight line number update during typing - just triggers redisplay
+    /// Full recalculation happens after typing stops via debounced text sync
+    func updateLineNumbersForVisibleArea() {
+        guard configuration.showLineNumbers else { return }
+        lineNumberView.needsDisplay = true
+    }
+
     func updateLineNumbers() {
         guard configuration.showLineNumbers else {
             lineNumberView.lineData = []
@@ -3850,12 +4116,20 @@ class LineNumberGutterViewMac: NSView {
 
         let path = NSBezierPath(roundedRect: rect, xRadius: 2, yRadius: 2)
 
-        // Background
-        NSColor.controlBackgroundColor.setFill()
+        // Use accent color background when folded to draw attention
+        if isFolded {
+            NSColor.controlAccentColor.withAlphaComponent(0.2).setFill()
+        } else {
+            NSColor.controlBackgroundColor.setFill()
+        }
         path.fill()
 
-        // Border
-        textColor.withAlphaComponent(0.5).setStroke()
+        // Border - use accent color when folded
+        if isFolded {
+            NSColor.controlAccentColor.setStroke()
+        } else {
+            textColor.withAlphaComponent(0.5).setStroke()
+        }
         path.lineWidth = 1
         path.stroke()
 
@@ -3863,13 +4137,16 @@ class LineNumberGutterViewMac: NSView {
         let symbolPath = NSBezierPath()
         let inset: CGFloat = 2.5
 
+        // Use accent color for folded indicator to make it stand out
+        let triangleColor = isFolded ? NSColor.controlAccentColor : textColor
+
         if isFolded {
             // Right-pointing triangle (collapsed)
             symbolPath.move(to: CGPoint(x: rect.minX + inset, y: rect.minY + inset))
             symbolPath.line(to: CGPoint(x: rect.maxX - inset, y: rect.midY))
             symbolPath.line(to: CGPoint(x: rect.minX + inset, y: rect.maxY - inset))
             symbolPath.close()
-            textColor.setFill()
+            triangleColor.setFill()
             symbolPath.fill()
         } else {
             // Down-pointing triangle (expanded)
@@ -3877,7 +4154,7 @@ class LineNumberGutterViewMac: NSView {
             symbolPath.line(to: CGPoint(x: rect.maxX - inset, y: rect.minY + inset))
             symbolPath.line(to: CGPoint(x: rect.midX, y: rect.maxY - inset))
             symbolPath.close()
-            textColor.setFill()
+            triangleColor.setFill()
             symbolPath.fill()
         }
     }

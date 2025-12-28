@@ -77,12 +77,18 @@ public class SyntaxHighlighter {
             // Apply cached pre-converted character ranges (fast path)
             let charRanges = tsHighlighter.getCachedCharRanges()
             applyCharRanges(charRanges, to: textStorage, rangeToHighlight: rangeToHighlight)
+            onParseComplete?()
         } else {
             // No cache - trigger async parse
             tsHighlighter.parseAsync(text) { [weak self] charRanges in
                 guard let self = self else { return }
-                // Apply the pre-converted ranges on main thread (fast, no conversions needed)
-                self.applyCharRanges(charRanges, to: textStorage, rangeToHighlight: rangeToHighlight)
+                // Apply colors - if text changed, colors may be slightly off but
+                // will be corrected on next highlight pass
+                if !charRanges.isEmpty && textStorage.length > 0 {
+                    textStorage.beginEditing()
+                    self.applyCharRanges(charRanges, to: textStorage, rangeToHighlight: rangeToHighlight)
+                    textStorage.endEditing()
+                }
                 onParseComplete?()
             }
         }
@@ -133,9 +139,13 @@ public class SyntaxHighlighter {
             applyCharRanges(charRanges, to: textStorage, rangeToHighlight: nil)
         } else {
             // No cache - trigger async parse
+            let expectedLength = textStorage.length
             highlighter.parseAsync(text) { [weak self] charRanges in
                 guard let self = self else { return }
+                guard textStorage.length == expectedLength else { return }
+                textStorage.beginEditing()
                 self.applyCharRanges(charRanges, to: textStorage, rangeToHighlight: nil)
+                textStorage.endEditing()
             }
         }
     }
