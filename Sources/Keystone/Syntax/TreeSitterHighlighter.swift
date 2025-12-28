@@ -201,12 +201,11 @@ public class TreeSitterHighlighter {
         byteToCharOffset.reserveCapacity(utf8.count + 1)
 
         var charOffset = 0
-        for (byteIndex, _) in utf8.enumerated() {
-            while byteToCharOffset.count <= byteIndex {
-                byteToCharOffset.append(charOffset)
-            }
+        // FIXED: Iterate directly over bytes instead of using O(n) indexed access
+        // Old code was O(n²) because utf8.index(startIndex, offsetBy:) is O(n)
+        for byte in utf8 {
+            byteToCharOffset.append(charOffset)
             // Count characters (UTF-8 continuation bytes don't start new characters)
-            let byte = utf8[utf8.index(utf8.startIndex, offsetBy: byteIndex)]
             if (byte & 0xC0) != 0x80 { // Not a continuation byte
                 charOffset += 1
             }
