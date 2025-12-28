@@ -356,11 +356,11 @@ public struct KeystoneTextView: UIViewRepresentable {
             undoController.startUpdating()
         }
 
-        // Code folding disabled for performance testing
-        // DispatchQueue.main.async {
-        //     containerView.foldingManager.analyze(self.text)
-        //     containerView.lineNumberView.setNeedsDisplay()
-        // }
+        // Analyze text for code folding regions
+        DispatchQueue.main.async {
+            containerView.foldingManager.analyze(self.text)
+            containerView.lineNumberView.setNeedsDisplay()
+        }
 
         // Force initial layout on next run loop to ensure proper sizing
         DispatchQueue.main.async {
@@ -1007,16 +1007,17 @@ public struct KeystoneTextView: UIViewRepresentable {
             // Schedule syntax re-parse (uses incremental parsing for fast updates)
             scheduleSyntaxReparse()
 
-            // Code folding disabled for performance testing
-            // foldingWorkItem?.cancel()
-            // let foldingWork = DispatchWorkItem { [weak self] in
-            //     guard let self = self, let containerView = self.containerView else { return }
-            //     let text = textView.text ?? ""
-            //     containerView.foldingManager.analyze(text)
-            //     containerView.lineNumberView.setNeedsDisplay()
-            // }
-            // foldingWorkItem = foldingWork
-            // DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: foldingWork)
+            // Update code folding regions (debounced for performance)
+            foldingWorkItem?.cancel()
+            let foldingWork = DispatchWorkItem { [weak self] in
+                guard let self = self, let containerView = self.containerView else { return }
+                let text = textView.text ?? ""
+                containerView.foldingManager.analyze(text)
+                containerView.applyFolding()
+                containerView.lineNumberView.setNeedsDisplay()
+            }
+            foldingWorkItem = foldingWork
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: foldingWork)
         }
 
         /// Force sync text immediately (call before operations that need current text)
