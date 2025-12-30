@@ -42,6 +42,55 @@ public final class KeystoneConfiguration: ObservableObject {
     /// Whether the Tab key inserts a tab/indent or navigates focus.
     @Published public var tabKeyInsertsTab: Bool = true
 
+    /// Whether to show the symbol keyboard (iOS only). Persisted across sessions.
+    @Published public var showSymbolKeyboard: Bool = false
+
+    // MARK: - Performance Settings
+
+    /// Whether to use reduced performance mode (longer debounce intervals, skip some animations).
+    /// Automatically enabled when device is in Low Power Mode.
+    @Published public var reducedPerformanceMode: Bool = false
+
+    /// Multiplier for debounce intervals when in reduced performance mode.
+    /// Higher values = longer delays = less CPU usage but slower responsiveness.
+    public var performanceDebounceMultiplier: Double {
+        reducedPerformanceMode ? 3.0 : 1.0
+    }
+
+    /// Base debounce interval for syntax highlighting (seconds).
+    /// Matches code folding delay - highlighting only updates after typing pauses
+    public static let baseSyntaxDebounce: Double = 0.5
+
+    /// Base debounce interval for code folding analysis (seconds).
+    /// Increased from 0.3 - folding updates don't need to be instant
+    public static let baseFoldingDebounce: Double = 0.5
+
+    /// Base debounce interval for cursor/selection updates (seconds).
+    public static let baseCursorDebounce: Double = 0.1
+
+    /// Base debounce interval for content size/layout updates (seconds).
+    public static let baseLayoutDebounce: Double = 0.05
+
+    /// Computed syntax highlighting debounce interval.
+    public var syntaxDebounceInterval: Double {
+        Self.baseSyntaxDebounce * performanceDebounceMultiplier
+    }
+
+    /// Computed code folding debounce interval.
+    public var foldingDebounceInterval: Double {
+        Self.baseFoldingDebounce * performanceDebounceMultiplier
+    }
+
+    /// Computed cursor update debounce interval.
+    public var cursorDebounceInterval: Double {
+        Self.baseCursorDebounce * performanceDebounceMultiplier
+    }
+
+    /// Computed layout/content size debounce interval.
+    public var layoutDebounceInterval: Double {
+        Self.baseLayoutDebounce * performanceDebounceMultiplier
+    }
+
     // MARK: - Indentation Settings
 
     /// The indentation settings (auto-detected from file content).
@@ -82,15 +131,53 @@ public final class KeystoneConfiguration: ObservableObject {
         static let autoInsertPairs = "keystone.autoInsertPairs"
         static let highlightMatchingBrackets = "keystone.highlightMatchingBrackets"
         static let tabKeyInsertsTab = "keystone.tabKeyInsertsTab"
+        static let showSymbolKeyboard = "keystone.showSymbolKeyboard"
         static let themeName = "keystone.themeName"
         static let indentUseTabs = "keystone.indentUseTabs"
         static let indentWidth = "keystone.indentWidth"
     }
 
+    // MARK: - Low Power Mode Observer
+
+    private var lowPowerModeObserver: NSObjectProtocol?
+
     // MARK: - Initialization
 
     public init() {
         loadFromUserDefaults()
+        setupLowPowerModeObserver()
+    }
+
+    deinit {
+        if let observer = lowPowerModeObserver {
+            NotificationCenter.default.removeObserver(observer)
+        }
+    }
+
+    /// Sets up observation of system low power mode changes (iOS only).
+    private func setupLowPowerModeObserver() {
+        #if os(iOS)
+        // Check initial state
+        reducedPerformanceMode = ProcessInfo.processInfo.isLowPowerModeEnabled
+
+        // Observe changes
+        lowPowerModeObserver = NotificationCenter.default.addObserver(
+            forName: .NSProcessInfoPowerStateDidChange,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.reducedPerformanceMode = ProcessInfo.processInfo.isLowPowerModeEnabled
+            if ProcessInfo.processInfo.isLowPowerModeEnabled {
+                print("⚡️ [Keystone] Low Power Mode enabled - using reduced performance settings")
+            } else {
+                print("🔋 [Keystone] Low Power Mode disabled - using normal performance settings")
+            }
+        }
+
+        if reducedPerformanceMode {
+            print("⚡️ [Keystone] Starting in Low Power Mode - using reduced performance settings")
+        }
+        #endif
     }
 
     // MARK: - Persistence
@@ -129,6 +216,9 @@ public final class KeystoneConfiguration: ObservableObject {
         if defaults.object(forKey: Keys.tabKeyInsertsTab) != nil {
             tabKeyInsertsTab = defaults.bool(forKey: Keys.tabKeyInsertsTab)
         }
+        if defaults.object(forKey: Keys.showSymbolKeyboard) != nil {
+            showSymbolKeyboard = defaults.bool(forKey: Keys.showSymbolKeyboard)
+        }
         if let themeName = defaults.string(forKey: Keys.themeName) {
             theme = KeystoneTheme.theme(named: themeName) ?? .system
         }
@@ -154,6 +244,7 @@ public final class KeystoneConfiguration: ObservableObject {
         defaults.set(autoInsertPairs, forKey: Keys.autoInsertPairs)
         defaults.set(highlightMatchingBrackets, forKey: Keys.highlightMatchingBrackets)
         defaults.set(tabKeyInsertsTab, forKey: Keys.tabKeyInsertsTab)
+        defaults.set(showSymbolKeyboard, forKey: Keys.showSymbolKeyboard)
         defaults.set(KeystoneTheme.name(for: theme), forKey: Keys.themeName)
         defaults.set(indentation.type == .tabs, forKey: Keys.indentUseTabs)
         defaults.set(indentation.width, forKey: Keys.indentWidth)

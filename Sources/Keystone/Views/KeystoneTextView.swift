@@ -321,11 +321,21 @@ public struct KeystoneTextView: UIViewRepresentable {
                 containerView?.undo()
                 // Sync text immediately after undo to update SwiftUI binding
                 coordinator?.syncTextNow()
+                // Scroll to show the cursor at the undo location
+                if let containerView = containerView {
+                    let cursorRange = containerView.textView.selectedRange
+                    containerView.scrollToRange(cursorRange, animated: true)
+                }
             }
             undoController.redoAction = { [weak containerView, weak coordinator] in
                 containerView?.redo()
                 // Sync text immediately after redo to update SwiftUI binding
                 coordinator?.syncTextNow()
+                // Scroll to show the cursor at the redo location
+                if let containerView = containerView {
+                    let cursorRange = containerView.textView.selectedRange
+                    containerView.scrollToRange(cursorRange, animated: true)
+                }
             }
             undoController.checkUndoState = { [weak containerView] in
                 (canUndo: containerView?.canUndo ?? false,
@@ -776,6 +786,8 @@ public struct KeystoneTextView: UIViewRepresentable {
         private var textSyncWorkItem: DispatchWorkItem?
         // Debounce timer for code folding analysis (runs less frequently)
         private var foldingWorkItem: DispatchWorkItem?
+        // Debounce timer for content size updates in low power mode
+        private var contentSizeWorkItem: DispatchWorkItem?
         // Track text length to avoid O(n) string comparisons
         private var lastSyncedLength: Int = 0
         // Flag to indicate we're syncing from internal edit (not external change)
@@ -907,8 +919,9 @@ public struct KeystoneTextView: UIViewRepresentable {
                 }
             }
             syntaxHighlightWorkItem = work
-            // Very short delay (50ms) - incremental parsing is fast enough
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05, execute: work)
+            // Use configurable delay - longer in low power mode for better battery life
+            let delay = parent.configuration.syntaxDebounceInterval
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
         }
 
         /// Applies highlighting after async parse completes
@@ -994,9 +1007,16 @@ public struct KeystoneTextView: UIViewRepresentable {
             // IMMEDIATELY mark that user is editing - prevents updateUIView from overwriting
             isUserEditing = true
 
-            // Update content size and line numbers immediately
-            containerView?.updateContentSize()
-            containerView?.updateLineNumbersForVisibleArea()
+            // Debounce content size updates to reduce keystroke lag
+            // Even in normal mode, a tiny debounce helps batch rapid keystrokes
+            contentSizeWorkItem?.cancel()
+            let sizeWork = DispatchWorkItem { [weak self] in
+                self?.containerView?.updateContentSize()
+                self?.containerView?.updateLineNumbersForVisibleArea()
+            }
+            contentSizeWorkItem = sizeWork
+            let layoutDelay = parent.configuration.layoutDebounceInterval
+            DispatchQueue.main.asyncAfter(deadline: .now() + layoutDelay, execute: sizeWork)
 
             // Debounce the SwiftUI binding update to avoid triggering expensive updates on every keystroke
             // The actual text editing happens directly in UITextView, this just syncs the binding
@@ -1049,10 +1069,12 @@ public struct KeystoneTextView: UIViewRepresentable {
                 }
             }
             textSyncWorkItem = workItem
-            // Debounce - 250ms to batch keystrokes. O(n) operations happen when this fires.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: workItem)
+            // Debounce to batch keystrokes. O(n) operations happen when this fires.
+            // Uses layout debounce as base (50ms normal, 150ms low power) * 5 = 250ms/750ms
+            let syncDelay = parent.configuration.layoutDebounceInterval * 5
+            DispatchQueue.main.asyncAfter(deadline: .now() + syncDelay, execute: workItem)
 
-            // Schedule syntax re-parse (uses incremental parsing for fast updates)
+            // Schedule syntax re-parse (uses incremental parsing for fast updates, or full reparse in low power mode)
             scheduleSyntaxReparse()
 
             // Update code folding regions (debounced for performance, if enabled)
@@ -1066,7 +1088,9 @@ public struct KeystoneTextView: UIViewRepresentable {
                     containerView.lineNumberView.setNeedsDisplay()
                 }
                 foldingWorkItem = foldingWork
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: foldingWork)
+                // Use configurable delay - 500ms normal, 1.5s low power
+                let foldingDelay = parent.configuration.foldingDebounceInterval
+                DispatchQueue.main.asyncAfter(deadline: .now() + foldingDelay, execute: foldingWork)
             }
         }
 
@@ -1115,8 +1139,9 @@ public struct KeystoneTextView: UIViewRepresentable {
                 )
             }
             cursorUpdateWorkItem = workItem
-            // 100ms debounce - enough to batch rapid selection changes
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1, execute: workItem)
+            // Use configurable delay - longer in low power mode
+            let cursorDelay = parent.configuration.cursorDebounceInterval
+            DispatchQueue.main.asyncAfter(deadline: .now() + cursorDelay, execute: workItem)
         }
 
         // Debounce timer for scroll-end syntax highlighting
@@ -1208,7 +1233,11 @@ public struct KeystoneTextView: UIViewRepresentable {
         // Handle character pair insertion and capture edit info for incremental parsing
         public func textView(_ textView: UITextView, shouldChangeTextIn range: NSRange, replacementText text: String) -> Bool {
             // Capture edit info for incremental TreeSitter parsing
-            captureEditInfo(in: textView.textStorage, range: range, replacementText: text)
+            // Skip in reduced performance mode - the byte offset calculations are expensive
+            // We'll just do a full reparse instead of incremental updates
+            if !parent.configuration.reducedPerformanceMode {
+                captureEditInfo(in: textView.textStorage, range: range, replacementText: text)
+            }
 
             let config = parent.configuration
             let nsText = textView.textStorage.string as NSString
@@ -2506,11 +2535,21 @@ public struct KeystoneTextView: NSViewRepresentable {
                 containerView?.undo()
                 // Sync text immediately after undo to update SwiftUI binding
                 coordinator?.syncTextNow()
+                // Scroll to show the cursor at the undo location
+                if let containerView = containerView {
+                    let cursorRange = containerView.textView.selectedRange()
+                    containerView.textView.scrollRangeToVisible(cursorRange)
+                }
             }
             undoController.redoAction = { [weak containerView, weak coordinator] in
                 containerView?.redo()
                 // Sync text immediately after redo to update SwiftUI binding
                 coordinator?.syncTextNow()
+                // Scroll to show the cursor at the redo location
+                if let containerView = containerView {
+                    let cursorRange = containerView.textView.selectedRange()
+                    containerView.textView.scrollRangeToVisible(cursorRange)
+                }
             }
             undoController.checkUndoState = { [weak containerView] in
                 (canUndo: containerView?.canUndo ?? false,
@@ -3160,8 +3199,9 @@ public struct KeystoneTextView: NSViewRepresentable {
                 }
             }
             syntaxHighlightWorkItem = work
-            // Very short delay (50ms) - incremental parsing is fast enough
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05, execute: work)
+            // Use configurable delay - can be adjusted for performance
+            let delay = parent.configuration.syntaxDebounceInterval
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
         }
 
         /// Applies highlighting after async parse completes
@@ -3325,7 +3365,7 @@ public struct KeystoneTextView: NSViewRepresentable {
                 self?.isSyncingFromTextView = false
             }
 
-            // Schedule syntax re-parse with debounce (1.5 second idle delay)
+            // Schedule syntax re-parse with debounce
             scheduleSyntaxReparse()
 
             // Update code folding regions (debounced)
@@ -3336,7 +3376,9 @@ public struct KeystoneTextView: NSViewRepresentable {
                 containerView.lineNumberView.needsDisplay = true
             }
             foldingWorkItem = foldingWork
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: foldingWork)
+            // Use configurable delay - can be adjusted for performance
+            let foldingDelay = parent.configuration.foldingDebounceInterval
+            DispatchQueue.main.asyncAfter(deadline: .now() + foldingDelay, execute: foldingWork)
         }
 
         public func textViewDidChangeSelection(_ notification: Notification) {
@@ -3370,13 +3412,14 @@ public struct KeystoneTextView: NSViewRepresentable {
             let theme = parent.configuration.theme
             let language = parent.language
 
-            // Debounce syntax highlighting during scroll (trigger 100ms after scroll stops)
+            // Debounce syntax highlighting during scroll - use configurable delay
             scrollHighlightWorkItem?.cancel()
             let workItem = DispatchWorkItem { [weak self] in
                 self?.triggerViewportHighlighting(fontSize: fontSize, theme: theme, language: language)
             }
             scrollHighlightWorkItem = workItem
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1, execute: workItem)
+            let scrollDelay = parent.configuration.cursorDebounceInterval
+            DispatchQueue.main.asyncAfter(deadline: .now() + scrollDelay, execute: workItem)
         }
 
         private func triggerViewportHighlighting(fontSize: CGFloat, theme: KeystoneTheme, language: KeystoneLanguage) {

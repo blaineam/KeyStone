@@ -103,7 +103,6 @@ public struct KeystoneEditor: View {
     @State private var showSettings = false
 
     #if os(iOS)
-    @State private var showSymbolKeyboard = false
     /// Tracks whether the find/replace search field is focused (for symbol keyboard insertion)
     @State private var isSearchFieldFocused = false
     #endif
@@ -207,7 +206,7 @@ public struct KeystoneEditor: View {
             KeystoneEditorToolbarBar(
                 configuration: configuration,
                 findReplaceManager: findReplaceManager,
-                showSymbolKeyboard: $showSymbolKeyboard,
+                showSymbolKeyboard: $configuration.showSymbolKeyboard,
                 undoController: undoController,
                 isTailFollowEnabled: isTailFollowEnabled,
                 language: internalLanguage,
@@ -267,8 +266,8 @@ public struct KeystoneEditor: View {
             .focused($isEditorFocused)
 
             #if os(iOS)
-            // Symbol keyboard bar (always visible when enabled)
-            if showSymbolKeyboard {
+            // Symbol keyboard bar (always visible when enabled, persisted in configuration)
+            if configuration.showSymbolKeyboard {
                 SymbolKeyboard(
                     indentString: configuration.indentation.indentString,
                     onSymbol: insertSymbol
@@ -389,16 +388,17 @@ public struct KeystoneEditor: View {
     }
 
     #if os(iOS)
-    /// Toggles the symbol keyboard.
+    /// Toggles the symbol keyboard and persists the state.
     public func toggleSymbolKeyboard() {
         withAnimation(.easeInOut(duration: 0.2)) {
-            showSymbolKeyboard.toggle()
+            configuration.showSymbolKeyboard.toggle()
+            configuration.saveToUserDefaults()
         }
     }
 
     /// Whether the symbol keyboard is currently visible.
     public var isSymbolKeyboardVisible: Bool {
-        showSymbolKeyboard
+        configuration.showSymbolKeyboard
     }
     #endif
 
@@ -1199,10 +1199,11 @@ struct KeystoneEditorToolbarBar: View {
 
                 Divider().frame(height: 24)
 
-                // Symbol Keyboard Toggle
+                // Symbol Keyboard Toggle (persisted)
                 toolbarButton(icon: "keyboard", enabled: true, isActive: showSymbolKeyboard) {
                     withAnimation(.easeInOut(duration: 0.2)) {
                         showSymbolKeyboard.toggle()
+                        configuration.saveToUserDefaults()
                     }
                 }
 
