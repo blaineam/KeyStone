@@ -382,15 +382,34 @@ public struct KeystoneTextView: UIViewRepresentable {
         context.coordinator.parent = self
         context.coordinator.isUpdating = true
 
+        // Check if we're already in large file mode - use cached value for O(1) check
+        let isLargeFile = configuration.isLargeFileModeImmediate
+
+        // FAST PATH FOR LARGE FILES: Skip almost everything!
+        // The text view is authoritative. Only handle first load and explicit scroll requests.
+        if isLargeFile && context.coordinator.hasSetInitialText {
+            // Only thing we might need: scroll to cursor for search navigation
+            if scrollToCursor {
+                let textLength = containerView.textView.textStorage.length
+                let newLocation = min(cursorPosition.offset, textLength)
+                let newLength = min(cursorPosition.selectionLength, max(0, textLength - newLocation))
+                containerView.textView.selectedRange = NSRange(location: newLocation, length: newLength)
+                containerView.textView.scrollRangeToVisible(NSRange(location: newLocation, length: 0))
+                DispatchQueue.main.async { self.scrollToCursor = false }
+            }
+            context.coordinator.isUpdating = false
+            return
+        }
+
         // Use NSString length for O(1) length check instead of O(n) String.count
         let textStorage = containerView.textView.textStorage
         let currentLength = textStorage.length
         let bindingLength = (text as NSString).length
 
-        // CRITICAL: Check large file mode FIRST, BEFORE any text processing or highlighting
-        // This must happen before text is set so we can skip all heavy operations
-        configuration.checkLargeFileMode(textLength: bindingLength)
-        let isLargeFile = configuration.isLargeFileModeImmediate
+        // Check large file mode on first load
+        if !context.coordinator.hasSetInitialText {
+            configuration.checkLargeFileMode(textLength: bindingLength)
+        }
 
         // Update container view's folding state immediately if large file mode changed
         if isLargeFile && containerView.foldingManager.isEnabled {
@@ -453,30 +472,18 @@ public struct KeystoneTextView: UIViewRepresentable {
                     let newLocation = min(selectedRange.location, bindingLength)
                     containerView.textView.selectedRange = NSRange(location: newLocation, length: 0)
                 }
-            } else if textMightHaveChanged {
-                // After initial load, only set text if LENGTH changed (fast O(1) check)
-                // Skip expensive O(n) hash/string comparison for large files
-                // The text view is authoritative during editing - trust it
+            } else if textMightHaveChanged && !isLargeFile {
+                // After initial load, only check for small files
+                // Large files: text view is authoritative, never overwrite from binding
                 if !context.coordinator.isSyncingFromInternalEdit {
-                    // For large files, only update if length changed (skip hash check)
-                    // For small files, use hash to detect changes with same length
-                    let shouldUpdate: Bool
-                    if isLargeFile {
-                        shouldUpdate = true // Length already differs, update needed
-                    } else {
-                        let bindingTextHash = text.hashValue
-                        shouldUpdate = bindingTextHash != context.coordinator.lastSyncedTextHash
-                    }
-
-                    if shouldUpdate {
+                    let bindingTextHash = text.hashValue
+                    if bindingTextHash != context.coordinator.lastSyncedTextHash {
                         let selectedRange = containerView.textView.selectedRange
                         containerView.textView.text = text
-                        needsHighlight = !isLargeFile  // Only highlight if not large file
+                        needsHighlight = true
                         needsLineNumberUpdate = true
-                        // Reset the hash since we're loading external text
                         context.coordinator.lastSyncedTextHash = 0
 
-                        // Force immediate layout update to ensure text renders
                         containerView.setNeedsLayout()
                         containerView.layoutIfNeeded()
 
@@ -2632,15 +2639,34 @@ public struct KeystoneTextView: NSViewRepresentable {
         context.coordinator.parent = self
         context.coordinator.isUpdating = true
 
+        // Check if we're already in large file mode - use cached value for O(1) check
+        let isLargeFile = configuration.isLargeFileModeImmediate
+
+        // FAST PATH FOR LARGE FILES: Skip almost everything!
+        // The text view is authoritative. Only handle first load and explicit scroll requests.
+        if isLargeFile && context.coordinator.hasSetInitialText {
+            // Only thing we might need: scroll to cursor for search navigation
+            if scrollToCursor {
+                let textLength = containerView.textView.textStorage?.length ?? 0
+                let newLocation = min(cursorPosition.offset, textLength)
+                let newLength = min(cursorPosition.selectionLength, max(0, textLength - newLocation))
+                containerView.textView.setSelectedRange(NSRange(location: newLocation, length: newLength))
+                containerView.textView.scrollRangeToVisible(NSRange(location: newLocation, length: 0))
+                DispatchQueue.main.async { self.scrollToCursor = false }
+            }
+            context.coordinator.isUpdating = false
+            return
+        }
+
         // Only update if text actually changed
         // Use textStorage.length for O(1) comparison instead of string comparison O(n)
         let currentLength = containerView.textView.textStorage?.length ?? 0
         let newLength = (text as NSString).length
 
-        // CRITICAL: Check large file mode FIRST, BEFORE any text processing or highlighting
-        // This must happen before text is set so we can skip all heavy operations
-        configuration.checkLargeFileMode(textLength: newLength)
-        let isLargeFile = configuration.isLargeFileModeImmediate
+        // Check large file mode on first load
+        if !context.coordinator.hasSetInitialText {
+            configuration.checkLargeFileMode(textLength: newLength)
+        }
 
         // Update container view's folding state immediately if large file mode changed
         if isLargeFile && containerView.foldingManager.isEnabled {
@@ -2717,28 +2743,24 @@ public struct KeystoneTextView: NSViewRepresentable {
 
         // Fall back to full replacement for other changes (edits, deletions, etc.)
         // Skip if the change originated from the text view itself (prevents feedback loop)
-        //
-        // For large files: SKIP expensive O(n) hash computation and string comparison
-        // The text view is authoritative - trust the length check
-        if textChanged && !context.coordinator.isSyncingFromTextView {
-            // For large files, trust the length check (O(1)) - skip expensive hash/comparison
-            // For small files, verify with hash to handle same-length changes
-            let shouldUpdate: Bool
-            if isLargeFile {
-                shouldUpdate = true // Length already differs, update needed
-            } else {
-                let bindingTextHash = text.hashValue
-                shouldUpdate = bindingTextHash != context.coordinator.lastSyncedTextHash
+        // For large files after initial load: the fast path at top handles this, we won't reach here
+        if !context.coordinator.hasSetInitialText {
+            // First load - set text directly
+            if textChanged || currentLength == 0 {
+                containerView.textView.string = text
+                needsHighlight = !isLargeFile
+                context.coordinator.hasSetInitialText = true
             }
-
-            if shouldUpdate {
+        } else if textChanged && !context.coordinator.isSyncingFromTextView && !isLargeFile {
+            // After initial load, only check for small files
+            // Large files use the fast path at top and won't reach here
+            let bindingTextHash = text.hashValue
+            if bindingTextHash != context.coordinator.lastSyncedTextHash {
                 let selectedRange = containerView.textView.selectedRange()
                 containerView.textView.string = text
-                needsHighlight = !isLargeFile  // Only highlight if not large file
-                // Reset the hash since we're loading external text
+                needsHighlight = true
                 context.coordinator.lastSyncedTextHash = 0
 
-                // Restore selection - use textStorage.length (O(1)) instead of text.count (O(n))
                 let newLocation = min(selectedRange.location, containerView.textView.textStorage?.length ?? 0)
                 containerView.textView.setSelectedRange(NSRange(location: newLocation, length: 0))
             }
@@ -3115,6 +3137,8 @@ public struct KeystoneTextView: NSViewRepresentable {
         var isSyncingFromTextView = false
         // Track the hash of text that was last synced TO the binding (preserves undo history)
         var lastSyncedTextHash: Int = 0
+        // Track if initial text has been set (to enable fast path for large files)
+        var hasSetInitialText = false
 
         // Pending edit info for incremental parsing (captured in shouldChangeTextIn)
         private var pendingEdit: TextEdit?
