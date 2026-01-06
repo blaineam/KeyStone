@@ -1251,9 +1251,9 @@ public struct KeystoneTextView: UIViewRepresentable {
         // Handle character pair insertion and capture edit info for incremental parsing
         public func textView(_ textView: UITextView, shouldChangeTextIn range: NSRange, replacementText text: String) -> Bool {
             // Capture edit info for incremental TreeSitter parsing
-            // Skip in reduced performance mode - the byte offset calculations are expensive
-            // We'll just do a full reparse instead of incremental updates
-            if !parent.configuration.reducedPerformanceMode {
+            // Skip for large files or reduced performance mode - the byte offset calculations are O(n) expensive
+            // We won't be doing syntax highlighting anyway for large files
+            if !parent.configuration.isLargeFileModeImmediate && !parent.configuration.reducedPerformanceMode {
                 captureEditInfo(in: textView.textStorage, range: range, replacementText: text)
             }
 
@@ -3616,8 +3616,12 @@ public struct KeystoneTextView: NSViewRepresentable {
                 return true
             }
 
-            // Capture edit info for incremental TreeSitter parsing
-            captureEditInfo(in: textStorage, range: range, replacementText: text)
+            // Skip expensive edit capture for large files - we won't be doing syntax highlighting anyway
+            // This avoids multiple O(n) string operations per keystroke
+            if !parent.configuration.isLargeFileModeImmediate {
+                // Capture edit info for incremental TreeSitter parsing
+                captureEditInfo(in: textStorage, range: range, replacementText: text)
+            }
 
             let config = parent.configuration
             let nsText = textStorage.string as NSString

@@ -180,7 +180,34 @@ public class FindReplaceManager: ObservableObject {
     /// Performs the actual search work (can be called from any thread)
     private nonisolated static func performSearch(query: String, in text: String, options: SearchOptions) -> [SearchMatch] {
         var foundMatches: [SearchMatch] = []
-        let lines = text.components(separatedBy: .newlines)
+        let nsText = text as NSString
+        let textLength = nsText.length
+
+        guard textLength > 0 else { return [] }
+
+        // Build line offset cache lazily - only scan text once to find newlines
+        // This is O(n) once, then O(log n) lookups via binary search
+        var lineOffsets: [Int] = [0]
+        for i in 0..<textLength {
+            if nsText.character(at: i) == 0x0A { // newline
+                lineOffsets.append(i + 1)
+            }
+        }
+
+        // Helper to find line number via binary search - O(log n)
+        func lineNumber(forOffset offset: Int) -> (line: Int, column: Int) {
+            var low = 0
+            var high = lineOffsets.count - 1
+            while low < high {
+                let mid = (low + high + 1) / 2
+                if lineOffsets[mid] <= offset {
+                    low = mid
+                } else {
+                    high = mid - 1
+                }
+            }
+            return (line: low + 1, column: offset - lineOffsets[low] + 1)
+        }
 
         // Build the search pattern
         var pattern = query
@@ -200,28 +227,19 @@ public class FindReplaceManager: ObservableObject {
             return []
         }
 
-        let nsText = text as NSString
-        let fullRange = NSRange(location: 0, length: nsText.length)
-
-        var currentLineStart = 0
-        var currentLine = 1
+        let fullRange = NSRange(location: 0, length: textLength)
 
         regex.enumerateMatches(in: text, options: [], range: fullRange) { match, _, _ in
             guard let match = match else { return }
 
-            // Calculate line number and column
-            while currentLineStart + lines[currentLine - 1].count < match.range.location && currentLine < lines.count {
-                currentLineStart += lines[currentLine - 1].count + 1 // +1 for newline
-                currentLine += 1
-            }
-
-            let column = match.range.location - currentLineStart + 1
+            // Calculate line number and column via binary search - O(log n) per match
+            let (lineNum, column) = lineNumber(forOffset: match.range.location)
 
             if let swiftRange = Range(match.range, in: text) {
                 let matchedText = String(text[swiftRange])
                 foundMatches.append(SearchMatch(
                     range: swiftRange,
-                    lineNumber: currentLine,
+                    lineNumber: lineNum,
                     column: column,
                     matchedText: matchedText
                 ))
