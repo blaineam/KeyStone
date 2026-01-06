@@ -437,7 +437,8 @@ public struct KeystoneTextView: UIViewRepresentable {
 
             // Only set text directly on FIRST load (to preserve undo history after that)
             if !context.coordinator.hasSetInitialText {
-                if textMightHaveChanged || (currentLength == bindingLength && containerView.textView.text != text) {
+                // For first load, always set text (skip expensive comparison)
+                if textMightHaveChanged || currentLength == 0 {
                     let selectedRange = containerView.textView.selectedRange
                     containerView.textView.text = text
                     needsHighlight = !isLargeFile  // Only highlight if not large file
@@ -452,34 +453,36 @@ public struct KeystoneTextView: UIViewRepresentable {
                     let newLocation = min(selectedRange.location, bindingLength)
                     containerView.textView.selectedRange = NSRange(location: newLocation, length: 0)
                 }
-            } else if textMightHaveChanged || (currentLength == bindingLength && containerView.textView.text != text) {
-                // After initial load, only set text if it was genuinely changed externally
-                // (e.g., file was reloaded, undo from outside text view)
-                // Skip if the text view is the one that made the change
-                //
-                // CRITICAL for undo: Also check if the binding text hash matches what we last synced.
-                // This prevents the race condition where:
-                // 1. We sync text to binding
-                // 2. isSyncingFromInternalEdit flag resets
-                // 3. A later SwiftUI update triggers updateUIView
-                // 4. We incorrectly set textView.text, clearing undo history
-                let bindingTextHash = text.hashValue
-                let isOurOwnSync = bindingTextHash == context.coordinator.lastSyncedTextHash
+            } else if textMightHaveChanged {
+                // After initial load, only set text if LENGTH changed (fast O(1) check)
+                // Skip expensive O(n) hash/string comparison for large files
+                // The text view is authoritative during editing - trust it
+                if !context.coordinator.isSyncingFromInternalEdit {
+                    // For large files, only update if length changed (skip hash check)
+                    // For small files, use hash to detect changes with same length
+                    let shouldUpdate: Bool
+                    if isLargeFile {
+                        shouldUpdate = true // Length already differs, update needed
+                    } else {
+                        let bindingTextHash = text.hashValue
+                        shouldUpdate = bindingTextHash != context.coordinator.lastSyncedTextHash
+                    }
 
-                if !context.coordinator.isSyncingFromInternalEdit && !isOurOwnSync {
-                    let selectedRange = containerView.textView.selectedRange
-                    containerView.textView.text = text
-                    needsHighlight = !isLargeFile  // Only highlight if not large file
-                    needsLineNumberUpdate = true
-                    // Reset the hash since we're loading external text
-                    context.coordinator.lastSyncedTextHash = 0
+                    if shouldUpdate {
+                        let selectedRange = containerView.textView.selectedRange
+                        containerView.textView.text = text
+                        needsHighlight = !isLargeFile  // Only highlight if not large file
+                        needsLineNumberUpdate = true
+                        // Reset the hash since we're loading external text
+                        context.coordinator.lastSyncedTextHash = 0
 
-                    // Force immediate layout update to ensure text renders
-                    containerView.setNeedsLayout()
-                    containerView.layoutIfNeeded()
+                        // Force immediate layout update to ensure text renders
+                        containerView.setNeedsLayout()
+                        containerView.layoutIfNeeded()
 
-                    let newLocation = min(selectedRange.location, bindingLength)
-                    containerView.textView.selectedRange = NSRange(location: newLocation, length: 0)
+                        let newLocation = min(selectedRange.location, bindingLength)
+                        containerView.textView.selectedRange = NSRange(location: newLocation, length: 0)
+                    }
                 }
             }
         }
@@ -2715,17 +2718,20 @@ public struct KeystoneTextView: NSViewRepresentable {
         // Fall back to full replacement for other changes (edits, deletions, etc.)
         // Skip if the change originated from the text view itself (prevents feedback loop)
         //
-        // CRITICAL for undo: Also check if the binding text hash matches what we last synced.
-        // This prevents clearing undo history when the binding just reflects our own sync.
-        let bindingTextHash = text.hashValue
-        let isOurOwnSync = bindingTextHash == context.coordinator.lastSyncedTextHash
+        // For large files: SKIP expensive O(n) hash computation and string comparison
+        // The text view is authoritative - trust the length check
+        if textChanged && !context.coordinator.isSyncingFromTextView {
+            // For large files, trust the length check (O(1)) - skip expensive hash/comparison
+            // For small files, verify with hash to handle same-length changes
+            let shouldUpdate: Bool
+            if isLargeFile {
+                shouldUpdate = true // Length already differs, update needed
+            } else {
+                let bindingTextHash = text.hashValue
+                shouldUpdate = bindingTextHash != context.coordinator.lastSyncedTextHash
+            }
 
-        if textChanged && !context.coordinator.isSyncingFromTextView && !isOurOwnSync {
-            // ALWAYS verify with string comparison before resetting text
-            // This prevents race conditions where binding value is stale
-            textChanged = containerView.textView.string != text
-
-            if textChanged {
+            if shouldUpdate {
                 let selectedRange = containerView.textView.selectedRange()
                 containerView.textView.string = text
                 needsHighlight = !isLargeFile  // Only highlight if not large file
