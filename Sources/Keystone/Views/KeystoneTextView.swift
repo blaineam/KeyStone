@@ -366,13 +366,8 @@ public struct KeystoneTextView: UIViewRepresentable {
             undoController.startUpdating()
         }
 
-        // Analyze text for code folding regions (if enabled)
-        if configuration.showCodeFolding {
-            DispatchQueue.main.async {
-                containerView.foldingManager.analyze(self.text)
-                containerView.lineNumberView.setNeedsDisplay()
-            }
-        }
+        // NOTE: Code folding analysis is deferred to updateUIView where we know the text size
+        // and can properly check for large file mode. Don't analyze here.
 
         // Force initial layout on next run loop to ensure proper sizing
         DispatchQueue.main.async {
@@ -387,12 +382,30 @@ public struct KeystoneTextView: UIViewRepresentable {
         context.coordinator.parent = self
         context.coordinator.isUpdating = true
 
-        // Check if language changed - need to re-highlight with new syntax
+        // Use NSString length for O(1) length check instead of O(n) String.count
+        let textStorage = containerView.textView.textStorage
+        let currentLength = textStorage.length
+        let bindingLength = (text as NSString).length
+
+        // CRITICAL: Check large file mode FIRST, BEFORE any text processing or highlighting
+        // This must happen before text is set so we can skip all heavy operations
+        configuration.checkLargeFileMode(textLength: bindingLength)
+        let isLargeFile = configuration.isLargeFileModeImmediate
+
+        // Update container view's folding state immediately if large file mode changed
+        if isLargeFile && containerView.foldingManager.isEnabled {
+            containerView.foldingManager.isEnabled = false
+            containerView.foldingManager.unfoldAll()
+        }
+
+        // Check if language changed - need to re-highlight with new syntax (but not for large files)
         let languageChanged = containerView.currentLanguage != language
         if languageChanged {
             containerView.currentLanguage = language
-            // Reset highlight tracking so we force a re-highlight
-            context.coordinator.lastHighlightedRange = NSRange(location: 0, length: 0)
+            // Reset highlight tracking so we force a re-highlight (only if not large file)
+            if !isLargeFile {
+                context.coordinator.lastHighlightedRange = NSRange(location: 0, length: 0)
+            }
         }
 
         // Track if we're scrolling - used to skip non-essential work
@@ -406,13 +419,9 @@ public struct KeystoneTextView: UIViewRepresentable {
         // Returns true if we need to re-highlight (font, line wrap, invisibles changed)
         let configNeedsRehighlight = containerView.updateConfigurationIfNeeded(configuration)
 
-        // Use NSString length for O(1) length check instead of O(n) String.count
-        let textStorage = containerView.textView.textStorage
-        let currentLength = textStorage.length
-        let bindingLength = (text as NSString).length
-
         // Track if we need to re-highlight or update line numbers
-        var needsHighlight = configNeedsRehighlight || languageChanged
+        // SKIP highlighting entirely for large files
+        var needsHighlight = !isLargeFile && (configNeedsRehighlight || languageChanged)
         var needsLineNumberUpdate = false
 
         // CRITICAL: Skip text overwriting if user is editing!
@@ -431,7 +440,7 @@ public struct KeystoneTextView: UIViewRepresentable {
                 if textMightHaveChanged || (currentLength == bindingLength && containerView.textView.text != text) {
                     let selectedRange = containerView.textView.selectedRange
                     containerView.textView.text = text
-                    needsHighlight = true
+                    needsHighlight = !isLargeFile  // Only highlight if not large file
                     needsLineNumberUpdate = true
                     context.coordinator.hasSetInitialText = true
 
@@ -460,7 +469,7 @@ public struct KeystoneTextView: UIViewRepresentable {
                 if !context.coordinator.isSyncingFromInternalEdit && !isOurOwnSync {
                     let selectedRange = containerView.textView.selectedRange
                     containerView.textView.text = text
-                    needsHighlight = true
+                    needsHighlight = !isLargeFile  // Only highlight if not large file
                     needsLineNumberUpdate = true
                     // Reset the hash since we're loading external text
                     context.coordinator.lastSyncedTextHash = 0
@@ -479,13 +488,13 @@ public struct KeystoneTextView: UIViewRepresentable {
         if containerView.textView.font?.pointSize != configuration.fontSize {
             let font = UIFont.monospacedSystemFont(ofSize: configuration.fontSize, weight: .regular)
             containerView.textView.font = font
-            needsHighlight = true
+            needsHighlight = !isLargeFile  // Only highlight if not large file
             needsLineNumberUpdate = true
         }
 
         // Only re-highlight when necessary (text changed externally, config changed, or font changed)
-        // Use viewport-based highlighting for large files
-        if needsHighlight {
+        // Skip syntax highlighting entirely for large files (performance optimization)
+        if needsHighlight && !isLargeFile {
             let font = containerView.textView.font ?? UIFont.monospacedSystemFont(ofSize: configuration.fontSize, weight: .regular)
             let highlighter = context.coordinator.getHighlighter(language: language, theme: configuration.theme)
             applyViewportSyntaxHighlighting(to: containerView, text: text, font: font, highlighter: highlighter)
@@ -881,6 +890,9 @@ public struct KeystoneTextView: UIViewRepresentable {
         /// Schedules a debounced syntax re-highlight after text changes.
         /// Uses incremental parsing when possible for much faster updates.
         func scheduleSyntaxReparse() {
+            // Skip syntax highlighting entirely for large files
+            guard !parent.configuration.isLargeFileModeImmediate else { return }
+
             syntaxHighlightWorkItem?.cancel()
 
             // Capture the pending edit before the work item runs
@@ -889,8 +901,10 @@ public struct KeystoneTextView: UIViewRepresentable {
             self.preEditText = nil
 
             let work = DispatchWorkItem { [weak self] in
-                guard let self = self,
-                      let containerView = self.containerView else { return }
+                guard let self = self else { return }
+                // Re-check large file mode - might have changed since scheduled
+                guard !self.parent.configuration.isLargeFileModeImmediate else { return }
+                guard let containerView = self.containerView else { return }
 
                 let textStorage = containerView.textView.textStorage
 
@@ -926,6 +940,8 @@ public struct KeystoneTextView: UIViewRepresentable {
 
         /// Applies highlighting after async parse completes
         private func applyHighlightingAfterParse(containerView: KeystoneTextContainerView?, highlighter: SyntaxHighlighter) {
+            // Re-check large file mode - might have changed since async parse started
+            guard !parent.configuration.isLargeFileModeImmediate else { return }
             guard let containerView = containerView else { return }
 
             let textStorage = containerView.textView.textStorage
@@ -1077,8 +1093,8 @@ public struct KeystoneTextView: UIViewRepresentable {
             // Schedule syntax re-parse (uses incremental parsing for fast updates, or full reparse in low power mode)
             scheduleSyntaxReparse()
 
-            // Update code folding regions (debounced for performance, if enabled)
-            if parent.configuration.showCodeFolding {
+            // Update code folding regions (debounced for performance, if enabled and not large file)
+            if parent.configuration.showCodeFolding && !parent.configuration.isLargeFileModeImmediate {
                 foldingWorkItem?.cancel()
                 let foldingWork = DispatchWorkItem { [weak self] in
                     guard let self = self, let containerView = self.containerView else { return }
@@ -1183,6 +1199,8 @@ public struct KeystoneTextView: UIViewRepresentable {
 
         /// Triggers viewport-based syntax highlighting after scrolling stops
         func triggerViewportHighlighting() {
+            // Skip entirely for large files
+            guard !parent.configuration.isLargeFileModeImmediate else { return }
             guard let containerView = containerView else { return }
             let text = containerView.textView.text ?? ""
             let font = containerView.textView.font ?? UIFont.monospacedSystemFont(ofSize: 14, weight: .regular)
@@ -1754,7 +1772,9 @@ public class KeystoneTextContainerView: UIView {
 
         if configuration.showLineNumbers {
             // Create width constraint separately so we can update it dynamically
+            // Use high priority (not required) to avoid conflicts with temporary layout constraints
             let widthConstraint = lineNumberView.widthAnchor.constraint(equalToConstant: currentGutterWidth)
+            widthConstraint.priority = .defaultHigh
             gutterWidthConstraint = widthConstraint
 
             activeConstraints = [
@@ -1924,6 +1944,7 @@ public class KeystoneTextContainerView: UIView {
     private var lastAppliedLineWrapping: Bool = true
     private var lastAppliedShowInvisibles: Bool = false
     private var lastAppliedShowCodeFolding: Bool = true
+    private var lastAppliedIsLargeFileMode: Bool = false
 
     /// Only update configuration if something actually changed
     /// Returns true if syntax highlighting needs to be reapplied
@@ -1984,15 +2005,18 @@ public class KeystoneTextContainerView: UIView {
         lineNumberView.fontSize = config.fontSize
         lineNumberView.lineHeight = config.fontSize * config.lineHeightMultiplier
 
-        // Update code folding state
+        // Update code folding state (skip for large files)
         let codeFoldingChanged = lastAppliedShowCodeFolding != config.showCodeFolding
-        if codeFoldingChanged {
-            foldingManager.isEnabled = config.showCodeFolding
-            if config.showCodeFolding {
-                // Re-analyze when enabled
+        let largeFileModeChanged = lastAppliedIsLargeFileMode != config.isLargeFileModeImmediate
+        if codeFoldingChanged || largeFileModeChanged {
+            lastAppliedShowCodeFolding = config.showCodeFolding
+            lastAppliedIsLargeFileMode = config.isLargeFileModeImmediate
+            foldingManager.isEnabled = config.showCodeFolding && !config.isLargeFileModeImmediate
+            if config.showCodeFolding && !config.isLargeFileModeImmediate {
+                // Re-analyze when enabled (and not a large file)
                 foldingManager.analyze(textView.text ?? "")
             } else {
-                // Clear regions and unfold all when disabled
+                // Clear regions and unfold all when disabled or large file
                 foldingManager.unfoldAll()
             }
             lineNumberView.setNeedsDisplay()
@@ -2577,11 +2601,8 @@ public struct KeystoneTextView: NSViewRepresentable {
             undoController.startUpdating()
         }
 
-        // Initial code folding analysis
-        DispatchQueue.main.async {
-            containerView.foldingManager.analyze(self.text)
-            containerView.lineNumberView.needsDisplay = true
-        }
+        // NOTE: Code folding analysis is deferred to updateNSView where we know the text size
+        // and can properly check for large file mode. Don't analyze here.
 
         // Register for scroll notifications to trigger syntax highlighting when scrolling stops
         containerView.scrollView.contentView.postsBoundsChangedNotifications = true
@@ -2608,12 +2629,31 @@ public struct KeystoneTextView: NSViewRepresentable {
         context.coordinator.parent = self
         context.coordinator.isUpdating = true
 
-        // Check if language changed - need to re-highlight with new syntax
+        // Only update if text actually changed
+        // Use textStorage.length for O(1) comparison instead of string comparison O(n)
+        let currentLength = containerView.textView.textStorage?.length ?? 0
+        let newLength = (text as NSString).length
+
+        // CRITICAL: Check large file mode FIRST, BEFORE any text processing or highlighting
+        // This must happen before text is set so we can skip all heavy operations
+        configuration.checkLargeFileMode(textLength: newLength)
+        let isLargeFile = configuration.isLargeFileModeImmediate
+
+        // Update container view's folding state immediately if large file mode changed
+        if isLargeFile && containerView.foldingManager.isEnabled {
+            containerView.foldingManager.isEnabled = false
+            containerView.foldingManager.unfoldAll()
+            containerView.clearFoldingStyles()
+        }
+
+        // Check if language changed - need to re-highlight with new syntax (but not for large files)
         let languageChanged = containerView.currentLanguage != language
         if languageChanged {
             containerView.currentLanguage = language
-            // Reset highlight tracking so we force a re-highlight
-            context.coordinator.lastHighlightedRange = NSRange(location: 0, length: 0)
+            // Reset highlight tracking so we force a re-highlight (only if not large file)
+            if !isLargeFile {
+                context.coordinator.lastHighlightedRange = NSRange(location: 0, length: 0)
+            }
         }
 
         // Check if config changes need rehighlighting
@@ -2621,13 +2661,8 @@ public struct KeystoneTextView: NSViewRepresentable {
 
         let font = NSFont.monospacedSystemFont(ofSize: configuration.fontSize, weight: .regular)
 
-        // Track if we need to re-highlight
-        var needsHighlight = configNeedsRehighlight || languageChanged
-
-        // Only update if text actually changed
-        // Use textStorage.length for O(1) comparison instead of string comparison O(n)
-        let currentLength = containerView.textView.textStorage?.length ?? 0
-        let newLength = (text as NSString).length
+        // Track if we need to re-highlight - SKIP entirely for large files
+        var needsHighlight = !isLargeFile && (configNeedsRehighlight || languageChanged)
 
         // Fast path: if lengths are same, text likely hasn't changed (skip expensive comparison for large files)
         // For tail follow, new length will be greater - that's our signal to update
@@ -2693,7 +2728,7 @@ public struct KeystoneTextView: NSViewRepresentable {
             if textChanged {
                 let selectedRange = containerView.textView.selectedRange()
                 containerView.textView.string = text
-                needsHighlight = true
+                needsHighlight = !isLargeFile  // Only highlight if not large file
                 // Reset the hash since we're loading external text
                 context.coordinator.lastSyncedTextHash = 0
 
@@ -2706,12 +2741,13 @@ public struct KeystoneTextView: NSViewRepresentable {
         // Update font if needed
         if containerView.textView.font?.pointSize != configuration.fontSize {
             containerView.textView.font = font
-            needsHighlight = true
+            needsHighlight = !isLargeFile  // Only highlight if not large file
         }
 
         // Only re-highlight when necessary - use viewport-based highlighting
         // Skip when syncing from text view (the debounced reparse handles it)
-        if needsHighlight && !context.coordinator.isSyncingFromTextView,
+        // Skip syntax highlighting entirely for large files
+        if needsHighlight && !context.coordinator.isSyncingFromTextView && !isLargeFile,
            let textStorage = containerView.textView.textStorage {
             let highlighter = context.coordinator.getHighlighter(language: language, theme: configuration.theme)
             applyViewportSyntaxHighlightingMac(to: containerView, text: text, font: font, highlighter: highlighter)
@@ -2719,7 +2755,8 @@ public struct KeystoneTextView: NSViewRepresentable {
 
         // Analyze text for foldable regions (only if text changed externally and folding is enabled)
         // Skip when syncing from text view (it's debounced in textDidChange)
-        if (textChanged || needsHighlight) && !context.coordinator.isSyncingFromTextView && containerView.foldingManager.isEnabled {
+        // Skip code folding for large files - foldingManager.isEnabled is already false if isLargeFile
+        if !isLargeFile && (textChanged || needsHighlight) && !context.coordinator.isSyncingFromTextView && containerView.foldingManager.isEnabled {
             containerView.foldingManager.analyze(text)
             // Apply folding styles after analysis
             containerView.applyFolding()
@@ -3161,6 +3198,9 @@ public struct KeystoneTextView: NSViewRepresentable {
         /// Schedules a debounced syntax re-highlight after text changes.
         /// Uses incremental parsing when possible for much faster updates.
         func scheduleSyntaxReparse() {
+            // Skip syntax highlighting entirely for large files
+            guard !parent.configuration.isLargeFileModeImmediate else { return }
+
             syntaxHighlightWorkItem?.cancel()
 
             // Capture the pending edit before the work item runs
@@ -3169,8 +3209,10 @@ public struct KeystoneTextView: NSViewRepresentable {
             self.preEditText = nil
 
             let work = DispatchWorkItem { [weak self] in
-                guard let self = self,
-                      let containerView = self.containerView,
+                guard let self = self else { return }
+                // Re-check large file mode - might have changed since scheduled
+                guard !self.parent.configuration.isLargeFileModeImmediate else { return }
+                guard let containerView = self.containerView,
                       let textStorage = containerView.textView.textStorage else { return }
 
                 // Reset tracking state
@@ -3206,6 +3248,8 @@ public struct KeystoneTextView: NSViewRepresentable {
 
         /// Applies highlighting after async parse completes
         private func applyHighlightingAfterParse(containerView: KeystoneTextContainerViewMac?, highlighter: SyntaxHighlighter) {
+            // Re-check large file mode - might have changed since async parse started
+            guard !parent.configuration.isLargeFileModeImmediate else { return }
             guard let containerView = containerView,
                   let textStorage = containerView.textView.textStorage else { return }
 
@@ -3368,17 +3412,19 @@ public struct KeystoneTextView: NSViewRepresentable {
             // Schedule syntax re-parse with debounce
             scheduleSyntaxReparse()
 
-            // Update code folding regions (debounced)
-            foldingWorkItem?.cancel()
-            let foldingWork = DispatchWorkItem { [weak self] in
-                guard let self = self, let containerView = self.containerView else { return }
-                containerView.foldingManager.analyze(textView.string)
-                containerView.lineNumberView.needsDisplay = true
+            // Update code folding regions (debounced, skip for large files)
+            if parent.configuration.showCodeFolding && !parent.configuration.isLargeFileModeImmediate {
+                foldingWorkItem?.cancel()
+                let foldingWork = DispatchWorkItem { [weak self] in
+                    guard let self = self, let containerView = self.containerView else { return }
+                    containerView.foldingManager.analyze(textView.string)
+                    containerView.lineNumberView.needsDisplay = true
+                }
+                foldingWorkItem = foldingWork
+                // Use configurable delay - can be adjusted for performance
+                let foldingDelay = parent.configuration.foldingDebounceInterval
+                DispatchQueue.main.asyncAfter(deadline: .now() + foldingDelay, execute: foldingWork)
             }
-            foldingWorkItem = foldingWork
-            // Use configurable delay - can be adjusted for performance
-            let foldingDelay = parent.configuration.foldingDebounceInterval
-            DispatchQueue.main.asyncAfter(deadline: .now() + foldingDelay, execute: foldingWork)
         }
 
         public func textViewDidChangeSelection(_ notification: Notification) {
@@ -3423,6 +3469,8 @@ public struct KeystoneTextView: NSViewRepresentable {
         }
 
         private func triggerViewportHighlighting(fontSize: CGFloat, theme: KeystoneTheme, language: KeystoneLanguage) {
+            // Skip entirely for large files
+            guard !parent.configuration.isLargeFileModeImmediate else { return }
             guard let containerView = containerView,
                   let textStorage = containerView.textView.textStorage else { return }
 
@@ -3619,6 +3667,7 @@ public class KeystoneTextContainerViewMac: NSView {
     private var lastAppliedLineWrapping: Bool = true
     private var lastAppliedShowInvisibles: Bool = false
     private var lastAppliedShowCodeFolding: Bool = true
+    private var lastAppliedIsLargeFileMode: Bool = false
 
     // MARK: - Undo/Redo
 
@@ -4090,7 +4139,9 @@ public class KeystoneTextContainerViewMac: NSView {
 
         if configuration.showLineNumbers {
             // Create width constraint separately so we can update it dynamically
+            // Use high priority (not required) to avoid conflicts with temporary layout constraints
             let widthConstraint = lineNumberView.widthAnchor.constraint(equalToConstant: currentGutterWidth)
+            widthConstraint.priority = .defaultHigh
             gutterWidthConstraint = widthConstraint
 
             activeConstraints = [
@@ -4156,16 +4207,18 @@ public class KeystoneTextContainerViewMac: NSView {
 
         }
 
-        // Handle code folding state changes
+        // Handle code folding state changes (skip for large files)
         let codeFoldingChanged = lastAppliedShowCodeFolding != config.showCodeFolding
-        if codeFoldingChanged {
+        let largeFileModeChanged = lastAppliedIsLargeFileMode != config.isLargeFileModeImmediate
+        if codeFoldingChanged || largeFileModeChanged {
             lastAppliedShowCodeFolding = config.showCodeFolding
-            foldingManager.isEnabled = config.showCodeFolding
-            if config.showCodeFolding {
-                // Re-analyze when enabled
+            lastAppliedIsLargeFileMode = config.isLargeFileModeImmediate
+            foldingManager.isEnabled = config.showCodeFolding && !config.isLargeFileModeImmediate
+            if config.showCodeFolding && !config.isLargeFileModeImmediate {
+                // Re-analyze when enabled (and not a large file)
                 foldingManager.analyze(textView.string)
             } else {
-                // Unfold all when disabled
+                // Unfold all when disabled or large file
                 foldingManager.unfoldAll()
                 clearFoldingStyles()
             }

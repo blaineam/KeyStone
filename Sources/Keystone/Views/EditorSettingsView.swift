@@ -45,6 +45,12 @@ public struct EditorSettingsView: View {
                     Toggle("Show Invisible Characters", isOn: $configuration.showInvisibleCharacters)
                     Toggle("Line Wrapping", isOn: $configuration.lineWrapping)
                     Toggle("Code Folding", isOn: $configuration.showCodeFolding)
+                        .disabled(configuration.isLargeFileMode)
+                    if configuration.isLargeFileMode {
+                        Text("Code folding is disabled for large files")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
 
                     HStack {
                         Text("Font Size")
@@ -124,6 +130,27 @@ public struct EditorSettingsView: View {
                 Section("Theme") {
                     themePicker
                 }
+
+                // Performance Section
+                Section {
+                    Picker("Large File Threshold", selection: $configuration.largeFileThreshold) {
+                        Text("250 KB").tag(250_000)
+                        Text("500 KB (Default)").tag(500_000)
+                        Text("1 MB").tag(1_000_000)
+                        Text("2 MB").tag(2_000_000)
+                        Text("5 MB").tag(5_000_000)
+                        Text("10 MB").tag(10_000_000)
+                    }
+                    .onChange(of: configuration.largeFileThreshold) { _, _ in
+                        configuration.saveToUserDefaults()
+                    }
+                } header: {
+                    Text("Performance")
+                } footer: {
+                    Text("Files larger than this will have syntax highlighting and code folding disabled. Higher values may cause lag or instability.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
             }
             .navigationTitle("Editor Settings")
             .navigationBarTitleDisplayMode(.inline)
@@ -168,6 +195,12 @@ public struct EditorSettingsView: View {
                             Toggle("Show Invisible Characters", isOn: $configuration.showInvisibleCharacters)
                             Toggle("Line Wrapping", isOn: $configuration.lineWrapping)
                             Toggle("Code Folding", isOn: $configuration.showCodeFolding)
+                                .disabled(configuration.isLargeFileMode)
+                            if configuration.isLargeFileMode {
+                                Text("Code folding is disabled for large files")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
 
                             HStack {
                                 Text("Font Size")
@@ -267,11 +300,35 @@ public struct EditorSettingsView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.vertical, 4)
                     }
+
+                    // Performance Section
+                    GroupBox("Performance") {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Picker("Large File Threshold", selection: $configuration.largeFileThreshold) {
+                                Text("250 KB").tag(250_000)
+                                Text("500 KB (Default)").tag(500_000)
+                                Text("1 MB").tag(1_000_000)
+                                Text("2 MB").tag(2_000_000)
+                                Text("5 MB").tag(5_000_000)
+                                Text("10 MB").tag(10_000_000)
+                            }
+                            .pickerStyle(.menu)
+                            .onChange(of: configuration.largeFileThreshold) { _, _ in
+                                configuration.saveToUserDefaults()
+                            }
+
+                            Text("Files larger than this will have syntax highlighting and code folding disabled. Higher values may cause lag or instability.")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.vertical, 4)
+                    }
                 }
                 .padding()
             }
         }
-        .frame(width: 400, height: 580)
+        .frame(width: 400, height: 640)
     }
     #endif
 

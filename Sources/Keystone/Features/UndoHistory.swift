@@ -257,6 +257,32 @@ public class UndoHistoryManager: ObservableObject {
         guard let url = historyFileURL else { return }
         try? FileManager.default.removeItem(at: url)
     }
+
+    // MARK: - Export/Import for Draft Persistence
+
+    /// Exports the current history to Data for external storage.
+    /// Use this to save undo history alongside file drafts.
+    public func exportHistory() -> Data? {
+        let history = PersistedHistory(
+            undoStack: undoStack,
+            redoStack: redoStack
+        )
+        return try? JSONEncoder().encode(history)
+    }
+
+    /// Imports history from Data that was previously exported.
+    /// Use this to restore undo history when loading a draft.
+    public func importHistory(from data: Data) {
+        do {
+            let history = try JSONDecoder().decode(PersistedHistory.self, from: data)
+            undoStack = history.undoStack
+            redoStack = history.redoStack
+        } catch {
+            // Data is corrupted, start fresh
+            undoStack = []
+            redoStack = []
+        }
+    }
 }
 
 /// Container for persisted undo/redo history.

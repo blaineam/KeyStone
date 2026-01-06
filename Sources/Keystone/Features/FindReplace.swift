@@ -83,6 +83,15 @@ public class FindReplaceManager: ObservableObject {
     /// Whether the replace bar is expanded.
     @Published public var showReplace: Bool = false
 
+    /// Whether a search is currently in progress
+    @Published public private(set) var isSearching: Bool = false
+
+    /// Minimum characters required before search runs
+    public static let minimumSearchLength: Int = 3
+
+    /// Background queue for search operations
+    private let searchQueue = DispatchQueue(label: "com.keystone.search", qos: .userInitiated)
+
     /// The current match, if any.
     public var currentMatch: SearchMatch? {
         guard !matches.isEmpty && currentMatchIndex >= 0 && currentMatchIndex < matches.count else {
@@ -93,8 +102,11 @@ public class FindReplaceManager: ObservableObject {
 
     /// Status text showing match count.
     public var statusText: String {
-        if searchQuery.isEmpty {
-            return ""
+        if searchQuery.count < Self.minimumSearchLength {
+            return searchQuery.isEmpty ? "" : "Type \(Self.minimumSearchLength - searchQuery.count) more"
+        }
+        if isSearching {
+            return "Searching..."
         }
         if matches.isEmpty {
             return "No results"
@@ -105,19 +117,54 @@ public class FindReplaceManager: ObservableObject {
     public init() {}
 
     /// Performs a search in the given text.
+    /// Requires minimum 3 characters and runs on background thread for large files.
     /// - Parameter text: The text to search in.
     public func search(in text: String) {
-        guard !searchQuery.isEmpty else {
+        // Require minimum characters before searching
+        guard searchQuery.count >= Self.minimumSearchLength else {
             matches = []
             currentMatchIndex = 0
             return
         }
 
+        // Capture search parameters
+        let query = searchQuery
+        let searchOptions = options
+
+        isSearching = true
+
+        // Run search on background thread
+        searchQueue.async { [weak self] in
+            let foundMatches = Self.performSearch(query: query, in: text, options: searchOptions)
+
+            // Update results on main thread
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                // Only update if query hasn't changed while searching
+                guard self.searchQuery == query else {
+                    return
+                }
+
+                self.matches = foundMatches
+                self.isSearching = false
+
+                // Adjust current match index if needed
+                if self.matches.isEmpty {
+                    self.currentMatchIndex = 0
+                } else if self.currentMatchIndex >= self.matches.count {
+                    self.currentMatchIndex = self.matches.count - 1
+                }
+            }
+        }
+    }
+
+    /// Performs the actual search work (can be called from any thread)
+    private static func performSearch(query: String, in text: String, options: SearchOptions) -> [SearchMatch] {
         var foundMatches: [SearchMatch] = []
         let lines = text.components(separatedBy: .newlines)
 
         // Build the search pattern
-        var pattern = searchQuery
+        var pattern = query
         if !options.useRegex {
             pattern = NSRegularExpression.escapedPattern(for: pattern)
         }
@@ -131,9 +178,7 @@ public class FindReplaceManager: ObservableObject {
         }
 
         guard let regex = try? NSRegularExpression(pattern: pattern, options: regexOptions) else {
-            matches = []
-            currentMatchIndex = 0
-            return
+            return []
         }
 
         let nsText = text as NSString
@@ -164,14 +209,7 @@ public class FindReplaceManager: ObservableObject {
             }
         }
 
-        matches = foundMatches
-
-        // Adjust current match index if needed
-        if matches.isEmpty {
-            currentMatchIndex = 0
-        } else if currentMatchIndex >= matches.count {
-            currentMatchIndex = matches.count - 1
-        }
+        return foundMatches
     }
 
     /// Moves to the next match.

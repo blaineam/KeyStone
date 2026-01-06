@@ -45,6 +45,63 @@ public final class KeystoneConfiguration: ObservableObject {
     /// Whether to show the symbol keyboard (iOS only). Persisted across sessions.
     @Published public var showSymbolKeyboard: Bool = false
 
+    // MARK: - Large File Mode
+
+    /// Default threshold in bytes for enabling large file mode (500 KB).
+    public static let defaultLargeFileThreshold: Int = 500_000
+
+    /// User-configurable threshold for large file mode.
+    /// Files larger than this will have syntax highlighting and code folding disabled.
+    /// Warning: Setting this too high may cause performance issues.
+    @Published public var largeFileThreshold: Int = KeystoneConfiguration.defaultLargeFileThreshold
+
+    /// Whether large file mode is currently active (internal sync state for immediate checks).
+    /// Use this for performance-critical code paths that need immediate state.
+    public private(set) var isLargeFileModeImmediate: Bool = false
+
+    /// Whether large file mode is currently active (published for SwiftUI observation).
+    /// When true, syntax highlighting and code folding are disabled for performance.
+    @Published public private(set) var isLargeFileMode: Bool = false
+
+    /// Callback invoked when large file mode is detected.
+    /// Use this to show a notification to the user.
+    public var onLargeFileDetected: (() -> Void)?
+
+    /// Enables large file mode based on text size.
+    /// - Parameter textLength: The length of the text in characters (UTF-16 units).
+    /// - Returns: True if large file mode was enabled.
+    @discardableResult
+    public func checkLargeFileMode(textLength: Int) -> Bool {
+        let shouldBeLargeFile = textLength >= largeFileThreshold
+        let wasLargeFile = isLargeFileModeImmediate
+
+        // Update internal state IMMEDIATELY for performance-critical checks
+        isLargeFileModeImmediate = shouldBeLargeFile
+
+        // Update published property async to avoid "Publishing changes from within view updates"
+        if shouldBeLargeFile != wasLargeFile {
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self else { return }
+                self.isLargeFileMode = shouldBeLargeFile
+
+                // Notify if transitioning to large file mode
+                if shouldBeLargeFile && !wasLargeFile {
+                    self.onLargeFileDetected?()
+                }
+            }
+        }
+
+        return shouldBeLargeFile
+    }
+
+    /// Resets large file mode (call when closing a file).
+    public func resetLargeFileMode() {
+        isLargeFileModeImmediate = false
+        DispatchQueue.main.async { [weak self] in
+            self?.isLargeFileMode = false
+        }
+    }
+
     // MARK: - Performance Settings
 
     /// Whether to use reduced performance mode (longer debounce intervals, skip some animations).
@@ -135,6 +192,7 @@ public final class KeystoneConfiguration: ObservableObject {
         static let themeName = "keystone.themeName"
         static let indentUseTabs = "keystone.indentUseTabs"
         static let indentWidth = "keystone.indentWidth"
+        static let largeFileThreshold = "keystone.largeFileThreshold"
     }
 
     // MARK: - Low Power Mode Observer
@@ -228,6 +286,9 @@ public final class KeystoneConfiguration: ObservableObject {
         if defaults.object(forKey: Keys.indentWidth) != nil {
             indentation.width = defaults.integer(forKey: Keys.indentWidth)
         }
+        if defaults.object(forKey: Keys.largeFileThreshold) != nil {
+            largeFileThreshold = defaults.integer(forKey: Keys.largeFileThreshold)
+        }
     }
 
     /// Saves current settings to UserDefaults.
@@ -248,6 +309,7 @@ public final class KeystoneConfiguration: ObservableObject {
         defaults.set(KeystoneTheme.name(for: theme), forKey: Keys.themeName)
         defaults.set(indentation.type == .tabs, forKey: Keys.indentUseTabs)
         defaults.set(indentation.width, forKey: Keys.indentWidth)
+        defaults.set(largeFileThreshold, forKey: Keys.largeFileThreshold)
     }
 
     // MARK: - Methods

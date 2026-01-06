@@ -58,36 +58,49 @@ public struct EditorStatusBar: View {
 
                     Spacer(minLength: 20)
 
-                    // Language selector
-                    Menu {
-                        ForEach(KeystoneLanguage.allCases, id: \.self) { lang in
-                            Button(action: {
-                                onLanguageChange?(lang)
-                            }) {
-                                HStack {
-                                    Text(lang.displayName)
-                                    if lang == language {
-                                        Image(systemName: "checkmark")
-                                    }
-                                }
-                            }
-                        }
-                    } label: {
+                    // Language selector (disabled in large file mode - syntax highlighting is off)
+                    if configuration.isLargeFileMode {
                         HStack(spacing: 4) {
                             Text(language.displayName)
                                 .font(.caption)
-                            Image(systemName: "chevron.down")
-                                .font(.caption2)
                         }
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
-                        .background(Color.secondary.opacity(0.2))
+                        .background(Color.secondary.opacity(0.1))
                         .cornerRadius(4)
+                        .foregroundColor(.secondary)
+                        .help("Language selection disabled for large files")
+                    } else {
+                        Menu {
+                            ForEach(KeystoneLanguage.allCases, id: \.self) { lang in
+                                Button(action: {
+                                    onLanguageChange?(lang)
+                                }) {
+                                    HStack {
+                                        Text(lang.displayName)
+                                        if lang == language {
+                                            Image(systemName: "checkmark")
+                                        }
+                                    }
+                                }
+                            }
+                        } label: {
+                            HStack(spacing: 4) {
+                                Text(language.displayName)
+                                    .font(.caption)
+                                Image(systemName: "chevron.down")
+                                    .font(.caption2)
+                            }
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color.secondary.opacity(0.2))
+                            .cornerRadius(4)
+                        }
+                        .menuStyle(.borderlessButton)
+                        #if os(macOS)
+                        .menuIndicator(.hidden)
+                        #endif
                     }
-                    .menuStyle(.borderlessButton)
-                    #if os(macOS)
-                    .menuIndicator(.hidden)
-                    #endif
 
                     // Line ending indicator
                     Button(action: { onSettingsTap?() }) {
