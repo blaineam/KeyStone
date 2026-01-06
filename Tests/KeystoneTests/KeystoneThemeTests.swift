@@ -29,16 +29,10 @@ final class KeystoneThemeTests: XCTestCase {
         XCTAssertEqual(theme, .dracula)
     }
 
-    func testThemeNamedOneDark() {
-        let theme = KeystoneTheme.theme(named: "One Dark")
-        XCTAssertNotNil(theme)
-        XCTAssertEqual(theme, .oneDark)
-    }
-
     func testThemeNamedXcodeLight() {
         let theme = KeystoneTheme.theme(named: "Xcode Light")
         XCTAssertNotNil(theme)
-        XCTAssertEqual(theme, .xcode)
+        XCTAssertEqual(theme, .xcodeLight)
     }
 
     func testThemeNamedXcodeDark() {
@@ -47,10 +41,10 @@ final class KeystoneThemeTests: XCTestCase {
         XCTAssertEqual(theme, .xcodeDark)
     }
 
-    func testThemeNamedGitHub() {
-        let theme = KeystoneTheme.theme(named: "GitHub")
+    func testThemeNamedGitHubLight() {
+        let theme = KeystoneTheme.theme(named: "GitHub Light")
         XCTAssertNotNil(theme)
-        XCTAssertEqual(theme, .github)
+        XCTAssertEqual(theme, .githubLight)
     }
 
     func testThemeNamedSolarizedLight() {
@@ -59,10 +53,28 @@ final class KeystoneThemeTests: XCTestCase {
         XCTAssertEqual(theme, .solarizedLight)
     }
 
-    func testThemeNamedSolarizedDark() {
-        let theme = KeystoneTheme.theme(named: "Solarized Dark")
+    func testThemeNamedOneLight() {
+        let theme = KeystoneTheme.theme(named: "One Light")
         XCTAssertNotNil(theme)
-        XCTAssertEqual(theme, .solarizedDark)
+        XCTAssertEqual(theme, .oneLight)
+    }
+
+    func testThemeNamedTomorrow() {
+        let theme = KeystoneTheme.theme(named: "Tomorrow")
+        XCTAssertNotNil(theme)
+        XCTAssertEqual(theme, .tomorrowLight)
+    }
+
+    func testThemeNamedNord() {
+        let theme = KeystoneTheme.theme(named: "Nord")
+        XCTAssertNotNil(theme)
+        XCTAssertEqual(theme, .nord)
+    }
+
+    func testThemeNamedGruvboxDark() {
+        let theme = KeystoneTheme.theme(named: "Gruvbox Dark")
+        XCTAssertNotNil(theme)
+        XCTAssertEqual(theme, .gruvboxDark)
     }
 
     func testThemeNamedInvalid() {
@@ -108,7 +120,8 @@ final class KeystoneThemeTests: XCTestCase {
     // MARK: - Theme Properties Tests
 
     func testAllThemesCount() {
-        XCTAssertEqual(KeystoneTheme.allThemes.count, 9)
+        // 1 adaptive + 5 light + 5 dark = 11 themes
+        XCTAssertEqual(KeystoneTheme.allThemes.count, 11)
     }
 
     func testMonokaiHasInvisibleCharacterColor() {
@@ -126,13 +139,13 @@ final class KeystoneThemeTests: XCTestCase {
         XCTAssertNotNil(theme.invisibleCharacter)
     }
 
-    func testOneDarkHasInvisibleCharacterColor() {
-        let theme = KeystoneTheme.oneDark
+    func testXcodeLightHasInvisibleCharacterColor() {
+        let theme = KeystoneTheme.xcodeLight
         XCTAssertNotNil(theme.invisibleCharacter)
     }
 
-    func testGitHubHasInvisibleCharacterColor() {
-        let theme = KeystoneTheme.github
+    func testGitHubLightHasInvisibleCharacterColor() {
+        let theme = KeystoneTheme.githubLight
         XCTAssertNotNil(theme.invisibleCharacter)
     }
 

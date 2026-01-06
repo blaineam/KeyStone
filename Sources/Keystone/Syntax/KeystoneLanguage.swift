@@ -4,15 +4,27 @@
 //
 
 import Foundation
+import TreeSitterSwift
+import TreeSitterPython
+import TreeSitterJavaScript
+import TreeSitterTypeScript
+import TreeSitterRuby
+import TreeSitterGo
+import TreeSitterRust
+import TreeSitterC
+import TreeSitterCPP
+import TreeSitterHTML
+import TreeSitterCSS
+import TreeSitterJSON
+import TreeSitterYAML
+import TreeSitterMarkdown
+import TreeSitterBash
 
 /// Represents comment syntax for a programming language.
 public struct CommentSyntax: Sendable {
     /// The line comment prefix (e.g., "//", "#", "--").
-    /// If nil, the language doesn't support line comments.
     public let lineComment: String?
-
-    /// The block comment delimiters (start, end) (e.g., ("/*", "*/"), ("<!--", "-->")).
-    /// If nil, the language doesn't support block comments.
+    /// The block comment delimiters (start, end).
     public let blockComment: (start: String, end: String)?
 
     public init(lineComment: String? = nil, blockComment: (String, String)? = nil) {
@@ -80,67 +92,11 @@ public enum KeystoneLanguage: String, CaseIterable, Identifiable, Sendable {
         }
     }
 
-    /// Keywords for the language.
-    public var keywords: [String] {
-        switch self {
-        case .swift:
-            return ["func", "var", "let", "if", "else", "guard", "switch", "case", "default",
-                    "for", "while", "repeat", "do", "break", "continue", "return", "throw",
-                    "try", "catch", "throws", "rethrows", "import", "class", "struct", "enum",
-                    "protocol", "extension", "init", "deinit", "self", "Self", "super", "nil",
-                    "true", "false", "static", "private", "public", "internal", "fileprivate",
-                    "open", "final", "override", "mutating", "nonmutating", "lazy", "weak",
-                    "unowned", "as", "is", "in", "inout", "where", "async", "await", "actor",
-                    "associatedtype", "typealias", "some", "any", "@State", "@Binding",
-                    "@Published", "@ObservedObject", "@StateObject", "@Environment"]
-        case .javascript, .typescript:
-            return ["function", "var", "let", "const", "if", "else", "for", "while", "do",
-                    "switch", "case", "default", "break", "continue", "return", "try", "catch",
-                    "finally", "throw", "new", "delete", "typeof", "instanceof", "void", "this",
-                    "class", "extends", "super", "import", "export", "from", "default", "async",
-                    "await", "yield", "static", "get", "set", "true", "false", "null", "undefined"]
-        case .python:
-            return ["def", "class", "if", "elif", "else", "for", "while", "break", "continue",
-                    "return", "try", "except", "finally", "raise", "with", "as", "import", "from",
-                    "global", "nonlocal", "pass", "lambda", "yield", "True", "False", "None",
-                    "and", "or", "not", "in", "is", "async", "await"]
-        case .go:
-            return ["break", "case", "chan", "const", "continue", "default", "defer", "else",
-                    "fallthrough", "for", "func", "go", "goto", "if", "import", "interface",
-                    "map", "package", "range", "return", "select", "struct", "switch", "type",
-                    "var", "true", "false", "nil"]
-        case .rust:
-            return ["as", "async", "await", "break", "const", "continue", "crate", "dyn", "else",
-                    "enum", "extern", "false", "fn", "for", "if", "impl", "in", "let", "loop",
-                    "match", "mod", "move", "mut", "pub", "ref", "return", "self", "Self",
-                    "static", "struct", "super", "trait", "true", "type", "unsafe", "use",
-                    "where", "while"]
-        case .shell:
-            return ["if", "then", "else", "elif", "fi", "case", "esac", "for", "while", "until",
-                    "do", "done", "in", "function", "return", "local", "export", "readonly",
-                    "declare", "typeset", "source", "alias", "true", "false"]
-        case .sql:
-            return ["SELECT", "FROM", "WHERE", "INSERT", "UPDATE", "DELETE", "CREATE", "DROP",
-                    "ALTER", "TABLE", "INDEX", "VIEW", "DATABASE", "AND", "OR", "NOT", "NULL",
-                    "IN", "LIKE", "BETWEEN", "JOIN", "LEFT", "RIGHT", "INNER", "OUTER", "ON",
-                    "GROUP", "BY", "ORDER", "HAVING", "LIMIT", "OFFSET", "UNION", "AS", "DISTINCT"]
-        case .html, .xml:
-            return []
-        case .css:
-            return ["important", "inherit", "initial", "unset"]
-        case .conf:
-            return ["true", "false", "yes", "no", "on", "off", "enabled", "disabled", "none", "auto"]
-        default:
-            return []
-        }
-    }
-
     /// Comment syntax for the language.
-    /// Returns nil if the language doesn't support comments.
     public var commentSyntax: CommentSyntax? {
         switch self {
         case .plainText:
-            return nil  // Plain text doesn't support comments
+            return nil
         case .swift, .kotlin, .java, .c, .cpp, .go, .rust, .javascript, .typescript, .php:
             return CommentSyntax(lineComment: "//", blockComment: ("/*", "*/"))
         case .python, .ruby, .shell, .yaml, .conf:
@@ -154,7 +110,7 @@ public enum KeystoneLanguage: String, CaseIterable, Identifiable, Sendable {
         case .markdown:
             return CommentSyntax(blockComment: ("<!--", "-->"))
         case .json:
-            return nil  // JSON doesn't support comments
+            return nil
         }
     }
 
@@ -163,38 +119,7 @@ public enum KeystoneLanguage: String, CaseIterable, Identifiable, Sendable {
         commentSyntax != nil
     }
 
-    /// Built-in types for the language.
-    public var types: [String] {
-        switch self {
-        case .swift:
-            return ["Int", "String", "Double", "Float", "Bool", "Character", "Array", "Dictionary",
-                    "Set", "Optional", "Any", "AnyObject", "Void", "Never", "Error", "Result",
-                    "Date", "Data", "URL", "UUID", "CGFloat", "CGPoint", "CGSize", "CGRect",
-                    "View", "Text", "Button", "Image", "List", "NavigationStack", "VStack",
-                    "HStack", "ZStack", "ForEach", "Binding", "State", "ObservableObject"]
-        case .javascript, .typescript:
-            return ["Array", "Object", "String", "Number", "Boolean", "Function", "Symbol",
-                    "Map", "Set", "WeakMap", "WeakSet", "Promise", "Proxy", "Reflect", "JSON",
-                    "Math", "Date", "RegExp", "Error", "console", "window", "document"]
-        case .python:
-            return ["int", "float", "str", "bool", "list", "dict", "set", "tuple", "type",
-                    "object", "Exception", "range", "enumerate", "zip", "map", "filter", "len"]
-        case .go:
-            return ["int", "int8", "int16", "int32", "int64", "uint", "uint8", "uint16", "uint32",
-                    "uint64", "float32", "float64", "complex64", "complex128", "byte", "rune",
-                    "string", "bool", "error", "any"]
-        case .rust:
-            return ["i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16", "u32", "u64", "u128",
-                    "usize", "f32", "f64", "bool", "char", "str", "String", "Vec", "Box", "Rc",
-                    "Arc", "Option", "Result", "Ok", "Err", "Some", "None"]
-        default:
-            return []
-        }
-    }
-
     /// Detects the language from a filename.
-    /// - Parameter filename: The filename to analyze.
-    /// - Returns: The detected language.
     public static func detect(from filename: String) -> KeystoneLanguage {
         let ext = (filename as NSString).pathExtension.lowercased()
 
@@ -221,7 +146,6 @@ public enum KeystoneLanguage: String, CaseIterable, Identifiable, Sendable {
         case "php": return .php
         case "conf", "ini", "cfg", "config": return .conf
         default:
-            // Check for common config filenames
             let lowercased = filename.lowercased()
             if lowercased.hasSuffix(".conf") || lowercased.hasSuffix(".ini") ||
                lowercased == ".gitignore" || lowercased == ".env" ||
@@ -229,6 +153,75 @@ public enum KeystoneLanguage: String, CaseIterable, Identifiable, Sendable {
                 return .conf
             }
             return .plainText
+        }
+    }
+
+    /// Returns the corresponding TreeSitterLanguage for syntax highlighting.
+    public var treeSitterLanguage: TreeSitterLanguage? {
+        guard let highlightQuery = highlightQuery else { return nil }
+        let query = TreeSitterLanguage.Query(string: highlightQuery)
+        let injectionsQuery = injectionQuery.map { TreeSitterLanguage.Query(string: $0) }
+
+        switch self {
+        case .plainText: return nil
+        case .swift: return TreeSitterLanguage(tree_sitter_swift(), highlightsQuery: query)
+        case .javascript: return TreeSitterLanguage(tree_sitter_javascript(), highlightsQuery: query)
+        case .typescript: return TreeSitterLanguage(tree_sitter_typescript(), highlightsQuery: query)
+        case .python: return TreeSitterLanguage(tree_sitter_python(), highlightsQuery: query)
+        case .ruby: return TreeSitterLanguage(tree_sitter_ruby(), highlightsQuery: query)
+        case .go: return TreeSitterLanguage(tree_sitter_go(), highlightsQuery: query)
+        case .rust: return TreeSitterLanguage(tree_sitter_rust(), highlightsQuery: query)
+        case .c: return TreeSitterLanguage(tree_sitter_c(), highlightsQuery: query)
+        case .cpp: return TreeSitterLanguage(tree_sitter_cpp(), highlightsQuery: query)
+        case .java: return nil // Not included in TreeSitterLanguages
+        case .kotlin: return nil // Not included in TreeSitterLanguages
+        case .html: return TreeSitterLanguage(tree_sitter_html(), highlightsQuery: query, injectionsQuery: injectionsQuery)
+        case .xml: return nil // Not included
+        case .css: return TreeSitterLanguage(tree_sitter_css(), highlightsQuery: query)
+        case .json: return TreeSitterLanguage(tree_sitter_json(), highlightsQuery: query)
+        case .yaml: return TreeSitterLanguage(tree_sitter_yaml(), highlightsQuery: query)
+        case .markdown: return TreeSitterLanguage(tree_sitter_markdown(), highlightsQuery: query, injectionsQuery: injectionsQuery)
+        case .shell: return TreeSitterLanguage(tree_sitter_bash(), highlightsQuery: query)
+        case .sql: return nil // Not included
+        case .php: return nil // Not included
+        case .conf: return nil
+        }
+    }
+
+    /// Returns the injection query string for this language (for embedded languages).
+    private var injectionQuery: String? {
+        switch self {
+        case .html: return HighlightQueries.htmlInjections
+        case .markdown: return HighlightQueries.markdownInjections
+        default: return nil
+        }
+    }
+
+    /// Returns the highlight query string for this language.
+    private var highlightQuery: String? {
+        switch self {
+        case .plainText: return nil
+        case .swift: return HighlightQueries.swift
+        case .javascript: return HighlightQueries.javascript
+        case .typescript: return HighlightQueries.typescript
+        case .python: return HighlightQueries.python
+        case .ruby: return HighlightQueries.ruby
+        case .go: return HighlightQueries.go
+        case .rust: return HighlightQueries.rust
+        case .c: return HighlightQueries.c
+        case .cpp: return HighlightQueries.cpp
+        case .java: return nil
+        case .kotlin: return nil
+        case .html: return HighlightQueries.html
+        case .xml: return nil
+        case .css: return HighlightQueries.css
+        case .json: return HighlightQueries.json
+        case .yaml: return HighlightQueries.yaml
+        case .markdown: return HighlightQueries.markdown
+        case .shell: return HighlightQueries.bash
+        case .sql: return nil
+        case .php: return nil
+        case .conf: return nil
         }
     }
 }

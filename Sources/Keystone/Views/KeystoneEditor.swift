@@ -542,7 +542,9 @@ public struct KeystoneEditor: View {
     }
 
     private func goToLine(_ lineNumber: Int, column: Int = 1) {
-        guard lineNumber >= 1 && lineNumber <= lineCount else { return }
+        // Clamp line number to valid range (1 to lineCount, minimum 1)
+        let maxLine = max(1, lineCount)
+        let targetLine = min(max(1, lineNumber), maxLine)
 
         var currentLine = 1
         var lineStartOffset = 0
@@ -550,7 +552,7 @@ public struct KeystoneEditor: View {
 
         // Find the start of the target line
         for (index, char) in text.enumerated() {
-            if currentLine == lineNumber {
+            if currentLine == targetLine {
                 lineStartOffset = index
                 // Now find the end of this line
                 for (endIndex, endChar) in text.enumerated().dropFirst(index) {
@@ -566,22 +568,30 @@ public struct KeystoneEditor: View {
             }
         }
 
+        // Handle case where target line is the last line or beyond
+        if currentLine < targetLine {
+            // We didn't reach the target line, go to end of file
+            lineStartOffset = text.count
+            lineEndOffset = text.count
+        }
+
         // Calculate final offset with column (clamped to line length)
         let lineLength = lineEndOffset - lineStartOffset
-        let columnOffset = min(column - 1, lineLength)
-        let finalOffset = lineStartOffset + max(0, columnOffset)
+        let columnOffset = min(max(0, column - 1), lineLength)
+        let finalOffset = min(lineStartOffset + columnOffset, text.count)
 
         // Update cursor position after a brief delay to ensure the alert has fully dismissed
         Task { @MainActor in
             // Small delay to allow the alert to dismiss
             try? await Task.sleep(nanoseconds: 50_000_000) // 50ms
 
-            // Request scroll to cursor when going to a specific line
-            scrollToCursor.wrappedValue = true
-            // Set the cursor position
+            // Set the cursor position first
             cursorPosition.wrappedValue = CursorPosition.from(offset: finalOffset, in: text, selectionLength: 0)
 
-            // Focus the editor
+            // Request scroll to cursor when going to a specific line
+            scrollToCursor.wrappedValue = true
+
+            // Focus the editor after position is set
             isEditorFocused = true
         }
     }
@@ -1021,6 +1031,9 @@ struct KeystoneEditorToolbarBar: View {
     var onToggleTailFollow: (() -> Void)?
     var onToggleComment: (() -> Void)?
 
+    /// Local state to track tail follow - synced with binding for proper SwiftUI updates
+    @State private var tailFollowActive: Bool = false
+
     var body: some View {
         HStack(spacing: 8) {
             // Undo
@@ -1077,10 +1090,10 @@ struct KeystoneEditorToolbarBar: View {
                 Divider().frame(height: 18)
 
                 toolbarButton(
-                    icon: isTailFollowEnabled?.wrappedValue == true ? "stop.circle" : "play.circle",
-                    tooltip: isTailFollowEnabled?.wrappedValue == true ? "Stop Following" : "Follow File",
+                    icon: tailFollowActive ? "stop.circle" : "play.circle",
+                    tooltip: tailFollowActive ? "Stop Following" : "Follow File",
                     enabled: true,
-                    isActive: isTailFollowEnabled?.wrappedValue == true
+                    isActive: tailFollowActive
                 ) {
                     onToggleTailFollow()
                 }
@@ -1096,6 +1109,12 @@ struct KeystoneEditorToolbarBar: View {
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
         .background(Color.keystoneStatusBar)
+        .onAppear {
+            tailFollowActive = isTailFollowEnabled?.wrappedValue ?? false
+        }
+        .onChange(of: isTailFollowEnabled?.wrappedValue) { _, newValue in
+            tailFollowActive = newValue ?? false
+        }
         // Keyboard shortcuts
         .background {
             VStack(spacing: 0) {
@@ -1169,6 +1188,9 @@ struct KeystoneEditorToolbarBar: View {
     var onToggleTailFollow: (() -> Void)?
     var onToggleComment: (() -> Void)?
 
+    /// Local state to track tail follow - synced with binding for proper SwiftUI updates
+    @State private var tailFollowActive: Bool = false
+
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 12) {
@@ -1241,9 +1263,9 @@ struct KeystoneEditorToolbarBar: View {
                     Divider().frame(height: 24)
 
                     toolbarButton(
-                        icon: isTailFollowEnabled?.wrappedValue == true ? "stop.circle" : "play.circle",
+                        icon: tailFollowActive ? "stop.circle" : "play.circle",
                         enabled: true,
-                        isActive: isTailFollowEnabled?.wrappedValue == true
+                        isActive: tailFollowActive
                     ) {
                         onToggleTailFollow()
                     }
@@ -1253,6 +1275,12 @@ struct KeystoneEditorToolbarBar: View {
         }
         .frame(height: 44)
         .background(Color.keystoneStatusBar)
+        .onAppear {
+            tailFollowActive = isTailFollowEnabled?.wrappedValue ?? false
+        }
+        .onChange(of: isTailFollowEnabled?.wrappedValue) { _, newValue in
+            tailFollowActive = newValue ?? false
+        }
     }
 
     private func toolbarButton(icon: String, enabled: Bool, isActive: Bool = false, action: @escaping () -> Void) -> some View {

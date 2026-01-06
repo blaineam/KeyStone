@@ -51,40 +51,29 @@ public final class KeystoneConfiguration: ObservableObject {
     public static let defaultLargeFileThreshold: Int = 500_000
 
     /// User-configurable threshold for large file mode.
-    /// Files larger than this will have syntax highlighting and code folding disabled.
-    /// Warning: Setting this too high may cause performance issues.
     @Published public var largeFileThreshold: Int = KeystoneConfiguration.defaultLargeFileThreshold
 
     /// Whether large file mode is currently active (internal sync state for immediate checks).
-    /// Use this for performance-critical code paths that need immediate state.
     public private(set) var isLargeFileModeImmediate: Bool = false
 
     /// Whether large file mode is currently active (published for SwiftUI observation).
-    /// When true, syntax highlighting and code folding are disabled for performance.
     @Published public private(set) var isLargeFileMode: Bool = false
 
     /// Callback invoked when large file mode is detected.
-    /// Use this to show a notification to the user.
     public var onLargeFileDetected: (() -> Void)?
 
     /// Enables large file mode based on text size.
-    /// - Parameter textLength: The length of the text in characters (UTF-16 units).
-    /// - Returns: True if large file mode was enabled.
     @discardableResult
     public func checkLargeFileMode(textLength: Int) -> Bool {
         let shouldBeLargeFile = textLength >= largeFileThreshold
         let wasLargeFile = isLargeFileModeImmediate
 
-        // Update internal state IMMEDIATELY for performance-critical checks
         isLargeFileModeImmediate = shouldBeLargeFile
 
-        // Update published property async to avoid "Publishing changes from within view updates"
         if shouldBeLargeFile != wasLargeFile {
             DispatchQueue.main.async { [weak self] in
                 guard let self = self else { return }
                 self.isLargeFileMode = shouldBeLargeFile
-
-                // Notify if transitioning to large file mode
                 if shouldBeLargeFile && !wasLargeFile {
                     self.onLargeFileDetected?()
                 }
@@ -104,49 +93,23 @@ public final class KeystoneConfiguration: ObservableObject {
 
     // MARK: - Performance Settings
 
-    /// Whether to use reduced performance mode (longer debounce intervals, skip some animations).
-    /// Automatically enabled when device is in Low Power Mode.
+    /// Whether to use reduced performance mode.
     @Published public var reducedPerformanceMode: Bool = false
 
     /// Multiplier for debounce intervals when in reduced performance mode.
-    /// Higher values = longer delays = less CPU usage but slower responsiveness.
     public var performanceDebounceMultiplier: Double {
         reducedPerformanceMode ? 3.0 : 1.0
     }
 
-    /// Base debounce interval for syntax highlighting (seconds).
-    /// Matches code folding delay - highlighting only updates after typing pauses
     public static let baseSyntaxDebounce: Double = 0.5
-
-    /// Base debounce interval for code folding analysis (seconds).
-    /// Increased from 0.3 - folding updates don't need to be instant
     public static let baseFoldingDebounce: Double = 0.5
-
-    /// Base debounce interval for cursor/selection updates (seconds).
     public static let baseCursorDebounce: Double = 0.1
-
-    /// Base debounce interval for content size/layout updates (seconds).
     public static let baseLayoutDebounce: Double = 0.05
 
-    /// Computed syntax highlighting debounce interval.
-    public var syntaxDebounceInterval: Double {
-        Self.baseSyntaxDebounce * performanceDebounceMultiplier
-    }
-
-    /// Computed code folding debounce interval.
-    public var foldingDebounceInterval: Double {
-        Self.baseFoldingDebounce * performanceDebounceMultiplier
-    }
-
-    /// Computed cursor update debounce interval.
-    public var cursorDebounceInterval: Double {
-        Self.baseCursorDebounce * performanceDebounceMultiplier
-    }
-
-    /// Computed layout/content size debounce interval.
-    public var layoutDebounceInterval: Double {
-        Self.baseLayoutDebounce * performanceDebounceMultiplier
-    }
+    public var syntaxDebounceInterval: Double { Self.baseSyntaxDebounce * performanceDebounceMultiplier }
+    public var foldingDebounceInterval: Double { Self.baseFoldingDebounce * performanceDebounceMultiplier }
+    public var cursorDebounceInterval: Double { Self.baseCursorDebounce * performanceDebounceMultiplier }
+    public var layoutDebounceInterval: Double { Self.baseLayoutDebounce * performanceDebounceMultiplier }
 
     // MARK: - Indentation Settings
 
@@ -212,35 +175,21 @@ public final class KeystoneConfiguration: ObservableObject {
         }
     }
 
-    /// Sets up observation of system low power mode changes (iOS only).
     private func setupLowPowerModeObserver() {
         #if os(iOS)
-        // Check initial state
         reducedPerformanceMode = ProcessInfo.processInfo.isLowPowerModeEnabled
-
-        // Observe changes
         lowPowerModeObserver = NotificationCenter.default.addObserver(
             forName: .NSProcessInfoPowerStateDidChange,
             object: nil,
             queue: .main
         ) { [weak self] _ in
             self?.reducedPerformanceMode = ProcessInfo.processInfo.isLowPowerModeEnabled
-            if ProcessInfo.processInfo.isLowPowerModeEnabled {
-                print("⚡️ [Keystone] Low Power Mode enabled - using reduced performance settings")
-            } else {
-                print("🔋 [Keystone] Low Power Mode disabled - using normal performance settings")
-            }
-        }
-
-        if reducedPerformanceMode {
-            print("⚡️ [Keystone] Starting in Low Power Mode - using reduced performance settings")
         }
         #endif
     }
 
     // MARK: - Persistence
 
-    /// Loads settings from UserDefaults.
     public func loadFromUserDefaults() {
         let defaults = UserDefaults.standard
 
@@ -291,7 +240,6 @@ public final class KeystoneConfiguration: ObservableObject {
         }
     }
 
-    /// Saves current settings to UserDefaults.
     public func saveToUserDefaults() {
         let defaults = UserDefaults.standard
 
@@ -315,7 +263,6 @@ public final class KeystoneConfiguration: ObservableObject {
     // MARK: - Methods
 
     /// Detects and applies settings from the given file content.
-    /// - Parameter text: The file content to analyze.
     public func detectSettings(from text: String) {
         lineEnding = LineEnding.detect(in: text)
         indentation = IndentationSettings.detect(from: text)
@@ -344,42 +291,29 @@ public final class KeystoneConfiguration: ObservableObject {
 // MARK: - Character Pair Handling
 
 extension KeystoneConfiguration {
-    /// Cached set of closing characters for O(1) lookup
     private static let closingChars: Set<Character> = Set(characterPairs.values)
 
-    /// Determines if a character should trigger auto-insertion of its pair.
-    /// Uses NSString for O(1) character access.
     public func shouldAutoInsertPair(for char: Character, in nsText: NSString, at position: Int) -> Character? {
         guard autoInsertPairs else { return nil }
         guard let closingChar = Self.characterPairs[char] else { return nil }
-
-        // For quotes, we skip the expensive inside-string check for performance
-        // The trade-off is occasional extra quote insertion, which user can delete
         return closingChar
     }
 
-    /// Determines if typing a closing character should skip over an existing one.
-    /// Uses NSString for O(1) character access.
     public func shouldSkipClosingPair(for char: Character, in nsText: NSString, at position: Int) -> Bool {
         guard autoInsertPairs else { return false }
         guard position < nsText.length else { return false }
 
-        // O(1) character access using NSString
         let nextCharCode = nsText.character(at: position)
         guard let nextCharScalar = Unicode.Scalar(nextCharCode) else { return false }
         let nextChar = Character(nextCharScalar)
 
-        // If we're typing a closing bracket and the next char is the same, skip it
         return Self.closingChars.contains(char) && nextChar == char
     }
 
-    /// Determines if deleting should remove both characters of a pair.
-    /// Uses NSString for O(1) character access.
     public func shouldDeletePair(in nsText: NSString, at position: Int) -> Bool {
         guard autoInsertPairs else { return false }
         guard position > 0 && position < nsText.length else { return false }
 
-        // O(1) character access using NSString
         let prevCharCode = nsText.character(at: position - 1)
         let currCharCode = nsText.character(at: position)
 
@@ -389,7 +323,6 @@ extension KeystoneConfiguration {
         let prevChar = Character(prevScalar)
         let currChar = Character(currScalar)
 
-        // Check if we're between a pair
         if let expectedClose = Self.characterPairs[prevChar] {
             return currChar == expectedClose
         }
@@ -397,19 +330,14 @@ extension KeystoneConfiguration {
         return false
     }
 
-    // MARK: - Legacy String-based methods (for compatibility)
-
-    /// Legacy method - converts String to NSString internally
     public func shouldAutoInsertPair(for char: Character, in text: String, at position: Int) -> Character? {
         shouldAutoInsertPair(for: char, in: text as NSString, at: position)
     }
 
-    /// Legacy method - converts String to NSString internally
     public func shouldSkipClosingPair(for char: Character, in text: String, at position: Int) -> Bool {
         shouldSkipClosingPair(for: char, in: text as NSString, at: position)
     }
 
-    /// Legacy method - converts String to NSString internally
     public func shouldDeletePair(in text: String, at position: Int) -> Bool {
         shouldDeletePair(in: text as NSString, at: position)
     }

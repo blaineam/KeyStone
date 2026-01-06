@@ -5,6 +5,7 @@ import PackageDescription
 
 let package = Package(
     name: "Keystone",
+    defaultLocalization: "en",
     platforms: [
         .iOS(.v17),
         .macOS(.v14)
@@ -16,7 +17,7 @@ let package = Package(
         ),
     ],
     dependencies: [
-        .package(url: "https://github.com/tree-sitter/tree-sitter", from: "0.24.0"),
+        .package(url: "https://github.com/tree-sitter/tree-sitter", .upToNextMinor(from: "0.20.9")),
         .package(url: "https://github.com/blaineam/TreeSitterLanguages", from: "1.0.0"),
     ],
     targets: [
@@ -41,7 +42,11 @@ let package = Package(
                 .product(name: "TreeSitterYAML", package: "TreeSitterLanguages"),
                 .product(name: "TreeSitterMarkdown", package: "TreeSitterLanguages"),
             ],
-            path: "Sources/Keystone"
+            path: "Sources/Keystone",
+            resources: [
+                .copy("PrivacyInfo.xcprivacy"),
+                .process("TextView/Appearance/Theme.xcassets")
+            ]
         ),
         .testTarget(
             name: "KeystoneTests",

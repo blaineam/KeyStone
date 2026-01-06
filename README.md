@@ -16,10 +16,16 @@
 
 ---
 
+## ✨ Used In Production
+
+Keystone powers the code editing features in [**Enter Space**](https://wemiller.com/apps/enter-space) — a powerful cloud storage client for iOS and macOS that supports SFTP, WebDAV, S3, and 50+ cloud providers.
+
+---
+
 ## Features
 
 ### Core Editor
-- **Syntax Highlighting** — Support for 20+ programming languages including Swift, Python, JavaScript, TypeScript, HTML, CSS, JSON, and more
+- **Syntax Highlighting** — Support for 15+ programming languages including Swift, Python, JavaScript, TypeScript, HTML, CSS, JSON, and more via TreeSitter
 - **Line Numbers** — Configurable line number gutter with current line highlighting
 - **Bracket Matching** — Automatic detection and highlighting of matching brackets, parentheses, and braces
 - **Character Pair Insertion** — Auto-insert closing quotes, brackets, and parentheses
@@ -27,13 +33,13 @@
 - **Current Line Highlighting** — Visual indicator for the line containing the cursor
 
 ### Text Intelligence
-- **Line Ending Detection** — Automatically detects LF, CRLF, CR, or mixed line endings
+- **Line Ending Detection** — Automatically detects LF, CRLF, or CR line endings
 - **Line Ending Conversion** — Convert between different line ending formats
 - **Indentation Detection** — Detects whether the file uses tabs or spaces
 - **Tab Key Support** — Configurable tab behavior (insert tab or spaces)
 
 ### Visual Customization
-- **Multiple Themes** — Built-in themes including Default, Monokai, Solarized (Dark/Light), GitHub, and Xcode
+- **11 Built-in Themes** — Including System (adaptive), Xcode Light/Dark, GitHub Light, Solarized Light, One Light, Tomorrow, Monokai, Dracula, Nord, and Gruvbox Dark
 - **Configurable Font Size** — Adjustable editor font size (8-32pt)
 - **Line Height** — Adjustable line spacing multiplier (1.0x to 2.0x)
 - **Invisible Characters** — Optional display of tabs, spaces, and line breaks
@@ -41,7 +47,7 @@
 ### Advanced Features
 - **Find & Replace** — Full-featured find and replace with regex support, case sensitivity, and whole word matching
 - **Code Folding** — Collapse and expand code regions based on syntax structure
-- **Undo/Redo History** — Persistent undo/redo with optional disk persistence
+- **Undo/Redo History** — Full undo/redo support
 - **TreeSitter Integration** — Advanced syntax analysis with incremental parsing for real-time highlighting
 - **Comment Toggle** — Toggle line/block comments with Cmd+/ (macOS) or toolbar button
 
@@ -80,7 +86,7 @@ Or add it to your `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/blaineam/KeyStone", from: "1.0.0")
+    .package(url: "https://github.com/blaineam/KeyStone", from: "2.0.0")
 ]
 ```
 
@@ -227,28 +233,22 @@ config.theme = .monokai                   // Syntax highlighting theme
 
 | Theme | Description |
 |-------|-------------|
-| `KeystoneTheme.default` | System-aware dark/light theme |
-| `KeystoneTheme.monokai` | Classic Monokai dark theme |
-| `KeystoneTheme.solarizedDark` | Solarized Dark |
+| `KeystoneTheme.system` | System-aware adaptive dark/light theme |
+| `KeystoneTheme.xcodeLight` | Xcode Light |
+| `KeystoneTheme.xcodeDark` | Xcode Dark |
+| `KeystoneTheme.githubLight` | GitHub Light |
 | `KeystoneTheme.solarizedLight` | Solarized Light |
-| `KeystoneTheme.github` | GitHub-inspired light theme |
-| `KeystoneTheme.xcode` | Xcode default colors |
+| `KeystoneTheme.oneLight` | Atom One Light |
+| `KeystoneTheme.tomorrowLight` | Tomorrow Light |
+| `KeystoneTheme.monokai` | Classic Monokai dark theme |
+| `KeystoneTheme.dracula` | Dracula dark theme |
+| `KeystoneTheme.nord` | Nord dark theme |
+| `KeystoneTheme.gruvboxDark` | Gruvbox Dark |
 
 ### Creating Custom Themes
 
 ```swift
 let customTheme = KeystoneTheme(
-    // Editor colors
-    background: Color(hex: "#1a1a2e"),
-    text: Color(hex: "#eaeaea"),
-    gutterBackground: Color(hex: "#16163a"),
-    lineNumber: Color(hex: "#666688"),
-    currentLineHighlight: Color(hex: "#2a2a4e"),
-    selection: Color(hex: "#3a3a6e"),
-    cursor: Color(hex: "#ffffff"),
-    matchingBracket: Color(hex: "#4a4a8e"),
-
-    // Syntax colors
     keyword: Color(hex: "#c678dd"),
     type: Color(hex: "#e5c07b"),
     string: Color(hex: "#98c379"),
@@ -256,7 +256,9 @@ let customTheme = KeystoneTheme(
     number: Color(hex: "#d19a66"),
     function: Color(hex: "#61afef"),
     tag: Color(hex: "#e06c75"),
-    attribute: Color(hex: "#d19a66")
+    attribute: Color(hex: "#d19a66"),
+    operator: Color(hex: "#56b6c2"),
+    property: Color(hex: "#e5c07b")
 )
 ```
 
@@ -268,23 +270,19 @@ let customTheme = KeystoneTheme(
 |----------|------------|
 | Swift | `.swift` |
 | Python | `.py` |
-| JavaScript | `.js`, `.jsx` |
+| JavaScript | `.js`, `.mjs`, `.cjs` |
 | TypeScript | `.ts`, `.tsx` |
-| Java | `.java` |
 | C | `.c`, `.h` |
-| C++ | `.cpp`, `.hpp` |
-| C# | `.cs` |
+| C++ | `.cpp`, `.hpp`, `.cc`, `.cxx` |
 | Go | `.go` |
 | Rust | `.rs` |
 | Ruby | `.rb` |
-| PHP | `.php` |
 | HTML | `.html`, `.htm` |
-| CSS | `.css`, `.scss` |
+| CSS | `.css`, `.scss`, `.sass` |
 | JSON | `.json` |
 | YAML | `.yaml`, `.yml` |
-| Markdown | `.md` |
-| Shell | `.sh`, `.bash` |
-| SQL | `.sql` |
+| Markdown | `.md`, `.markdown` |
+| Shell | `.sh`, `.bash`, `.zsh` |
 | Config | `.conf`, `.ini` |
 | Plain Text | `.txt` |
 
@@ -381,7 +379,6 @@ public enum LineEnding {
     case lf      // Unix/macOS (\n)
     case crlf    // Windows (\r\n)
     case cr      // Classic Mac (\r)
-    case mixed   // File has mixed endings
 
     static func detect(in text: String) -> LineEnding
     static func convert(_ text: String, to ending: LineEnding) -> String
@@ -407,8 +404,8 @@ Keystone/
 │   ├── KeystoneConfiguration.swift
 │   └── KeystoneTheme.swift
 ├── Features/
-│   ├── CodeFolding.swift
-│   ├── FindReplace.swift
+│   ├── CodeFoldingManager.swift
+│   ├── FindReplaceManager.swift
 │   └── UndoHistory.swift
 ├── Platform/
 │   └── PlatformTypes.swift
@@ -428,6 +425,12 @@ Keystone/
     ├── EditorSettingsView.swift
     └── SymbolKeyboard.swift
 ```
+
+---
+
+## Acknowledgments
+
+Keystone was heavily inspired by the excellent [Runestone](https://github.com/simonbs/Runestone) library by Simon B. Støvring. Keystone builds upon Runestone's foundation with a focus on feature expansion and full cross-platform support for both iOS and macOS.
 
 ---
 

@@ -103,27 +103,16 @@ public struct KeystoneTheme: Equatable, Sendable {
 
     /// System adaptive theme - automatically adjusts to light/dark mode.
     public static let system = KeystoneTheme(
-        // Keywords: bright pink/magenta for visibility
         keyword: Color(light: Color(red: 0.608, green: 0.137, blue: 0.576), dark: Color(red: 1.0, green: 0.42, blue: 0.68)),
-        // Types: bright cyan for clear contrast
         type: Color(light: Color(red: 0.106, green: 0.282, blue: 0.494), dark: Color(red: 0.45, green: 0.90, blue: 1.0)),
-        // Strings: bright orange/coral
         string: Color(light: Color(red: 0.769, green: 0.102, blue: 0.086), dark: Color(red: 1.0, green: 0.55, blue: 0.45)),
-        // Comments: lighter gray for readability
         comment: Color(light: Color(red: 0.384, green: 0.451, blue: 0.384), dark: Color(red: 0.55, green: 0.60, blue: 0.65)),
-        // Numbers: bright gold/yellow
         number: Color(light: Color(red: 0.106, green: 0.282, blue: 0.494), dark: Color(red: 0.90, green: 0.82, blue: 0.45)),
-        // Functions: bright yellow/cream
         function: Color(light: Color(red: 0.243, green: 0.302, blue: 0.349), dark: Color(red: 0.92, green: 0.85, blue: 0.55)),
-        // Tags: bright teal/green
         tag: Color(light: Color(red: 0.129, green: 0.459, blue: 0.263), dark: Color(red: 0.45, green: 0.80, blue: 0.70)),
-        // Attributes: bright purple
         attribute: Color(light: Color(red: 0.384, green: 0.451, blue: 0.384), dark: Color(red: 0.78, green: 0.58, blue: 0.98)),
-        // Operators: white for max visibility
         operator: Color(light: .black, dark: .white),
-        // Properties: bright cyan (same as types)
         property: Color(light: Color(red: 0.106, green: 0.282, blue: 0.494), dark: Color(red: 0.45, green: 0.90, blue: 1.0)),
-        // Editor colors
         background: Color(light: .white, dark: Color(red: 0.12, green: 0.12, blue: 0.14)),
         text: Color(light: .black, dark: Color(white: 0.95)),
         gutterBackground: Color(light: Color(white: 0.96), dark: Color(white: 0.16)),
@@ -153,86 +142,6 @@ public struct KeystoneTheme: Equatable, Sendable {
         lineNumber: Color(red: 0.459, green: 0.443, blue: 0.369),
         currentLineHighlight: Color.white.opacity(0.05),
         invisibleCharacter: Color(red: 0.459, green: 0.443, blue: 0.369).opacity(0.6)
-    )
-
-    /// A Solarized Dark theme.
-    public static let solarizedDark = KeystoneTheme(
-        keyword: Color(red: 0.522, green: 0.600, blue: 0.000),
-        type: Color(red: 0.149, green: 0.545, blue: 0.824),
-        string: Color(red: 0.165, green: 0.631, blue: 0.596),
-        comment: Color(red: 0.396, green: 0.482, blue: 0.514),
-        number: Color(red: 0.827, green: 0.212, blue: 0.510),
-        function: Color(red: 0.149, green: 0.545, blue: 0.824),
-        tag: Color(red: 0.710, green: 0.537, blue: 0.000),
-        attribute: Color(red: 0.576, green: 0.631, blue: 0.631),
-        operator: Color(red: 0.522, green: 0.600, blue: 0.000),
-        property: Color(red: 0.149, green: 0.545, blue: 0.824),
-        background: Color(red: 0.000, green: 0.169, blue: 0.212),
-        text: Color(red: 0.514, green: 0.580, blue: 0.588),
-        gutterBackground: Color(red: 0.000, green: 0.149, blue: 0.192),
-        lineNumber: Color(red: 0.396, green: 0.482, blue: 0.514),
-        currentLineHighlight: Color.white.opacity(0.03),
-        invisibleCharacter: Color(red: 0.396, green: 0.482, blue: 0.514).opacity(0.5)
-    )
-
-    /// A Solarized Light theme.
-    public static let solarizedLight = KeystoneTheme(
-        keyword: Color(red: 0.522, green: 0.600, blue: 0.000),
-        type: Color(red: 0.149, green: 0.545, blue: 0.824),
-        string: Color(red: 0.165, green: 0.631, blue: 0.596),
-        comment: Color(red: 0.576, green: 0.631, blue: 0.631),
-        number: Color(red: 0.827, green: 0.212, blue: 0.510),
-        function: Color(red: 0.149, green: 0.545, blue: 0.824),
-        tag: Color(red: 0.710, green: 0.537, blue: 0.000),
-        attribute: Color(red: 0.396, green: 0.482, blue: 0.514),
-        operator: Color(red: 0.522, green: 0.600, blue: 0.000),
-        property: Color(red: 0.149, green: 0.545, blue: 0.824),
-        background: Color(red: 0.992, green: 0.965, blue: 0.890),
-        text: Color(red: 0.396, green: 0.482, blue: 0.514),
-        gutterBackground: Color(red: 0.972, green: 0.945, blue: 0.870),
-        lineNumber: Color(red: 0.576, green: 0.631, blue: 0.631),
-        currentLineHighlight: Color.black.opacity(0.03),
-        invisibleCharacter: Color(red: 0.576, green: 0.631, blue: 0.631).opacity(0.5)
-    )
-
-    /// A GitHub-inspired light theme.
-    public static let github = KeystoneTheme(
-        keyword: Color(red: 0.839, green: 0.227, blue: 0.400),
-        type: Color(red: 0.110, green: 0.341, blue: 0.620),
-        string: Color(red: 0.031, green: 0.369, blue: 0.565),
-        comment: Color(red: 0.424, green: 0.478, blue: 0.537),
-        number: Color(red: 0.031, green: 0.369, blue: 0.565),
-        function: Color(red: 0.435, green: 0.259, blue: 0.757),
-        tag: Color(red: 0.129, green: 0.459, blue: 0.263),
-        attribute: Color(red: 0.110, green: 0.341, blue: 0.620),
-        operator: Color(red: 0.839, green: 0.227, blue: 0.400),
-        property: Color(red: 0.110, green: 0.341, blue: 0.620),
-        background: .white,
-        text: Color(red: 0.145, green: 0.161, blue: 0.176),
-        gutterBackground: Color(red: 0.96, green: 0.97, blue: 0.98),
-        lineNumber: Color(red: 0.424, green: 0.478, blue: 0.537),
-        currentLineHighlight: Color(red: 1.0, green: 0.98, blue: 0.9),
-        invisibleCharacter: Color(red: 0.424, green: 0.478, blue: 0.537).opacity(0.4)
-    )
-
-    /// An Xcode-inspired theme (light).
-    public static let xcode = KeystoneTheme(
-        keyword: Color(red: 0.608, green: 0.137, blue: 0.576),
-        type: Color(red: 0.106, green: 0.282, blue: 0.494),
-        string: Color(red: 0.769, green: 0.102, blue: 0.086),
-        comment: Color(red: 0.384, green: 0.451, blue: 0.384),
-        number: Color(red: 0.106, green: 0.282, blue: 0.494),
-        function: Color(red: 0.243, green: 0.302, blue: 0.349),
-        tag: Color(red: 0.608, green: 0.137, blue: 0.576),
-        attribute: Color(red: 0.384, green: 0.451, blue: 0.384),
-        operator: Color(red: 0.0, green: 0.0, blue: 0.0),
-        property: Color(red: 0.243, green: 0.302, blue: 0.349),
-        background: .white,
-        text: .black,
-        gutterBackground: Color(red: 0.95, green: 0.95, blue: 0.95),
-        lineNumber: Color(red: 0.5, green: 0.5, blue: 0.5),
-        currentLineHighlight: Color(red: 0.9, green: 0.95, blue: 1.0),
-        invisibleCharacter: Color(white: 0.75)
     )
 
     /// An Xcode Dark theme.
@@ -275,37 +184,166 @@ public struct KeystoneTheme: Equatable, Sendable {
         invisibleCharacter: Color(red: 0.384, green: 0.447, blue: 0.643).opacity(0.6)
     )
 
-    /// A One Dark theme (Atom-inspired).
-    public static let oneDark = KeystoneTheme(
-        keyword: Color(red: 0.780, green: 0.467, blue: 0.863),
-        type: Color(red: 0.894, green: 0.714, blue: 0.329),
-        string: Color(red: 0.596, green: 0.765, blue: 0.396),
-        comment: Color(red: 0.365, green: 0.404, blue: 0.459),
-        number: Color(red: 0.824, green: 0.529, blue: 0.396),
-        function: Color(red: 0.380, green: 0.686, blue: 0.937),
-        tag: Color(red: 0.894, green: 0.420, blue: 0.420),
-        attribute: Color(red: 0.824, green: 0.529, blue: 0.396),
-        operator: Color(red: 0.667, green: 0.733, blue: 0.816),
-        property: Color(red: 0.894, green: 0.420, blue: 0.420),
-        background: Color(red: 0.157, green: 0.173, blue: 0.204),
-        text: Color(red: 0.667, green: 0.733, blue: 0.816),
-        gutterBackground: Color(red: 0.137, green: 0.153, blue: 0.184),
-        lineNumber: Color(red: 0.365, green: 0.404, blue: 0.459),
-        currentLineHighlight: Color.white.opacity(0.03),
-        invisibleCharacter: Color(red: 0.365, green: 0.404, blue: 0.459).opacity(0.6)
+    // MARK: - Light Themes
+
+    /// An Xcode Light theme.
+    public static let xcodeLight = KeystoneTheme(
+        keyword: Color(red: 0.608, green: 0.137, blue: 0.576),
+        type: Color(red: 0.110, green: 0.333, blue: 0.525),
+        string: Color(red: 0.769, green: 0.102, blue: 0.086),
+        comment: Color(red: 0.384, green: 0.451, blue: 0.384),
+        number: Color(red: 0.110, green: 0.333, blue: 0.525),
+        function: Color(red: 0.243, green: 0.302, blue: 0.349),
+        tag: Color(red: 0.608, green: 0.137, blue: 0.576),
+        attribute: Color(red: 0.384, green: 0.451, blue: 0.384),
+        operator: Color(red: 0.0, green: 0.0, blue: 0.0),
+        property: Color(red: 0.243, green: 0.302, blue: 0.349),
+        background: .white,
+        text: .black,
+        gutterBackground: Color(white: 0.965),
+        lineNumber: Color(white: 0.5),
+        currentLineHighlight: Color(red: 0.929, green: 0.953, blue: 1.0),
+        invisibleCharacter: Color(white: 0.8)
+    )
+
+    /// A Solarized Light theme.
+    public static let solarizedLight = KeystoneTheme(
+        keyword: Color(red: 0.522, green: 0.600, blue: 0.000),
+        type: Color(red: 0.149, green: 0.545, blue: 0.824),
+        string: Color(red: 0.165, green: 0.631, blue: 0.596),
+        comment: Color(red: 0.576, green: 0.631, blue: 0.631),
+        number: Color(red: 0.827, green: 0.212, blue: 0.510),
+        function: Color(red: 0.149, green: 0.545, blue: 0.824),
+        tag: Color(red: 0.522, green: 0.600, blue: 0.000),
+        attribute: Color(red: 0.710, green: 0.537, blue: 0.000),
+        operator: Color(red: 0.396, green: 0.482, blue: 0.514),
+        property: Color(red: 0.149, green: 0.545, blue: 0.824),
+        background: Color(red: 0.992, green: 0.965, blue: 0.890),
+        text: Color(red: 0.396, green: 0.482, blue: 0.514),
+        gutterBackground: Color(red: 0.933, green: 0.910, blue: 0.835),
+        lineNumber: Color(red: 0.576, green: 0.631, blue: 0.631),
+        currentLineHighlight: Color(red: 0.933, green: 0.910, blue: 0.835),
+        invisibleCharacter: Color(red: 0.576, green: 0.631, blue: 0.631).opacity(0.5)
+    )
+
+    /// A GitHub Light theme.
+    public static let githubLight = KeystoneTheme(
+        keyword: Color(red: 0.839, green: 0.227, blue: 0.369),
+        type: Color(red: 0.404, green: 0.306, blue: 0.773),
+        string: Color(red: 0.012, green: 0.365, blue: 0.596),
+        comment: Color(red: 0.341, green: 0.373, blue: 0.404),
+        number: Color(red: 0.012, green: 0.365, blue: 0.596),
+        function: Color(red: 0.404, green: 0.306, blue: 0.773),
+        tag: Color(red: 0.129, green: 0.459, blue: 0.259),
+        attribute: Color(red: 0.012, green: 0.365, blue: 0.596),
+        operator: Color(red: 0.839, green: 0.227, blue: 0.369),
+        property: Color(red: 0.012, green: 0.365, blue: 0.596),
+        background: .white,
+        text: Color(red: 0.145, green: 0.161, blue: 0.180),
+        gutterBackground: Color(red: 0.969, green: 0.973, blue: 0.976),
+        lineNumber: Color(red: 0.341, green: 0.373, blue: 0.404),
+        currentLineHighlight: Color(red: 1.0, green: 0.992, blue: 0.910),
+        invisibleCharacter: Color(red: 0.341, green: 0.373, blue: 0.404).opacity(0.4)
+    )
+
+    /// An Atom One Light theme.
+    public static let oneLight = KeystoneTheme(
+        keyword: Color(red: 0.659, green: 0.051, blue: 0.569),
+        type: Color(red: 0.769, green: 0.388, blue: 0.039),
+        string: Color(red: 0.314, green: 0.604, blue: 0.153),
+        comment: Color(red: 0.627, green: 0.647, blue: 0.663),
+        number: Color(red: 0.600, green: 0.408, blue: 0.071),
+        function: Color(red: 0.247, green: 0.459, blue: 0.847),
+        tag: Color(red: 0.886, green: 0.243, blue: 0.173),
+        attribute: Color(red: 0.769, green: 0.388, blue: 0.039),
+        operator: Color(red: 0.659, green: 0.051, blue: 0.569),
+        property: Color(red: 0.886, green: 0.243, blue: 0.173),
+        background: Color(red: 0.980, green: 0.980, blue: 0.980),
+        text: Color(red: 0.227, green: 0.243, blue: 0.259),
+        gutterBackground: Color(red: 0.953, green: 0.957, blue: 0.961),
+        lineNumber: Color(red: 0.627, green: 0.647, blue: 0.663),
+        currentLineHighlight: Color(red: 0.914, green: 0.925, blue: 0.937),
+        invisibleCharacter: Color(red: 0.627, green: 0.647, blue: 0.663).opacity(0.5)
+    )
+
+    /// A Tomorrow Light theme.
+    public static let tomorrowLight = KeystoneTheme(
+        keyword: Color(red: 0.541, green: 0.384, blue: 0.647),
+        type: Color(red: 0.302, green: 0.639, blue: 0.722),
+        string: Color(red: 0.447, green: 0.624, blue: 0.302),
+        comment: Color(red: 0.553, green: 0.576, blue: 0.600),
+        number: Color(red: 0.961, green: 0.584, blue: 0.302),
+        function: Color(red: 0.302, green: 0.529, blue: 0.749),
+        tag: Color(red: 0.769, green: 0.306, blue: 0.318),
+        attribute: Color(red: 0.961, green: 0.584, blue: 0.302),
+        operator: Color(red: 0.294, green: 0.322, blue: 0.341),
+        property: Color(red: 0.302, green: 0.529, blue: 0.749),
+        background: .white,
+        text: Color(red: 0.294, green: 0.322, blue: 0.341),
+        gutterBackground: Color(red: 0.965, green: 0.969, blue: 0.973),
+        lineNumber: Color(red: 0.553, green: 0.576, blue: 0.600),
+        currentLineHighlight: Color(red: 0.937, green: 0.945, blue: 0.949),
+        invisibleCharacter: Color(red: 0.553, green: 0.576, blue: 0.600).opacity(0.4)
+    )
+
+    // MARK: - Additional Dark Themes
+
+    /// A Nord dark theme.
+    public static let nord = KeystoneTheme(
+        keyword: Color(red: 0.506, green: 0.631, blue: 0.757),
+        type: Color(red: 0.565, green: 0.737, blue: 0.733),
+        string: Color(red: 0.647, green: 0.741, blue: 0.549),
+        comment: Color(red: 0.263, green: 0.298, blue: 0.369),
+        number: Color(red: 0.706, green: 0.557, blue: 0.678),
+        function: Color(red: 0.533, green: 0.753, blue: 0.816),
+        tag: Color(red: 0.506, green: 0.631, blue: 0.757),
+        attribute: Color(red: 0.565, green: 0.737, blue: 0.733),
+        operator: Color(red: 0.506, green: 0.631, blue: 0.757),
+        property: Color(red: 0.533, green: 0.753, blue: 0.816),
+        background: Color(red: 0.180, green: 0.204, blue: 0.251),
+        text: Color(red: 0.925, green: 0.937, blue: 0.957),
+        gutterBackground: Color(red: 0.161, green: 0.184, blue: 0.231),
+        lineNumber: Color(red: 0.263, green: 0.298, blue: 0.369),
+        currentLineHighlight: Color.white.opacity(0.04),
+        invisibleCharacter: Color(red: 0.263, green: 0.298, blue: 0.369).opacity(0.6)
+    )
+
+    /// A Gruvbox Dark theme.
+    public static let gruvboxDark = KeystoneTheme(
+        keyword: Color(red: 0.984, green: 0.286, blue: 0.204),
+        type: Color(red: 0.984, green: 0.741, blue: 0.184),
+        string: Color(red: 0.722, green: 0.733, blue: 0.149),
+        comment: Color(red: 0.573, green: 0.514, blue: 0.455),
+        number: Color(red: 0.820, green: 0.525, blue: 0.608),
+        function: Color(red: 0.514, green: 0.647, blue: 0.596),
+        tag: Color(red: 0.984, green: 0.286, blue: 0.204),
+        attribute: Color(red: 0.984, green: 0.741, blue: 0.184),
+        operator: Color(red: 0.984, green: 0.286, blue: 0.204),
+        property: Color(red: 0.514, green: 0.647, blue: 0.596),
+        background: Color(red: 0.157, green: 0.157, blue: 0.133),
+        text: Color(red: 0.922, green: 0.859, blue: 0.698),
+        gutterBackground: Color(red: 0.125, green: 0.125, blue: 0.106),
+        lineNumber: Color(red: 0.573, green: 0.514, blue: 0.455),
+        currentLineHighlight: Color.white.opacity(0.04),
+        invisibleCharacter: Color(red: 0.573, green: 0.514, blue: 0.455).opacity(0.5)
     )
 
     /// All available themes for selection.
     public static let allThemes: [(name: String, theme: KeystoneTheme)] = [
+        // Adaptive
         ("System", .system),
-        ("Xcode Light", .xcode),
+        // Light themes
+        ("Xcode Light", .xcodeLight),
+        ("GitHub Light", .githubLight),
+        ("Solarized Light", .solarizedLight),
+        ("One Light", .oneLight),
+        ("Tomorrow", .tomorrowLight),
+        // Dark themes
         ("Xcode Dark", .xcodeDark),
-        ("GitHub", .github),
         ("Monokai", .monokai),
         ("Dracula", .dracula),
-        ("One Dark", .oneDark),
-        ("Solarized Light", .solarizedLight),
-        ("Solarized Dark", .solarizedDark)
+        ("Nord", .nord),
+        ("Gruvbox Dark", .gruvboxDark)
     ]
 
     /// Returns the theme with the given name, or nil if not found.

@@ -1,29 +1,37 @@
 //
 //  Keystone.swift
-//  Keystone - A Cross-Platform Code Editor for SwiftUI
+//  Keystone
 //
-//  A comprehensive code editor component for iOS and macOS built with SwiftUI.
-//  Features include syntax highlighting, line numbers, invisible characters,
-//  bracket matching, code folding, find/replace, and more.
+//  A high-performance code editor library powered by Runestone.
 //
 
-import SwiftUI
+import Foundation
 
-// MARK: - Public API
+// Re-export all public types for easy access
 
-/// The main entry point for the Keystone code editor library.
-public enum Keystone {
-    /// The current version of the Keystone library.
-    public static let version = "1.1.0"
-}
+// MARK: - Views
+// KeystoneEditor - Main SwiftUI code editor view
+// KeystoneTextView - Lower-level text view wrapper
 
-// Re-export all public types for convenience
-public typealias Editor = KeystoneEditor
-public typealias Configuration = KeystoneConfiguration
-public typealias Theme = KeystoneTheme
-public typealias Language = KeystoneLanguage
+// MARK: - Types
+// CursorPosition - Cursor position tracking
+// LineEnding - Line ending types (extended from Runestone)
+// IndentationType, IndentationSettings - Indentation configuration
 
-// Feature managers
-public typealias FoldingManager = CodeFoldingManager
-public typealias FindManager = FindReplaceManager
-public typealias UndoManager = UndoHistoryManager
+// MARK: - Configuration
+// KeystoneConfiguration - Editor configuration options
+// KeystoneTheme - Theme colors and styling
+
+// MARK: - Managers
+// TailFollowManager - File monitoring (tail -f)
+// FindReplaceManager - Find and replace functionality
+
+// MARK: - Syntax
+// KeystoneLanguage - Programming language detection
+
+// MARK: - Runestone Types (re-exported)
+// TextView - High-performance text view
+// TextViewState - Text view state for background parsing
+// TreeSitterLanguage - Tree-sitter language for syntax highlighting
+// Theme - Runestone theme protocol
+// DefaultTheme - Default theme implementation

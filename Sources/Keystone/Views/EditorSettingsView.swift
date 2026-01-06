@@ -45,12 +45,6 @@ public struct EditorSettingsView: View {
                     Toggle("Show Invisible Characters", isOn: $configuration.showInvisibleCharacters)
                     Toggle("Line Wrapping", isOn: $configuration.lineWrapping)
                     Toggle("Code Folding", isOn: $configuration.showCodeFolding)
-                        .disabled(configuration.isLargeFileMode)
-                    if configuration.isLargeFileMode {
-                        Text("Code folding is disabled for large files")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
 
                     HStack {
                         Text("Font Size")
@@ -117,7 +111,7 @@ public struct EditorSettingsView: View {
 
                     if let onConvert = onConvertLineEndings {
                         Menu("Convert To...") {
-                            ForEach(LineEnding.allCases.filter { $0 != .mixed && $0 != configuration.lineEnding }) { ending in
+                            ForEach(LineEnding.allCases.filter { $0 != configuration.lineEnding }) { ending in
                                 Button(ending.displayName) {
                                     onConvert(ending)
                                 }
@@ -131,7 +125,9 @@ public struct EditorSettingsView: View {
                     themePicker
                 }
 
-                // Performance Section
+                // Performance Section - Hidden for now (not needed after optimization)
+                // Keeping code for potential future use if performance limiting becomes necessary
+                /*
                 Section {
                     Picker("Large File Threshold", selection: $configuration.largeFileThreshold) {
                         Text("250 KB").tag(250_000)
@@ -151,6 +147,7 @@ public struct EditorSettingsView: View {
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
+                */
             }
             .navigationTitle("Editor Settings")
             .navigationBarTitleDisplayMode(.inline)
@@ -195,12 +192,6 @@ public struct EditorSettingsView: View {
                             Toggle("Show Invisible Characters", isOn: $configuration.showInvisibleCharacters)
                             Toggle("Line Wrapping", isOn: $configuration.lineWrapping)
                             Toggle("Code Folding", isOn: $configuration.showCodeFolding)
-                                .disabled(configuration.isLargeFileMode)
-                            if configuration.isLargeFileMode {
-                                Text("Code folding is disabled for large files")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                            }
 
                             HStack {
                                 Text("Font Size")
@@ -280,7 +271,7 @@ public struct EditorSettingsView: View {
 
                             if let onConvert = onConvertLineEndings {
                                 Menu("Convert To...") {
-                                    ForEach(LineEnding.allCases.filter { $0 != .mixed && $0 != configuration.lineEnding }) { ending in
+                                    ForEach(LineEnding.allCases.filter { $0 != configuration.lineEnding }) { ending in
                                         Button(ending.displayName) {
                                             onConvert(ending)
                                         }
@@ -301,7 +292,9 @@ public struct EditorSettingsView: View {
                         .padding(.vertical, 4)
                     }
 
-                    // Performance Section
+                    // Performance Section - Hidden for now (not needed after optimization)
+                    // Keeping code for potential future use if performance limiting becomes necessary
+                    /*
                     GroupBox("Performance") {
                         VStack(alignment: .leading, spacing: 8) {
                             Picker("Large File Threshold", selection: $configuration.largeFileThreshold) {
@@ -324,11 +317,12 @@ public struct EditorSettingsView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.vertical, 4)
                     }
+                    */
                 }
                 .padding()
             }
         }
-        .frame(width: 400, height: 640)
+        .frame(width: 400, height: 580)
     }
     #endif
 

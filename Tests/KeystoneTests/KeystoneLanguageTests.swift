@@ -114,45 +114,49 @@ final class KeystoneLanguageTests: XCTestCase {
         XCTAssertEqual(KeystoneLanguage.detect(from: "path/to/file.py"), .python)
     }
 
-    // MARK: - Keywords Tests
+    // MARK: - Comment Syntax Tests
 
-    func testSwiftKeywords() {
-        let keywords = KeystoneLanguage.swift.keywords
-        XCTAssertTrue(keywords.contains("func"))
-        XCTAssertTrue(keywords.contains("class"))
-        XCTAssertTrue(keywords.contains("struct"))
-        XCTAssertTrue(keywords.contains("let"))
-        XCTAssertTrue(keywords.contains("var"))
+    func testSwiftCommentSyntax() {
+        let syntax = KeystoneLanguage.swift.commentSyntax
+        XCTAssertNotNil(syntax)
+        XCTAssertEqual(syntax?.lineComment, "//")
+        XCTAssertEqual(syntax?.blockComment?.start, "/*")
+        XCTAssertEqual(syntax?.blockComment?.end, "*/")
     }
 
-    func testPythonKeywords() {
-        let keywords = KeystoneLanguage.python.keywords
-        XCTAssertTrue(keywords.contains("def"))
-        XCTAssertTrue(keywords.contains("class"))
-        XCTAssertTrue(keywords.contains("import"))
-        XCTAssertTrue(keywords.contains("if"))
-        XCTAssertTrue(keywords.contains("for"))
+    func testPythonCommentSyntax() {
+        let syntax = KeystoneLanguage.python.commentSyntax
+        XCTAssertNotNil(syntax)
+        XCTAssertEqual(syntax?.lineComment, "#")
+        XCTAssertNil(syntax?.blockComment)
     }
 
-    func testPlainTextHasNoKeywords() {
-        let keywords = KeystoneLanguage.plainText.keywords
-        XCTAssertTrue(keywords.isEmpty)
+    func testHTMLCommentSyntax() {
+        let syntax = KeystoneLanguage.html.commentSyntax
+        XCTAssertNotNil(syntax)
+        XCTAssertNil(syntax?.lineComment)
+        XCTAssertEqual(syntax?.blockComment?.start, "<!--")
+        XCTAssertEqual(syntax?.blockComment?.end, "-->")
     }
 
-    // MARK: - Types Tests
-
-    func testSwiftTypes() {
-        let types = KeystoneLanguage.swift.types
-        XCTAssertTrue(types.contains("String"))
-        XCTAssertTrue(types.contains("Int"))
-        XCTAssertTrue(types.contains("Bool"))
-        XCTAssertTrue(types.contains("Array"))
-        XCTAssertTrue(types.contains("Optional"))
+    func testPlainTextHasNoCommentSyntax() {
+        let syntax = KeystoneLanguage.plainText.commentSyntax
+        XCTAssertNil(syntax)
     }
 
-    func testPlainTextHasNoTypes() {
-        let types = KeystoneLanguage.plainText.types
-        XCTAssertTrue(types.isEmpty)
+    func testJSONHasNoCommentSyntax() {
+        let syntax = KeystoneLanguage.json.commentSyntax
+        XCTAssertNil(syntax)
+    }
+
+    // MARK: - Supports Comments Tests
+
+    func testSwiftSupportsComments() {
+        XCTAssertTrue(KeystoneLanguage.swift.supportsComments)
+    }
+
+    func testPlainTextDoesNotSupportComments() {
+        XCTAssertFalse(KeystoneLanguage.plainText.supportsComments)
     }
 
     // MARK: - Case Iterable Tests

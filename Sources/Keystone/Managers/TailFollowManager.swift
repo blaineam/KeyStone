@@ -9,17 +9,6 @@ import Foundation
 import Combine
 
 /// Manages tail-follow functionality for monitoring file changes in real-time.
-///
-/// Use this to watch log files or other files that are being actively written to.
-///
-/// Example usage:
-/// ```swift
-/// @StateObject private var tailFollow = TailFollowManager()
-///
-/// tailFollow.start(fileURL: logFileURL) { newContent in
-///     self.textContent = newContent
-/// }
-/// ```
 @MainActor
 public class TailFollowManager: ObservableObject {
     /// Whether tail follow is currently active.
@@ -43,9 +32,6 @@ public class TailFollowManager: ObservableObject {
     }
 
     /// Starts monitoring a file for changes.
-    /// - Parameters:
-    ///   - fileURL: The URL of the file to monitor.
-    ///   - onUpdate: Callback invoked with the new file content when changes are detected.
     public func start(fileURL: URL, onUpdate: @escaping (String) -> Void) {
         stop()
 
@@ -53,10 +39,8 @@ public class TailFollowManager: ObservableObject {
         updateHandler = onUpdate
         isEnabled = true
 
-        // Get initial file state
         updateFileState(fileURL: fileURL)
 
-        // Start the timer
         timer = Timer.scheduledTimer(withTimeInterval: updateInterval, repeats: true) { [weak self] _ in
             guard let self else { return }
             Task { @MainActor [weak self] in
@@ -77,9 +61,6 @@ public class TailFollowManager: ObservableObject {
     }
 
     /// Toggles tail follow on/off.
-    /// - Parameters:
-    ///   - fileURL: The URL of the file to monitor (used when enabling).
-    ///   - onUpdate: Callback invoked with the new file content when changes are detected.
     public func toggle(fileURL: URL, onUpdate: @escaping (String) -> Void) {
         if isEnabled {
             stop()
@@ -103,7 +84,6 @@ public class TailFollowManager: ObservableObject {
         let currentSize = attrs[.size] as? UInt64 ?? 0
         let currentModDate = attrs[.modificationDate] as? Date
 
-        // Check if file has changed
         let sizeChanged = currentSize != lastFileSize
         let dateChanged = currentModDate != lastModificationDate
 
@@ -111,11 +91,9 @@ public class TailFollowManager: ObservableObject {
             lastFileSize = currentSize
             lastModificationDate = currentModDate
 
-            // Read the new content
             if let content = try? String(contentsOf: fileURL, encoding: .utf8) {
                 updateHandler(content)
             } else if let content = try? String(contentsOf: fileURL, encoding: .ascii) {
-                // Fallback to ASCII for binary-ish log files
                 updateHandler(content)
             }
         }
@@ -144,7 +122,6 @@ public extension TailFollowManager {
         }
     }
 
-    /// Sets the update frequency using a preset.
     func setUpdateFrequency(_ frequency: UpdateFrequency) {
         updateInterval = frequency.rawValue
     }

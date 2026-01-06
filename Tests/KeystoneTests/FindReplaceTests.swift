@@ -9,24 +9,39 @@ import XCTest
 @MainActor
 final class FindReplaceTests: XCTestCase {
 
+    // Helper to wait for async search to complete
+    private func waitForSearch(_ manager: FindReplaceManager, timeout: TimeInterval = 1.0) async {
+        // Wait for isSearching to turn true then false
+        let deadline = Date().addingTimeInterval(timeout)
+        while manager.isSearching && Date() < deadline {
+            try? await Task.sleep(nanoseconds: 10_000_000) // 10ms
+        }
+        // Additional small delay to ensure results are posted
+        try? await Task.sleep(nanoseconds: 50_000_000) // 50ms
+    }
+
     // MARK: - Basic Search Tests
 
-    func testSearchFindsMatches() {
+    func testSearchFindsMatches() async {
         let manager = FindReplaceManager()
         manager.searchQuery = "hello"
 
         let text = "hello world, hello there"
         manager.search(in: text)
 
+        await waitForSearch(manager)
+
         XCTAssertEqual(manager.matches.count, 2)
     }
 
-    func testSearchNoMatches() {
+    func testSearchNoMatches() async {
         let manager = FindReplaceManager()
         manager.searchQuery = "foo"
 
         let text = "hello world"
         manager.search(in: text)
+
+        await waitForSearch(manager)
 
         XCTAssertEqual(manager.matches.count, 0)
     }
@@ -38,22 +53,25 @@ final class FindReplaceTests: XCTestCase {
         let text = "hello world"
         manager.search(in: text)
 
+        // Empty query is synchronous
         XCTAssertEqual(manager.matches.count, 0)
     }
 
     // MARK: - Case Sensitive Search Tests
 
-    func testSearchCaseInsensitiveByDefault() {
+    func testSearchCaseInsensitiveByDefault() async {
         let manager = FindReplaceManager()
         manager.searchQuery = "HELLO"
 
         let text = "hello world, Hello there"
         manager.search(in: text)
 
+        await waitForSearch(manager)
+
         XCTAssertEqual(manager.matches.count, 2)
     }
 
-    func testSearchCaseSensitive() {
+    func testSearchCaseSensitive() async {
         let manager = FindReplaceManager()
         manager.searchQuery = "hello"
         manager.options.caseSensitive = true
@@ -61,13 +79,15 @@ final class FindReplaceTests: XCTestCase {
         let text = "hello world, Hello there"
         manager.search(in: text)
 
+        await waitForSearch(manager)
+
         XCTAssertEqual(manager.matches.count, 1)
         XCTAssertEqual(manager.matches.first?.matchedText, "hello")
     }
 
     // MARK: - Whole Word Search Tests
 
-    func testSearchWholeWord() {
+    func testSearchWholeWord() async {
         let manager = FindReplaceManager()
         manager.searchQuery = "hello"
         manager.options.wholeWord = true
@@ -75,10 +95,12 @@ final class FindReplaceTests: XCTestCase {
         let text = "hello world, helloworld"
         manager.search(in: text)
 
+        await waitForSearch(manager)
+
         XCTAssertEqual(manager.matches.count, 1)
     }
 
-    func testSearchWholeWordMultipleMatches() {
+    func testSearchWholeWordMultipleMatches() async {
         let manager = FindReplaceManager()
         manager.searchQuery = "hello"
         manager.options.wholeWord = true
@@ -86,12 +108,14 @@ final class FindReplaceTests: XCTestCase {
         let text = "hello world, hello there"
         manager.search(in: text)
 
+        await waitForSearch(manager)
+
         XCTAssertEqual(manager.matches.count, 2)
     }
 
     // MARK: - Regex Search Tests
 
-    func testSearchWithRegex() {
+    func testSearchWithRegex() async {
         let manager = FindReplaceManager()
         manager.searchQuery = "\\d+"
         manager.options.useRegex = true
@@ -99,13 +123,15 @@ final class FindReplaceTests: XCTestCase {
         let text = "item1, item22, item333"
         manager.search(in: text)
 
+        await waitForSearch(manager)
+
         XCTAssertEqual(manager.matches.count, 3)
         XCTAssertEqual(manager.matches[0].matchedText, "1")
         XCTAssertEqual(manager.matches[1].matchedText, "22")
         XCTAssertEqual(manager.matches[2].matchedText, "333")
     }
 
-    func testSearchInvalidRegex() {
+    func testSearchInvalidRegex() async {
         let manager = FindReplaceManager()
         manager.searchQuery = "[invalid"
         manager.options.useRegex = true
@@ -113,17 +139,21 @@ final class FindReplaceTests: XCTestCase {
         let text = "hello world"
         manager.search(in: text)
 
+        await waitForSearch(manager)
+
         XCTAssertEqual(manager.matches.count, 0)
     }
 
     // MARK: - Navigation Tests
 
-    func testFindNextWrapsAround() {
+    func testFindNextWrapsAround() async {
         let manager = FindReplaceManager()
         manager.searchQuery = "a"
 
         let text = "a b a c a"
         manager.search(in: text)
+
+        await waitForSearch(manager)
 
         XCTAssertEqual(manager.matches.count, 3)
         XCTAssertEqual(manager.currentMatchIndex, 0)
@@ -138,12 +168,14 @@ final class FindReplaceTests: XCTestCase {
         XCTAssertEqual(manager.currentMatchIndex, 0) // Wraps around
     }
 
-    func testFindPreviousWrapsAround() {
+    func testFindPreviousWrapsAround() async {
         let manager = FindReplaceManager()
         manager.searchQuery = "a"
 
         let text = "a b a c a"
         manager.search(in: text)
+
+        await waitForSearch(manager)
 
         XCTAssertEqual(manager.currentMatchIndex, 0)
 
@@ -154,13 +186,15 @@ final class FindReplaceTests: XCTestCase {
         XCTAssertEqual(manager.currentMatchIndex, 1)
     }
 
-    func testFindNextNoWrapAround() {
+    func testFindNextNoWrapAround() async {
         let manager = FindReplaceManager()
         manager.searchQuery = "a"
         manager.options.wrapAround = false
 
         let text = "a b a"
         manager.search(in: text)
+
+        await waitForSearch(manager)
 
         XCTAssertEqual(manager.currentMatchIndex, 0)
 
@@ -173,7 +207,7 @@ final class FindReplaceTests: XCTestCase {
 
     // MARK: - Replace Tests
 
-    func testReplaceCurrent() {
+    func testReplaceCurrent() async {
         let manager = FindReplaceManager()
         manager.searchQuery = "hello"
         manager.replaceText = "hi"
@@ -181,12 +215,14 @@ final class FindReplaceTests: XCTestCase {
         let text = "hello world"
         manager.search(in: text)
 
+        await waitForSearch(manager)
+
         let result = manager.replaceCurrent(in: text)
 
         XCTAssertEqual(result, "hi world")
     }
 
-    func testReplaceAll() {
+    func testReplaceAll() async {
         let manager = FindReplaceManager()
         manager.searchQuery = "a"
         manager.replaceText = "X"
@@ -194,18 +230,22 @@ final class FindReplaceTests: XCTestCase {
         let text = "a b a c a"
         manager.search(in: text)
 
+        await waitForSearch(manager)
+
         let result = manager.replaceAll(in: text)
 
         XCTAssertEqual(result, "X b X c X")
     }
 
-    func testReplaceAllNoMatches() {
+    func testReplaceAllNoMatches() async {
         let manager = FindReplaceManager()
         manager.searchQuery = "foo"
         manager.replaceText = "bar"
 
         let text = "hello world"
         manager.search(in: text)
+
+        await waitForSearch(manager)
 
         let result = manager.replaceAll(in: text)
 
@@ -221,22 +261,26 @@ final class FindReplaceTests: XCTestCase {
         XCTAssertEqual(manager.statusText, "")
     }
 
-    func testStatusTextNoResults() {
+    func testStatusTextNoResults() async {
         let manager = FindReplaceManager()
         manager.searchQuery = "foo"
 
         let text = "hello world"
         manager.search(in: text)
 
+        await waitForSearch(manager)
+
         XCTAssertEqual(manager.statusText, "No results")
     }
 
-    func testStatusTextWithMatches() {
+    func testStatusTextWithMatches() async {
         let manager = FindReplaceManager()
         manager.searchQuery = "a"
 
         let text = "a b a c a"
         manager.search(in: text)
+
+        await waitForSearch(manager)
 
         XCTAssertEqual(manager.statusText, "1 of 3")
 
@@ -283,13 +327,15 @@ final class FindReplaceTests: XCTestCase {
 
     // MARK: - Clear Tests
 
-    func testClear() {
+    func testClear() async {
         let manager = FindReplaceManager()
         manager.searchQuery = "hello"
         manager.replaceText = "world"
 
         let text = "hello there"
         manager.search(in: text)
+
+        await waitForSearch(manager)
 
         XCTAssertEqual(manager.matches.count, 1)
 
@@ -303,24 +349,28 @@ final class FindReplaceTests: XCTestCase {
 
     // MARK: - Match Properties Tests
 
-    func testMatchLineAndColumn() {
+    func testMatchLineAndColumn() async {
         let manager = FindReplaceManager()
         manager.searchQuery = "world"
 
         let text = "hello\nworld"
         manager.search(in: text)
 
+        await waitForSearch(manager)
+
         XCTAssertEqual(manager.matches.count, 1)
         XCTAssertEqual(manager.matches.first?.lineNumber, 2)
         XCTAssertEqual(manager.matches.first?.column, 1)
     }
 
-    func testCurrentMatch() {
+    func testCurrentMatch() async {
         let manager = FindReplaceManager()
         manager.searchQuery = "a"
 
         let text = "a b a"
         manager.search(in: text)
+
+        await waitForSearch(manager)
 
         XCTAssertNotNil(manager.currentMatch)
         XCTAssertEqual(manager.currentMatch?.matchedText, "a")
@@ -329,12 +379,14 @@ final class FindReplaceTests: XCTestCase {
         XCTAssertEqual(manager.currentMatch?.matchedText, "a")
     }
 
-    func testCurrentMatchNilWhenEmpty() {
+    func testCurrentMatchNilWhenEmpty() async {
         let manager = FindReplaceManager()
         manager.searchQuery = "foo"
 
         let text = "hello world"
         manager.search(in: text)
+
+        await waitForSearch(manager)
 
         XCTAssertNil(manager.currentMatch)
     }

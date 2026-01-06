@@ -1,0 +1,24 @@
+import Runestone
+#if canImport(UIKit)
+import UIKit
+#elseif canImport(AppKit)
+import AppKit
+#endif
+
+class ViewController: UIViewController {
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        title = "TextCompanion"
+        navigationController?.navigationBar.scrollEdgeAppearance = UINavigationBarAppearance()
+        let textView = TextView()
+        textView.translatesAutoresizingMaskIntoConstraints = false
+        textView.backgroundColor = .systemBackground
+        view.addSubview(textView)
+        NSLayoutConstraint.activate([
+            textView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            textView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            textView.topAnchor.constraint(equalTo: view.topAnchor),
+            textView.bottomAnchor.constraint(equalTo: view.bottomAnchor)
+        ])
+    }
+}

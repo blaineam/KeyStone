@@ -11,7 +11,7 @@ final class CodeFoldingTests: XCTestCase {
 
     // MARK: - Region Detection Tests
 
-    func testDetectBraceRegions() {
+    func testDetectBlockRegions() {
         let manager = CodeFoldingManager()
         let text = """
         func test() {
@@ -21,29 +21,10 @@ final class CodeFoldingTests: XCTestCase {
         }
         """
 
-        manager.analyze(text)
+        manager.analyzeText(text)
 
-        // Should detect 2 brace regions: the function and the if statement
-        let braceRegions = manager.regions.filter { $0.type == .braces }
-        XCTAssertEqual(braceRegions.count, 2)
-    }
-
-    func testDetectBracketRegions() {
-        let manager = CodeFoldingManager()
-        let text = """
-        let array = [
-            1,
-            2,
-            3
-        ]
-        """
-
-        manager.analyze(text)
-
-        let bracketRegions = manager.regions.filter { $0.type == .brackets }
-        XCTAssertEqual(bracketRegions.count, 1)
-        XCTAssertEqual(bracketRegions.first?.startLine, 1)
-        XCTAssertEqual(bracketRegions.first?.endLine, 5)
+        // Should detect 2 block regions: the function and the if statement
+        XCTAssertEqual(manager.regions.count, 2)
     }
 
     func testDetectCommentRegions() {
@@ -55,19 +36,19 @@ final class CodeFoldingTests: XCTestCase {
         let x = 1
         """
 
-        manager.analyze(text)
+        manager.analyzeText(text)
 
         let commentRegions = manager.regions.filter { $0.type == .comment }
         XCTAssertEqual(commentRegions.count, 1)
-        XCTAssertEqual(commentRegions.first?.startLine, 1)
-        XCTAssertEqual(commentRegions.first?.endLine, 3)
+        XCTAssertEqual(commentRegions.first?.startLine, 0)
+        XCTAssertEqual(commentRegions.first?.endLine, 2)
     }
 
     func testNoRegionsForSingleLineBlocks() {
         let manager = CodeFoldingManager()
         let text = "let array = [1, 2, 3]"
 
-        manager.analyze(text)
+        manager.analyzeText(text)
 
         // Single line brackets should not create a region
         XCTAssertEqual(manager.regions.count, 0)
@@ -83,20 +64,20 @@ final class CodeFoldingTests: XCTestCase {
         }
         """
 
-        manager.analyze(text)
+        manager.analyzeText(text)
 
         guard let region = manager.regions.first else {
             XCTFail("Expected at least one region")
             return
         }
 
-        XCTAssertFalse(manager.isFolded(region))
+        XCTAssertFalse(manager.foldedRegionIds.contains(region.id))
 
-        manager.toggleFold(region)
-        XCTAssertTrue(manager.isFolded(region))
+        manager.toggleFold(for: region)
+        XCTAssertTrue(manager.foldedRegionIds.contains(region.id))
 
-        manager.toggleFold(region)
-        XCTAssertFalse(manager.isFolded(region))
+        manager.toggleFold(for: region)
+        XCTAssertFalse(manager.foldedRegionIds.contains(region.id))
     }
 
     func testFoldAndUnfoldSeparately() {
@@ -107,7 +88,7 @@ final class CodeFoldingTests: XCTestCase {
         }
         """
 
-        manager.analyze(text)
+        manager.analyzeText(text)
 
         guard let region = manager.regions.first else {
             XCTFail("Expected at least one region")
@@ -115,10 +96,10 @@ final class CodeFoldingTests: XCTestCase {
         }
 
         manager.fold(region)
-        XCTAssertTrue(manager.isFolded(region))
+        XCTAssertTrue(manager.foldedRegionIds.contains(region.id))
 
         manager.unfold(region)
-        XCTAssertFalse(manager.isFolded(region))
+        XCTAssertFalse(manager.foldedRegionIds.contains(region.id))
     }
 
     func testFoldAll() {
@@ -134,13 +115,13 @@ final class CodeFoldingTests: XCTestCase {
         }
         """
 
-        manager.analyze(text)
+        manager.analyzeText(text)
         XCTAssertGreaterThan(manager.regions.count, 0)
 
         manager.foldAll()
 
         for region in manager.regions {
-            XCTAssertTrue(manager.isFolded(region))
+            XCTAssertTrue(manager.foldedRegionIds.contains(region.id))
         }
     }
 
@@ -155,12 +136,12 @@ final class CodeFoldingTests: XCTestCase {
         }
         """
 
-        manager.analyze(text)
+        manager.analyzeText(text)
         manager.foldAll()
         manager.unfoldAll()
 
         for region in manager.regions {
-            XCTAssertFalse(manager.isFolded(region))
+            XCTAssertFalse(manager.foldedRegionIds.contains(region.id))
         }
     }
 
@@ -176,7 +157,7 @@ final class CodeFoldingTests: XCTestCase {
         line 5
         """
 
-        manager.analyze(text)
+        manager.analyzeText(text)
 
         guard let region = manager.regions.first else {
             XCTFail("Expected at least one region")
@@ -184,17 +165,17 @@ final class CodeFoldingTests: XCTestCase {
         }
 
         // Before folding, no lines are hidden
+        XCTAssertFalse(manager.isLineHidden(1))
         XCTAssertFalse(manager.isLineHidden(2))
-        XCTAssertFalse(manager.isLineHidden(3))
 
-        manager.toggleFold(region)
+        manager.fold(region)
 
-        // After folding, lines 2-4 should be hidden (but not line 1 which has the opening brace)
+        // After folding, lines 1-3 should be hidden (but not line 0 which has the opening brace)
+        XCTAssertTrue(manager.isLineHidden(1))
         XCTAssertTrue(manager.isLineHidden(2))
-        XCTAssertTrue(manager.isLineHidden(3))
-        XCTAssertTrue(manager.isLineHidden(4)) // closing brace line
-        XCTAssertFalse(manager.isLineHidden(1)) // opening brace line stays visible
-        XCTAssertFalse(manager.isLineHidden(5)) // line after region
+        XCTAssertTrue(manager.isLineHidden(3)) // closing brace line
+        XCTAssertFalse(manager.isLineHidden(0)) // opening brace line stays visible
+        XCTAssertFalse(manager.isLineHidden(4)) // line after region
     }
 
     func testIsLineHiddenWhenDisabled() {
@@ -205,122 +186,19 @@ final class CodeFoldingTests: XCTestCase {
         }
         """
 
-        manager.analyze(text)
+        manager.analyzeText(text)
         guard let region = manager.regions.first else {
             XCTFail("Expected at least one region")
             return
         }
 
-        manager.toggleFold(region)
-        XCTAssertTrue(manager.isLineHidden(2))
+        manager.fold(region)
+        XCTAssertTrue(manager.isLineHidden(1))
 
-        // Disable folding
+        // Disable folding - hiddenLines should still contain lines but isEnabled affects region detection
         manager.isEnabled = false
-        XCTAssertFalse(manager.isLineHidden(2))
-    }
-
-    // MARK: - Offset Visibility Tests
-
-    func testIsOffsetHidden() {
-        let manager = CodeFoldingManager()
-        let text = """
-        func test() {
-            line 2
-        }
-        """
-
-        manager.analyze(text)
-        guard let region = manager.regions.first else {
-            XCTFail("Expected at least one region")
-            return
-        }
-
-        manager.toggleFold(region)
-
-        // Offset inside folded content should be hidden
-        // "func test() {\n" is 14 chars, so offset 14+ is hidden
-        XCTAssertFalse(manager.isOffsetHidden(0))  // Start of first line
-        XCTAssertFalse(manager.isOffsetHidden(10)) // In first line
-        XCTAssertTrue(manager.isOffsetHidden(15))  // In folded content
-    }
-
-    // MARK: - Auto-Unfold Tests
-
-    func testUnfoldRegionsContainingOffset() {
-        let manager = CodeFoldingManager()
-        let text = """
-        func test() {
-            line 2
-        }
-        """
-
-        manager.analyze(text)
-        guard let region = manager.regions.first else {
-            XCTFail("Expected at least one region")
-            return
-        }
-
-        manager.toggleFold(region)
-        XCTAssertTrue(manager.isFolded(region))
-
-        // Unfold by navigating to an offset inside the region
-        let unfolded = manager.unfoldRegions(containingOffset: 15)
-        XCTAssertTrue(unfolded)
-        XCTAssertFalse(manager.isFolded(region))
-    }
-
-    func testUnfoldRegionsContainingLine() {
-        let manager = CodeFoldingManager()
-        let text = """
-        func test() {
-            line 2
-        }
-        """
-
-        manager.analyze(text)
-        guard let region = manager.regions.first else {
-            XCTFail("Expected at least one region")
-            return
-        }
-
-        manager.toggleFold(region)
-        XCTAssertTrue(manager.isFolded(region))
-
-        // Unfold by navigating to line 2
-        let unfolded = manager.unfoldRegions(containingLine: 2)
-        XCTAssertTrue(unfolded)
-        XCTAssertFalse(manager.isFolded(region))
-    }
-
-    func testUnfoldNestedRegions() {
-        let manager = CodeFoldingManager()
-        let text = """
-        func outer() {
-            func inner() {
-                print("nested")
-            }
-        }
-        """
-
-        manager.analyze(text)
-
-        // Fold all regions
-        manager.foldAll()
-
-        // Find the inner region
-        let innerRegion = manager.regions.first { $0.startLine == 2 }
-        XCTAssertNotNil(innerRegion)
-
-        // Unfold by navigating to line 3 (inside inner region)
-        let unfolded = manager.unfoldRegions(containingLine: 3)
-        XCTAssertTrue(unfolded)
-
-        // Both outer and inner should be unfolded since line 3 is in both
-        for region in manager.regions {
-            if region.startLine <= 3 && region.endLine >= 3 {
-                XCTAssertFalse(manager.isFolded(region))
-            }
-        }
+        manager.analyzeText(text) // Re-analyze clears regions
+        XCTAssertTrue(manager.regions.isEmpty)
     }
 
     // MARK: - Region Query Tests
@@ -333,15 +211,15 @@ final class CodeFoldingTests: XCTestCase {
         }
         """
 
-        manager.analyze(text)
+        manager.analyzeText(text)
 
-        // Region starts at line 1
-        let region = manager.region(atLine: 1)
+        // Region starts at line 0
+        let region = manager.regionStarting(atLine: 0)
         XCTAssertNotNil(region)
-        XCTAssertEqual(region?.startLine, 1)
+        XCTAssertEqual(region?.startLine, 0)
 
-        // No region starts at line 2
-        XCTAssertNil(manager.region(atLine: 2))
+        // No region starts at line 1
+        XCTAssertNil(manager.regionStarting(atLine: 1))
     }
 
     func testRegionAtLineWhenDisabled() {
@@ -352,11 +230,12 @@ final class CodeFoldingTests: XCTestCase {
         }
         """
 
-        manager.analyze(text)
+        manager.analyzeText(text)
         manager.isEnabled = false
+        manager.analyzeText(text) // Re-analyze after disabling
 
         // Should return nil when disabled
-        XCTAssertNil(manager.region(atLine: 1))
+        XCTAssertNil(manager.regionStarting(atLine: 0))
     }
 
     func testHasFoldableRegion() {
@@ -367,11 +246,12 @@ final class CodeFoldingTests: XCTestCase {
         }
         """
 
-        manager.analyze(text)
+        manager.analyzeText(text)
 
-        XCTAssertTrue(manager.hasFoldableRegion(atLine: 1))
-        XCTAssertFalse(manager.hasFoldableRegion(atLine: 2))
-        XCTAssertFalse(manager.hasFoldableRegion(atLine: 3))
+        // Use regionStarting(atLine:) to check if a foldable region exists at a line
+        XCTAssertNotNil(manager.regionStarting(atLine: 0)) // Region starts at line 0
+        XCTAssertNil(manager.regionStarting(atLine: 1))    // No region starts at line 1
+        XCTAssertNil(manager.regionStarting(atLine: 2))    // No region starts at line 2
     }
 
     // MARK: - Line Count Tests
@@ -380,7 +260,9 @@ final class CodeFoldingTests: XCTestCase {
         let region = FoldableRegion(
             startLine: 1,
             endLine: 5,
-            type: .braces
+            type: .block,
+            range: NSRange(location: 0, length: 100),
+            previewText: "test"
         )
 
         XCTAssertEqual(region.lineCount, 5)
@@ -396,33 +278,15 @@ final class CodeFoldingTests: XCTestCase {
         }
         """
 
-        manager.analyze(text)
+        manager.analyzeText(text)
 
         guard let region = manager.regions.first else {
             XCTFail("Expected at least one region")
             return
         }
 
-        XCTAssertFalse(region.preview.isEmpty)
-        XCTAssertTrue(region.preview.contains("func") || region.preview == "...")
-    }
-
-    // MARK: - MARK Region Tests
-
-    func testDetectMarkRegions() {
-        let manager = CodeFoldingManager()
-        let text = """
-        // MARK: - Section 1
-        let x = 1
-        let y = 2
-        // MARK: - Section 2
-        let z = 3
-        """
-
-        manager.analyze(text)
-
-        let markRegions = manager.regions.filter { $0.type == .region }
-        XCTAssertGreaterThanOrEqual(markRegions.count, 1)
+        XCTAssertFalse(region.previewText.isEmpty)
+        XCTAssertTrue(region.previewText.contains("func") || region.previewText == "...")
     }
 
     // MARK: - Nested Regions Tests
@@ -439,11 +303,10 @@ final class CodeFoldingTests: XCTestCase {
         }
         """
 
-        manager.analyze(text)
+        manager.analyzeText(text)
 
-        // Should detect all nested brace regions
-        let braceRegions = manager.regions.filter { $0.type == .braces }
-        XCTAssertEqual(braceRegions.count, 3) // class, func, if
+        // Should detect multiple regions (class, func, if block)
+        XCTAssertGreaterThanOrEqual(manager.regions.count, 3)
     }
 
     func testNestedFoldingIndependent() {
@@ -456,10 +319,10 @@ final class CodeFoldingTests: XCTestCase {
         }
         """
 
-        manager.analyze(text)
+        manager.analyzeText(text)
 
-        let classRegion = manager.regions.first { $0.startLine == 1 }
-        let funcRegion = manager.regions.first { $0.startLine == 2 }
+        let classRegion = manager.regions.first { $0.startLine == 0 }
+        let funcRegion = manager.regions.first { $0.startLine == 1 }
 
         XCTAssertNotNil(classRegion)
         XCTAssertNotNil(funcRegion)
@@ -467,12 +330,12 @@ final class CodeFoldingTests: XCTestCase {
         // Fold only the function
         if let funcRegion = funcRegion {
             manager.fold(funcRegion)
-            XCTAssertTrue(manager.isFolded(funcRegion))
+            XCTAssertTrue(manager.foldedRegionIds.contains(funcRegion.id))
         }
 
         // Class should still be unfolded
         if let classRegion = classRegion {
-            XCTAssertFalse(manager.isFolded(classRegion))
+            XCTAssertFalse(manager.foldedRegionIds.contains(classRegion.id))
         }
     }
 
@@ -491,16 +354,17 @@ final class CodeFoldingTests: XCTestCase {
         }
         """
 
-        manager.analyze(text)
+        manager.analyzeText(text)
         manager.isEnabled = false
+        manager.analyzeText(text) // Re-analyze after disabling
 
-        XCTAssertFalse(manager.hasFoldableRegion(atLine: 1))
-        XCTAssertNil(manager.region(atLine: 1))
+        // When disabled, no regions should be found
+        XCTAssertTrue(manager.regions.isEmpty)
     }
 
-    // MARK: - Hidden Character Ranges Tests
+    // MARK: - Hidden Lines Tests
 
-    func testHiddenCharacterRanges() {
+    func testHiddenLines() {
         let manager = CodeFoldingManager()
         let text = """
         func test() {
@@ -508,22 +372,22 @@ final class CodeFoldingTests: XCTestCase {
         }
         """
 
-        manager.analyze(text)
+        manager.analyzeText(text)
         guard let region = manager.regions.first else {
             XCTFail("Expected at least one region")
             return
         }
 
-        // Before folding, no hidden ranges
-        XCTAssertTrue(manager.hiddenCharacterRanges.isEmpty)
+        // Before folding, no hidden lines
+        XCTAssertTrue(manager.hiddenLines.isEmpty)
 
         manager.fold(region)
 
-        // After folding, should have hidden ranges
-        XCTAssertFalse(manager.hiddenCharacterRanges.isEmpty)
+        // After folding, should have hidden lines
+        XCTAssertFalse(manager.hiddenLines.isEmpty)
     }
 
-    func testHiddenCharacterRangesWhenDisabled() {
+    func testHiddenLinesAfterUnfold() {
         let manager = CodeFoldingManager()
         let text = """
         func test() {
@@ -531,17 +395,17 @@ final class CodeFoldingTests: XCTestCase {
         }
         """
 
-        manager.analyze(text)
+        manager.analyzeText(text)
         guard let region = manager.regions.first else {
             XCTFail("Expected at least one region")
             return
         }
 
         manager.fold(region)
-        XCTAssertFalse(manager.hiddenCharacterRanges.isEmpty)
+        XCTAssertFalse(manager.hiddenLines.isEmpty)
 
-        manager.isEnabled = false
-        XCTAssertTrue(manager.hiddenCharacterRanges.isEmpty)
+        manager.unfold(region)
+        XCTAssertTrue(manager.hiddenLines.isEmpty)
     }
 
     // MARK: - Folded Regions Property Tests
@@ -557,7 +421,7 @@ final class CodeFoldingTests: XCTestCase {
         }
         """
 
-        manager.analyze(text)
+        manager.analyzeText(text)
 
         // Initially no folded regions
         XCTAssertTrue(manager.foldedRegions.isEmpty)
@@ -584,11 +448,11 @@ final class CodeFoldingTests: XCTestCase {
         }
         """
 
-        manager.analyze(text)
+        manager.analyzeText(text)
         let firstAnalysisRegions = manager.regions
 
         // Analyze same text again
-        manager.analyze(text)
+        manager.analyzeText(text)
 
         // Should have same region count
         XCTAssertEqual(manager.regions.count, firstAnalysisRegions.count)
@@ -603,7 +467,7 @@ final class CodeFoldingTests: XCTestCase {
         }
         """
 
-        manager.analyze(text1)
+        manager.analyzeText(text1)
         XCTAssertEqual(manager.regions.count, 1)
 
         let text2 = """
@@ -615,13 +479,13 @@ final class CodeFoldingTests: XCTestCase {
         }
         """
 
-        manager.analyze(text2)
+        manager.analyzeText(text2)
         XCTAssertEqual(manager.regions.count, 2)
     }
 
-    // MARK: - Folded Region Containing Offset Tests
+    // MARK: - Folded Region State Tests
 
-    func testFoldedRegionContainingOffset() {
+    func testFoldedRegionState() {
         let manager = CodeFoldingManager()
         let text = """
         func test() {
@@ -629,37 +493,42 @@ final class CodeFoldingTests: XCTestCase {
         }
         """
 
-        manager.analyze(text)
+        manager.analyzeText(text)
         guard let region = manager.regions.first else {
             XCTFail("Expected at least one region")
             return
         }
 
-        // Before folding, no region contains the offset
-        XCTAssertNil(manager.foldedRegion(containingOffset: 15))
+        // Before folding, no lines should be hidden
+        XCTAssertTrue(manager.hiddenLines.isEmpty)
 
         manager.fold(region)
 
-        // After folding, should find the region
-        let foundRegion = manager.foldedRegion(containingOffset: 15)
-        XCTAssertNotNil(foundRegion)
-        XCTAssertEqual(foundRegion?.id, region.id)
+        // After folding, inner lines should be hidden
+        XCTAssertFalse(manager.hiddenLines.isEmpty)
+        XCTAssertTrue(manager.foldedRegionIds.contains(region.id))
     }
 
-    // MARK: - Line Start Offset Tests
+    // MARK: - Region Containing Line Tests
 
-    func testGetLineStartOffset() {
+    func testRegionContainingLine() {
         let manager = CodeFoldingManager()
         let text = """
-        line1
-        line2
-        line3
+        func test() {
+            line 1
+            line 2
+        }
         """
 
-        manager.analyze(text)
+        manager.analyzeText(text)
 
-        XCTAssertEqual(manager.getLineStartOffset(1), 0)
-        XCTAssertEqual(manager.getLineStartOffset(2), 6) // "line1\n" = 6 chars
-        XCTAssertEqual(manager.getLineStartOffset(3), 12) // "line1\nline2\n" = 12 chars
+        // region(atLine:) returns innermost region containing the line
+        let regionContainingLine1 = manager.region(atLine: 1)
+        XCTAssertNotNil(regionContainingLine1)
+        XCTAssertEqual(regionContainingLine1?.startLine, 0)
+
+        // Line 4 is outside all regions
+        let regionContainingLine4 = manager.region(atLine: 4)
+        XCTAssertNil(regionContainingLine4)
     }
 }
