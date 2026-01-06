@@ -102,11 +102,15 @@ public class FindReplaceManager: ObservableObject {
 
     /// Status text showing match count.
     public var statusText: String {
-        if searchQuery.count < Self.minimumSearchLength {
-            return searchQuery.isEmpty ? "" : "Type \(Self.minimumSearchLength - searchQuery.count) more"
+        if searchQuery.isEmpty {
+            return ""
         }
         if isSearching {
             return "Searching..."
+        }
+        // Show hint if no search has been performed yet
+        if matches.isEmpty && !hasSearched {
+            return "Press Return"
         }
         if matches.isEmpty {
             return "No results"
@@ -114,16 +118,22 @@ public class FindReplaceManager: ObservableObject {
         return "\(currentMatchIndex + 1) of \(matches.count)"
     }
 
+    /// Whether a search has been performed for the current query
+    @Published private var hasSearched: Bool = false
+
+    /// Tracks the last query that was searched to detect changes
+    private var lastSearchedQuery: String = ""
+
     public init() {}
 
     /// Performs a search in the given text.
-    /// Requires minimum 3 characters and runs on background thread for large files.
+    /// Only runs when explicitly triggered (Return key). Runs on background thread.
     /// - Parameter text: The text to search in.
     public func search(in text: String) {
-        // Require minimum characters before searching
-        guard searchQuery.count >= Self.minimumSearchLength else {
+        guard !searchQuery.isEmpty else {
             matches = []
             currentMatchIndex = 0
+            hasSearched = false
             return
         }
 
@@ -132,6 +142,8 @@ public class FindReplaceManager: ObservableObject {
         let searchOptions = options
 
         isSearching = true
+        hasSearched = true
+        lastSearchedQuery = query
 
         // Run search on background thread
         searchQueue.async { [weak self] in
@@ -158,8 +170,15 @@ public class FindReplaceManager: ObservableObject {
         }
     }
 
+    /// Resets search state when query changes (called by view)
+    public func queryDidChange() {
+        if searchQuery != lastSearchedQuery {
+            hasSearched = false
+        }
+    }
+
     /// Performs the actual search work (can be called from any thread)
-    private static func performSearch(query: String, in text: String, options: SearchOptions) -> [SearchMatch] {
+    private nonisolated static func performSearch(query: String, in text: String, options: SearchOptions) -> [SearchMatch] {
         var foundMatches: [SearchMatch] = []
         let lines = text.components(separatedBy: .newlines)
 
@@ -303,17 +322,26 @@ public class FindReplaceManager: ObservableObject {
 public struct FindReplaceBar: View {
     @ObservedObject var manager: FindReplaceManager
     let text: String
+    let isLargeFile: Bool
     let onReplace: (String) -> Void
     let onNavigateToMatch: (SearchMatch) -> Void
+
+    /// Debounce timer for auto-search
+    @State private var searchDebounceTask: DispatchWorkItem?
+
+    /// Debounce delay for auto-search (2 seconds)
+    private static let autoSearchDelay: TimeInterval = 2.0
 
     public init(
         manager: FindReplaceManager,
         text: String,
+        isLargeFile: Bool = false,
         onReplace: @escaping (String) -> Void,
         onNavigateToMatch: @escaping (SearchMatch) -> Void
     ) {
         self.manager = manager
         self.text = text
+        self.isLargeFile = isLargeFile
         self.onReplace = onReplace
         self.onNavigateToMatch = onNavigateToMatch
     }
@@ -334,8 +362,21 @@ public struct FindReplaceBar: View {
                                 onNavigateToMatch(match)
                             }
                         }
-                        .onChange(of: manager.searchQuery) { _, _ in
-                            manager.search(in: text)
+                        .onChange(of: manager.searchQuery) { _, newValue in
+                            manager.queryDidChange()
+
+                            // Cancel any pending debounce
+                            searchDebounceTask?.cancel()
+                            searchDebounceTask = nil
+
+                            // For small files, auto-search with debounce after 2s of idle
+                            if !isLargeFile && newValue.count >= FindReplaceManager.minimumSearchLength {
+                                let task = DispatchWorkItem { [weak manager] in
+                                    manager?.search(in: text)
+                                }
+                                searchDebounceTask = task
+                                DispatchQueue.main.asyncAfter(deadline: .now() + Self.autoSearchDelay, execute: task)
+                            }
                         }
                     if !manager.searchQuery.isEmpty {
                         Button(action: { manager.searchQuery = "" }) {

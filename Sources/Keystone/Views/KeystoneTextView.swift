@@ -3381,14 +3381,21 @@ public struct KeystoneTextView: NSViewRepresentable {
         // Debounce timer for code folding analysis (runs less frequently)
         private var foldingWorkItem: DispatchWorkItem?
 
+        // Debounce timer for line number recalculation (expensive for large files)
+        private var lineNumberWorkItem: DispatchWorkItem?
+
         deinit {
             NotificationCenter.default.removeObserver(self)
         }
 
         /// Force sync text immediately (call before operations that need current text)
         func syncTextNow() {
+            textSyncWorkItem?.cancel()
+            textSyncWorkItem = nil
             if let textView = containerView?.textView {
-                parent.text = textView.string
+                let currentText = textView.string
+                lastSyncedTextHash = currentText.hashValue
+                parent.text = currentText
             }
         }
 
@@ -3398,15 +3405,43 @@ public struct KeystoneTextView: NSViewRepresentable {
             // Mark that we're syncing from the text view to prevent updateNSView from resetting
             isSyncingFromTextView = true
 
-            // Sync text immediately - required for proper editing
-            let currentText = textView.string
-            lastSyncedTextHash = currentText.hashValue  // Track what we synced (preserves undo)
-            parent.text = currentText
-            containerView?.updateLineNumbers()
+            // Use lightweight line number update immediately (just triggers redisplay)
+            // Full recalculation is debounced to avoid O(n) scan on every keystroke
+            containerView?.updateLineNumbersForVisibleArea()
 
-            // Reset flag after next run loop to allow updateNSView to complete
+            // Debounce the SwiftUI binding update to avoid O(n) operations on every keystroke
+            // The actual text editing happens in NSTextView, this just syncs the binding
+            textSyncWorkItem?.cancel()
+            let syncWork = DispatchWorkItem { [weak self] in
+                guard let self = self, let textView = self.containerView?.textView else { return }
+                self.isSyncingFromTextView = true
+                let currentText = textView.string
+                self.lastSyncedTextHash = currentText.hashValue
+                self.parent.text = currentText
+                DispatchQueue.main.async { [weak self] in
+                    self?.isSyncingFromTextView = false
+                }
+            }
+            textSyncWorkItem = syncWork
+            // Debounce to batch keystrokes - 250ms normal, 750ms low power
+            let syncDelay = parent.configuration.layoutDebounceInterval * 5
+            DispatchQueue.main.asyncAfter(deadline: .now() + syncDelay, execute: syncWork)
+
+            // Debounce full line number recalculation (O(n) operation)
+            lineNumberWorkItem?.cancel()
+            let lineWork = DispatchWorkItem { [weak self] in
+                self?.containerView?.updateLineNumbers()
+            }
+            lineNumberWorkItem = lineWork
+            let lineDelay = parent.configuration.layoutDebounceInterval * 5 // 250ms normal, 750ms low power
+            DispatchQueue.main.asyncAfter(deadline: .now() + lineDelay, execute: lineWork)
+
+            // Reset flag after next run loop - but only if text sync didn't fire yet
             DispatchQueue.main.async { [weak self] in
-                self?.isSyncingFromTextView = false
+                // Only reset if we didn't start a sync work item
+                if self?.textSyncWorkItem == nil {
+                    self?.isSyncingFromTextView = false
+                }
             }
 
             // Schedule syntax re-parse with debounce
@@ -4020,7 +4055,7 @@ public class KeystoneTextContainerViewMac: NSView {
     }
 
     /// Clears all folding styles from the text storage.
-    private func clearFoldingStyles() {
+    func clearFoldingStyles() {
         guard let textStorage = textView.textStorage else { return }
         let fullRange = NSRange(location: 0, length: textStorage.length)
 
