@@ -237,6 +237,7 @@ public struct KeystoneEditor: View {
                     manager: findReplaceManager,
                     text: $text,
                     undoController: undoController,
+                    isLargeFile: configuration.isLargeFileMode,
                     isSearchFieldFocused: $isSearchFieldFocused,
                     onNavigateToMatch: navigateToMatch
                 )
@@ -245,6 +246,7 @@ public struct KeystoneEditor: View {
                     manager: findReplaceManager,
                     text: $text,
                     undoController: undoController,
+                    isLargeFile: configuration.isLargeFileMode,
                     onNavigateToMatch: navigateToMatch
                 )
                 #endif
@@ -602,12 +604,18 @@ struct KeystoneFindReplaceBar: View {
     @ObservedObject var manager: FindReplaceManager
     @Binding var text: String
     var undoController: UndoController?
+    var isLargeFile: Bool = false
     #if os(iOS)
     /// Binding to track search field focus state (for symbol keyboard integration)
     var isSearchFieldFocused: Binding<Bool>?
     #endif
     var onNavigateToMatch: ((SearchMatch) -> Void)?
     @FocusState private var isSearchFocused: Bool
+
+    /// Debounce task for auto-search (small files only)
+    @State private var searchDebounceTask: DispatchWorkItem?
+    /// Auto-search delay for small files (2 seconds)
+    private static let autoSearchDelay: TimeInterval = 2.0
 
     #if os(iOS)
     private let buttonSize: CGFloat = 44
@@ -642,7 +650,8 @@ struct KeystoneFindReplaceBar: View {
                         isActive: manager.options.caseSensitive
                     ) {
                         manager.options.caseSensitive.toggle()
-                        manager.search(in: text)
+                        // Only auto-search for small files
+                        if !isLargeFile { manager.search(in: text) }
                     }
 
                     toggleButtonWithLabel(
@@ -651,7 +660,7 @@ struct KeystoneFindReplaceBar: View {
                         isActive: manager.options.wholeWord
                     ) {
                         manager.options.wholeWord.toggle()
-                        manager.search(in: text)
+                        if !isLargeFile { manager.search(in: text) }
                     }
 
                     toggleButtonWithLabel(
@@ -660,7 +669,7 @@ struct KeystoneFindReplaceBar: View {
                         isActive: manager.options.useRegex
                     ) {
                         manager.options.useRegex.toggle()
-                        manager.search(in: text)
+                        if !isLargeFile { manager.search(in: text) }
                     }
                 }
 
@@ -725,7 +734,8 @@ struct KeystoneFindReplaceBar: View {
                     .autocorrectionDisabled()
                     #endif
                     .onSubmit {
-                        manager.findNext()
+                        // Always search on Enter - this is the ONLY way to search for large files
+                        manager.search(in: text)
                         if let match = manager.currentMatch {
                             onNavigateToMatch?(match)
                         }
@@ -797,8 +807,22 @@ struct KeystoneFindReplaceBar: View {
         .onAppear {
             isSearchFocused = true
         }
-        .onChange(of: manager.searchQuery) { _, _ in
-            manager.search(in: text)
+        .onChange(of: manager.searchQuery) { _, newValue in
+            manager.queryDidChange()
+
+            // Cancel any pending debounce
+            searchDebounceTask?.cancel()
+            searchDebounceTask = nil
+
+            // For large files: NO auto-search, only on Enter key
+            // For small files: auto-search with 2s debounce after 3+ characters
+            if !isLargeFile && newValue.count >= FindReplaceManager.minimumSearchLength {
+                let task = DispatchWorkItem { [manager, text] in
+                    manager.search(in: text)
+                }
+                searchDebounceTask = task
+                DispatchQueue.main.asyncAfter(deadline: .now() + Self.autoSearchDelay, execute: task)
+            }
         }
         #if os(iOS)
         .onChange(of: isSearchFocused) { _, newValue in
