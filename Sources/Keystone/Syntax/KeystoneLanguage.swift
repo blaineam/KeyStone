@@ -19,6 +19,9 @@ import TreeSitterJSON
 import TreeSitterYAML
 import TreeSitterMarkdown
 import TreeSitterBash
+import TreeSitterJava
+import TreeSitterPHP
+import TreeSitterSQL
 // Query modules with highlight.scm files
 import TreeSitterSwiftQueries
 import TreeSitterPythonQueries
@@ -35,6 +38,9 @@ import TreeSitterJSONQueries
 import TreeSitterYAMLQueries
 import TreeSitterMarkdownQueries
 import TreeSitterBashQueries
+import TreeSitterJavaQueries
+import TreeSitterPHPQueries
+import TreeSitterSQLQueries
 
 /// Represents comment syntax for a programming language.
 public struct CommentSyntax: Sendable {
@@ -225,9 +231,16 @@ public enum KeystoneLanguage: String, CaseIterable, Identifiable, Sendable {
                 highlightsQuery: TreeSitterLanguage.Query(contentsOf: TreeSitterCPPQueries.Query.highlightsFileURL)
             )
         case .java:
-            return nil // Not included in TreeSitterLanguages
+            return TreeSitterLanguage(
+                tree_sitter_java(),
+                highlightsQuery: TreeSitterLanguage.Query(contentsOf: TreeSitterJavaQueries.Query.highlightsFileURL)
+            )
         case .kotlin:
-            return nil // Not included in TreeSitterLanguages
+            // Use Java parser as fallback (similar syntax)
+            return TreeSitterLanguage(
+                tree_sitter_java(),
+                highlightsQuery: TreeSitterLanguage.Query(contentsOf: TreeSitterJavaQueries.Query.highlightsFileURL)
+            )
         case .html:
             return TreeSitterLanguage(
                 tree_sitter_html(),
@@ -235,7 +248,12 @@ public enum KeystoneLanguage: String, CaseIterable, Identifiable, Sendable {
                 injectionsQuery: TreeSitterLanguage.Query(contentsOf: TreeSitterHTMLQueries.Query.injectionsFileURL)
             )
         case .xml:
-            return nil // Not included
+            // Use HTML parser as fallback (similar syntax)
+            return TreeSitterLanguage(
+                tree_sitter_html(),
+                highlightsQuery: TreeSitterLanguage.Query(contentsOf: TreeSitterHTMLQueries.Query.highlightsFileURL),
+                injectionsQuery: TreeSitterLanguage.Query(contentsOf: TreeSitterHTMLQueries.Query.injectionsFileURL)
+            )
         case .css:
             return TreeSitterLanguage(
                 tree_sitter_css(),
@@ -263,9 +281,16 @@ public enum KeystoneLanguage: String, CaseIterable, Identifiable, Sendable {
                 highlightsQuery: TreeSitterLanguage.Query(contentsOf: TreeSitterBashQueries.Query.highlightsFileURL)
             )
         case .sql:
-            return nil // Not included
+            return TreeSitterLanguage(
+                tree_sitter_sql(),
+                highlightsQuery: TreeSitterLanguage.Query(contentsOf: TreeSitterSQLQueries.Query.highlightsFileURL)
+            )
         case .php:
-            return nil // Not included
+            return TreeSitterLanguage(
+                tree_sitter_php(),
+                highlightsQuery: TreeSitterLanguage.Query(contentsOf: TreeSitterPHPQueries.Query.highlightsFileURL),
+                injectionsQuery: TreeSitterLanguage.Query(contentsOf: TreeSitterPHPQueries.Query.injectionsFileURL)
+            )
         case .conf:
             return nil
         }

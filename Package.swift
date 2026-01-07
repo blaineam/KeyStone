@@ -18,7 +18,7 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/tree-sitter/tree-sitter", .upToNextMinor(from: "0.20.9")),
-        .package(url: "https://github.com/blaineam/TreeSitterLanguages", from: "1.1.0"),
+        .package(url: "https://github.com/blaineam/TreeSitterLanguages", from: "2.0.0"),
     ],
     targets: [
         .target(
@@ -41,6 +41,9 @@ let package = Package(
                 .product(name: "TreeSitterBash", package: "TreeSitterLanguages"),
                 .product(name: "TreeSitterYAML", package: "TreeSitterLanguages"),
                 .product(name: "TreeSitterMarkdown", package: "TreeSitterLanguages"),
+                .product(name: "TreeSitterJava", package: "TreeSitterLanguages"),
+                .product(name: "TreeSitterPHP", package: "TreeSitterLanguages"),
+                .product(name: "TreeSitterSQL", package: "TreeSitterLanguages"),
                 // Highlight query files
                 .product(name: "TreeSitterSwiftQueries", package: "TreeSitterLanguages"),
                 .product(name: "TreeSitterPythonQueries", package: "TreeSitterLanguages"),
@@ -57,6 +60,9 @@ let package = Package(
                 .product(name: "TreeSitterBashQueries", package: "TreeSitterLanguages"),
                 .product(name: "TreeSitterYAMLQueries", package: "TreeSitterLanguages"),
                 .product(name: "TreeSitterMarkdownQueries", package: "TreeSitterLanguages"),
+                .product(name: "TreeSitterJavaQueries", package: "TreeSitterLanguages"),
+                .product(name: "TreeSitterPHPQueries", package: "TreeSitterLanguages"),
+                .product(name: "TreeSitterSQLQueries", package: "TreeSitterLanguages"),
             ],
             path: "Sources/Keystone",
             resources: [
