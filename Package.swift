@@ -17,7 +17,7 @@ let package = Package(
         ),
     ],
     dependencies: [
-        .package(url: "https://github.com/tree-sitter/tree-sitter", .upToNextMinor(from: "0.20.9")),
+        .package(url: "https://github.com/tree-sitter/tree-sitter", from: "0.26.3"),
         .package(url: "https://github.com/blaineam/TreeSitterLanguages", from: "2.0.0"),
     ],
     targets: [
