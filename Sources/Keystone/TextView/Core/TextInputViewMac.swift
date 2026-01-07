@@ -979,7 +979,8 @@ final class TextInputViewMac: NSView, NSTextInputClient {
 
         delegate?.textInputViewDidChange(self)
         delegate?.textInputViewDidChangeSelection(self)
-        layoutSubtreeIfNeeded()
+        // Mark for display instead of forcing synchronous layout
+        needsDisplay = true
     }
 
     func forceLayoutRefresh() {
@@ -1063,7 +1064,9 @@ final class TextInputViewMac: NSView, NSTextInputClient {
         if textEditResult.didAddOrRemoveLines {
             delegate?.textInputViewDidInvalidateContentSize(self)
         }
-        layoutSubtreeIfNeeded()
+        // Layout already happens inside applyLineChangesToLayoutManager
+        // Only mark for display, don't force synchronous layout
+        needsDisplay = true
     }
 
     // MARK: - Private Methods
@@ -1147,7 +1150,9 @@ final class TextInputViewMac: NSView, NSTextInputClient {
         timedUndoManager.registerUndo(withTarget: self) { textInputView in
             textInputView.replaceText(in: range, with: text)
             textInputView.selection = oldSelection
-            textInputView.layoutSubtreeIfNeeded()
+            // Layout already happens inside replaceText via applyLineChangesToLayoutManager
+            // Only mark for display, don't force synchronous layout
+            textInputView.needsDisplay = true
         }
         // Note: Group is intentionally left open for TimedUndoManager's coalescing behavior
     }

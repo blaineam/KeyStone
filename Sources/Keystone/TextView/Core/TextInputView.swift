@@ -1280,8 +1280,8 @@ extension TextInputView {
         delegate?.textInputViewDidChange(self)
         if let oldSelectedRange = oldSelectedRange {
             selectedRange = safeSelectionRange(from: oldSelectedRange)
-            // Force immediate layout so caret position is calculated correctly
-            layoutIfNeeded()
+            // Mark for display instead of forcing synchronous layout
+            setNeedsDisplay()
         }
     }
 
@@ -1368,8 +1368,9 @@ extension TextInputView {
             textInputView.inputDelegate?.selectionWillChange(textInputView)
             textInputView.replaceText(in: range, with: text)
             textInputView.selectedRange = oldSelectedRange
-            // Force immediate layout so caret position is calculated correctly
-            textInputView.layoutIfNeeded()
+            // Layout already happens inside replaceText via applyLineChangesToLayoutManager
+            // Only mark for display, don't force synchronous layout
+            textInputView.setNeedsDisplay()
             textInputView.inputDelegate?.selectionDidChange(textInputView)
         }
     }
