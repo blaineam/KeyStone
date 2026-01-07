@@ -757,8 +757,12 @@ struct KeystoneFindReplaceBar: View {
                     .autocorrectionDisabled()
                     #endif
                     .onSubmit {
-                        // Always search on Enter - this is the ONLY way to search for large files
-                        manager.search(in: text)
+                        // If we have matches, cycle to next; otherwise search first
+                        if !manager.matches.isEmpty {
+                            manager.findNext()
+                        } else {
+                            manager.search(in: text)
+                        }
                         if let match = manager.currentMatch {
                             onNavigateToMatch?(match)
                         }

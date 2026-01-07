@@ -1038,6 +1038,7 @@ final class TextInputViewMac: NSView, NSTextInputClient {
             textInputView.selection = oldSelection
             textInputView.layoutSubtreeIfNeeded()
         }
+        timedUndoManager.endUndoGrouping()
     }
 
     private func prepareTextForInsertion(_ text: String) -> String {
