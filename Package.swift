@@ -18,7 +18,7 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/tree-sitter/tree-sitter", .upToNextMinor(from: "0.20.9")),
-        .package(url: "https://github.com/blaineam/TreeSitterLanguages", from: "1.0.0"),
+        .package(url: "https://github.com/blaineam/TreeSitterLanguages", from: "1.1.0"),
     ],
     targets: [
         .target(
@@ -41,6 +41,22 @@ let package = Package(
                 .product(name: "TreeSitterBash", package: "TreeSitterLanguages"),
                 .product(name: "TreeSitterYAML", package: "TreeSitterLanguages"),
                 .product(name: "TreeSitterMarkdown", package: "TreeSitterLanguages"),
+                // Highlight query files
+                .product(name: "TreeSitterSwiftQueries", package: "TreeSitterLanguages"),
+                .product(name: "TreeSitterPythonQueries", package: "TreeSitterLanguages"),
+                .product(name: "TreeSitterJavaScriptQueries", package: "TreeSitterLanguages"),
+                .product(name: "TreeSitterTypeScriptQueries", package: "TreeSitterLanguages"),
+                .product(name: "TreeSitterJSONQueries", package: "TreeSitterLanguages"),
+                .product(name: "TreeSitterHTMLQueries", package: "TreeSitterLanguages"),
+                .product(name: "TreeSitterCSSQueries", package: "TreeSitterLanguages"),
+                .product(name: "TreeSitterCQueries", package: "TreeSitterLanguages"),
+                .product(name: "TreeSitterCPPQueries", package: "TreeSitterLanguages"),
+                .product(name: "TreeSitterGoQueries", package: "TreeSitterLanguages"),
+                .product(name: "TreeSitterRustQueries", package: "TreeSitterLanguages"),
+                .product(name: "TreeSitterRubyQueries", package: "TreeSitterLanguages"),
+                .product(name: "TreeSitterBashQueries", package: "TreeSitterLanguages"),
+                .product(name: "TreeSitterYAMLQueries", package: "TreeSitterLanguages"),
+                .product(name: "TreeSitterMarkdownQueries", package: "TreeSitterLanguages"),
             ],
             path: "Sources/Keystone",
             resources: [

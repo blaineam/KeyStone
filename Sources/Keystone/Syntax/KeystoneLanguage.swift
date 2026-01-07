@@ -19,6 +19,22 @@ import TreeSitterJSON
 import TreeSitterYAML
 import TreeSitterMarkdown
 import TreeSitterBash
+// Query modules with highlight.scm files
+import TreeSitterSwiftQueries
+import TreeSitterPythonQueries
+import TreeSitterJavaScriptQueries
+import TreeSitterTypeScriptQueries
+import TreeSitterRubyQueries
+import TreeSitterGoQueries
+import TreeSitterRustQueries
+import TreeSitterCQueries
+import TreeSitterCPPQueries
+import TreeSitterHTMLQueries
+import TreeSitterCSSQueries
+import TreeSitterJSONQueries
+import TreeSitterYAMLQueries
+import TreeSitterMarkdownQueries
+import TreeSitterBashQueries
 
 /// Represents comment syntax for a programming language.
 public struct CommentSyntax: Sendable {
@@ -158,70 +174,100 @@ public enum KeystoneLanguage: String, CaseIterable, Identifiable, Sendable {
 
     /// Returns the corresponding TreeSitterLanguage for syntax highlighting.
     public var treeSitterLanguage: TreeSitterLanguage? {
-        guard let highlightQuery = highlightQuery else { return nil }
-        let query = TreeSitterLanguage.Query(string: highlightQuery)
-        let injectionsQuery = injectionQuery.map { TreeSitterLanguage.Query(string: $0) }
-
         switch self {
-        case .plainText: return nil
-        case .swift: return TreeSitterLanguage(tree_sitter_swift(), highlightsQuery: query)
-        case .javascript: return TreeSitterLanguage(tree_sitter_javascript(), highlightsQuery: query)
-        case .typescript: return TreeSitterLanguage(tree_sitter_typescript(), highlightsQuery: query)
-        case .python: return TreeSitterLanguage(tree_sitter_python(), highlightsQuery: query)
-        case .ruby: return TreeSitterLanguage(tree_sitter_ruby(), highlightsQuery: query)
-        case .go: return TreeSitterLanguage(tree_sitter_go(), highlightsQuery: query)
-        case .rust: return TreeSitterLanguage(tree_sitter_rust(), highlightsQuery: query)
-        case .c: return TreeSitterLanguage(tree_sitter_c(), highlightsQuery: query)
-        case .cpp: return TreeSitterLanguage(tree_sitter_cpp(), highlightsQuery: query)
-        case .java: return nil // Not included in TreeSitterLanguages
-        case .kotlin: return nil // Not included in TreeSitterLanguages
-        case .html: return TreeSitterLanguage(tree_sitter_html(), highlightsQuery: query, injectionsQuery: injectionsQuery)
-        case .xml: return nil // Not included
-        case .css: return TreeSitterLanguage(tree_sitter_css(), highlightsQuery: query)
-        case .json: return TreeSitterLanguage(tree_sitter_json(), highlightsQuery: query)
-        case .yaml: return TreeSitterLanguage(tree_sitter_yaml(), highlightsQuery: query)
-        case .markdown: return TreeSitterLanguage(tree_sitter_markdown(), highlightsQuery: query, injectionsQuery: injectionsQuery)
-        case .shell: return TreeSitterLanguage(tree_sitter_bash(), highlightsQuery: query)
-        case .sql: return nil // Not included
-        case .php: return nil // Not included
-        case .conf: return nil
-        }
-    }
-
-    /// Returns the injection query string for this language (for embedded languages).
-    private var injectionQuery: String? {
-        switch self {
-        case .html: return HighlightQueries.htmlInjections
-        case .markdown: return HighlightQueries.markdownInjections
-        default: return nil
-        }
-    }
-
-    /// Returns the highlight query string for this language.
-    private var highlightQuery: String? {
-        switch self {
-        case .plainText: return nil
-        case .swift: return HighlightQueries.swift
-        case .javascript: return HighlightQueries.javascript
-        case .typescript: return HighlightQueries.typescript
-        case .python: return HighlightQueries.python
-        case .ruby: return HighlightQueries.ruby
-        case .go: return HighlightQueries.go
-        case .rust: return HighlightQueries.rust
-        case .c: return HighlightQueries.c
-        case .cpp: return HighlightQueries.cpp
-        case .java: return nil
-        case .kotlin: return nil
-        case .html: return HighlightQueries.html
-        case .xml: return nil
-        case .css: return HighlightQueries.css
-        case .json: return HighlightQueries.json
-        case .yaml: return HighlightQueries.yaml
-        case .markdown: return HighlightQueries.markdown
-        case .shell: return HighlightQueries.bash
-        case .sql: return nil
-        case .php: return nil
-        case .conf: return nil
+        case .plainText:
+            return nil
+        case .swift:
+            return TreeSitterLanguage(
+                tree_sitter_swift(),
+                highlightsQuery: TreeSitterLanguage.Query(contentsOf: TreeSitterSwiftQueries.Query.highlightsFileURL)
+            )
+        case .javascript:
+            return TreeSitterLanguage(
+                tree_sitter_javascript(),
+                highlightsQuery: TreeSitterLanguage.Query(contentsOf: TreeSitterJavaScriptQueries.Query.highlightsFileURL),
+                injectionsQuery: TreeSitterLanguage.Query(contentsOf: TreeSitterJavaScriptQueries.Query.injectionsFileURL)
+            )
+        case .typescript:
+            return TreeSitterLanguage(
+                tree_sitter_typescript(),
+                highlightsQuery: TreeSitterLanguage.Query(contentsOf: TreeSitterTypeScriptQueries.Query.highlightsFileURL)
+            )
+        case .python:
+            return TreeSitterLanguage(
+                tree_sitter_python(),
+                highlightsQuery: TreeSitterLanguage.Query(contentsOf: TreeSitterPythonQueries.Query.highlightsFileURL)
+            )
+        case .ruby:
+            return TreeSitterLanguage(
+                tree_sitter_ruby(),
+                highlightsQuery: TreeSitterLanguage.Query(contentsOf: TreeSitterRubyQueries.Query.highlightsFileURL)
+            )
+        case .go:
+            return TreeSitterLanguage(
+                tree_sitter_go(),
+                highlightsQuery: TreeSitterLanguage.Query(contentsOf: TreeSitterGoQueries.Query.highlightsFileURL)
+            )
+        case .rust:
+            return TreeSitterLanguage(
+                tree_sitter_rust(),
+                highlightsQuery: TreeSitterLanguage.Query(contentsOf: TreeSitterRustQueries.Query.highlightsFileURL),
+                injectionsQuery: TreeSitterLanguage.Query(contentsOf: TreeSitterRustQueries.Query.injectionsFileURL)
+            )
+        case .c:
+            return TreeSitterLanguage(
+                tree_sitter_c(),
+                highlightsQuery: TreeSitterLanguage.Query(contentsOf: TreeSitterCQueries.Query.highlightsFileURL)
+            )
+        case .cpp:
+            return TreeSitterLanguage(
+                tree_sitter_cpp(),
+                highlightsQuery: TreeSitterLanguage.Query(contentsOf: TreeSitterCPPQueries.Query.highlightsFileURL)
+            )
+        case .java:
+            return nil // Not included in TreeSitterLanguages
+        case .kotlin:
+            return nil // Not included in TreeSitterLanguages
+        case .html:
+            return TreeSitterLanguage(
+                tree_sitter_html(),
+                highlightsQuery: TreeSitterLanguage.Query(contentsOf: TreeSitterHTMLQueries.Query.highlightsFileURL),
+                injectionsQuery: TreeSitterLanguage.Query(contentsOf: TreeSitterHTMLQueries.Query.injectionsFileURL)
+            )
+        case .xml:
+            return nil // Not included
+        case .css:
+            return TreeSitterLanguage(
+                tree_sitter_css(),
+                highlightsQuery: TreeSitterLanguage.Query(contentsOf: TreeSitterCSSQueries.Query.highlightsFileURL)
+            )
+        case .json:
+            return TreeSitterLanguage(
+                tree_sitter_json(),
+                highlightsQuery: TreeSitterLanguage.Query(contentsOf: TreeSitterJSONQueries.Query.highlightsFileURL)
+            )
+        case .yaml:
+            return TreeSitterLanguage(
+                tree_sitter_yaml(),
+                highlightsQuery: TreeSitterLanguage.Query(contentsOf: TreeSitterYAMLQueries.Query.highlightsFileURL)
+            )
+        case .markdown:
+            return TreeSitterLanguage(
+                tree_sitter_markdown(),
+                highlightsQuery: TreeSitterLanguage.Query(contentsOf: TreeSitterMarkdownQueries.Query.highlightsFileURL),
+                injectionsQuery: TreeSitterLanguage.Query(contentsOf: TreeSitterMarkdownQueries.Query.injectionsFileURL)
+            )
+        case .shell:
+            return TreeSitterLanguage(
+                tree_sitter_bash(),
+                highlightsQuery: TreeSitterLanguage.Query(contentsOf: TreeSitterBashQueries.Query.highlightsFileURL)
+            )
+        case .sql:
+            return nil // Not included
+        case .php:
+            return nil // Not included
+        case .conf:
+            return nil
         }
     }
 }
