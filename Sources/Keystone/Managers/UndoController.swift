@@ -32,11 +32,19 @@ public class UndoController: ObservableObject {
     /// Parameters: (range: NSRange, replacementText: String) -> new text content
     var replaceTextAction: ((NSRange, String) -> String?)?
 
+    /// Closure to replace all text (set by KeystoneTextView's coordinator).
+    /// Parameters: (newText: String) -> new text content
+    var replaceAllAction: ((String) -> String?)?
+
     /// Closure to begin an undo grouping (for batching multiple changes).
     var beginUndoGroupingAction: (() -> Void)?
 
     /// Closure to end an undo grouping.
     var endUndoGroupingAction: (() -> Void)?
+
+    /// Callback invoked after undo/redo operations complete.
+    /// Use this to refresh search results when find/replace bar is open.
+    public var onUndoRedo: (() -> Void)?
 
     private var updateTimer: Timer?
 
@@ -50,12 +58,14 @@ public class UndoController: ObservableObject {
     public func undo() {
         undoAction?()
         updateState()
+        onUndoRedo?()
     }
 
     /// Performs redo on the text view.
     public func redo() {
         redoAction?()
         updateState()
+        onUndoRedo?()
     }
 
     /// Replaces text at the specified range. This goes through the text view's
@@ -66,6 +76,16 @@ public class UndoController: ObservableObject {
     /// - Returns: The new full text content, or nil if replacement failed.
     public func replaceText(in range: NSRange, with text: String) -> String? {
         let result = replaceTextAction?(range, text)
+        updateState()
+        return result
+    }
+
+    /// Replaces all text with proper undo/redo support.
+    /// Use this for Replace All operations.
+    /// - Parameter text: The new text content.
+    /// - Returns: The new text content, or nil if replacement failed.
+    public func replaceAll(with text: String) -> String? {
+        let result = replaceAllAction?(text)
         updateState()
         return result
     }

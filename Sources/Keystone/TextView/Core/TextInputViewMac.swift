@@ -936,6 +936,52 @@ final class TextInputViewMac: NSView, NSTextInputClient {
         preserveUndoStackWhenSettingString = false
     }
 
+    /// Sets the entire text content with proper undo/redo support.
+    /// Use this for Replace All operations instead of performReplace.
+    func setStringWithUndoAction(_ newString: NSString) {
+        guard newString != string else { return }
+        guard let oldString = stringView.string.copy() as? NSString else { return }
+
+        let oldSelection = selection
+        let duringUndoRedo = timedUndoManager.isPerformingUndoRedo
+
+        // Close any open typing group ONLY if not during undo/redo
+        // (During undo/redo, there's no typing group - only NSUndoManager's internal redo group)
+        if !duringUndoRedo {
+            timedUndoManager.endUndoGrouping()
+        }
+
+        // Set the new string while preserving undo stack
+        preserveUndoStackWhenSettingString = true
+        string = newString
+        preserveUndoStackWhenSettingString = false
+
+        // Register undo - calling setStringWithUndoAction creates the redo automatically
+        // During undo/redo, NSUndoManager already has a group open, so don't create another
+        if !duringUndoRedo {
+            timedUndoManager.beginUndoGrouping()
+        }
+        timedUndoManager.setActionName(L10n.Undo.ActionName.replaceAll)
+        timedUndoManager.registerUndo(withTarget: self) { [oldString, oldSelection] textInputView in
+            textInputView.setStringWithUndoAction(oldString)
+            if let oldSelection = oldSelection {
+                textInputView._selectedRange = textInputView.safeSelectionRange(from: oldSelection)
+            }
+        }
+        if !duringUndoRedo {
+            timedUndoManager.endUndoGrouping()
+        }
+
+        // Restore selection to a safe position
+        if let oldSelection = oldSelection {
+            _selectedRange = safeSelectionRange(from: oldSelection)
+        }
+
+        delegate?.textInputViewDidChange(self)
+        delegate?.textInputViewDidChangeSelection(self)
+        layoutSubtreeIfNeeded()
+    }
+
     func forceLayoutRefresh() {
         layoutManager.setNeedsLayout()
         layoutManager.layoutIfNeeded()
@@ -945,14 +991,79 @@ final class TextInputViewMac: NSView, NSTextInputClient {
         layoutManager.redisplayVisibleLines()
     }
 
-    /// Public method to replace text at a range, properly registering with the undo manager.
-    /// This is used by find/replace operations to ensure undo/redo works correctly.
+    /// Public method to replace text at a range for find/replace operations.
+    /// This creates a standalone undo operation (not coalesced with typing).
     func performReplace(in range: NSRange, with text: String) {
         guard delegate?.textInputView(self, shouldChangeTextIn: range, replacementText: text) ?? true else {
             return
         }
-        replaceText(in: range, with: text)
+
+        let oldText = self.text(in: range) ?? ""
+        let oldSelection = selection
+        let newRange = NSRange(location: range.location, length: (text as NSString).length)
+
+        // Close any open undo group first to prevent coalescing with typing
+        timedUndoManager.disableUndoCoalescing()
+
+        // Register undo as a standalone operation
+        // The undo handler calls performReplace back with inverse parameters,
+        // which automatically registers a redo operation
+        timedUndoManager.beginUndoGrouping()
+        timedUndoManager.setActionName("Replace")
+        timedUndoManager.registerUndo(withTarget: self) { [oldText, newRange, oldSelection] textInputView in
+            // Store current state for redo before undoing
+            let currentSelection = textInputView.selection
+
+            // Undo: replace the new text back with the old text
+            // This will register a redo operation automatically
+            textInputView.performReplaceForUndo(in: newRange, with: oldText, restoreSelection: oldSelection, redoRange: range, redoText: text, redoSelection: currentSelection)
+        }
+        timedUndoManager.endUndoGrouping()
+
+        timedUndoManager.enableUndoCoalescing()
+
+        // Perform the actual replacement
+        let textEditHelper = TextEditHelper(stringView: stringView, lineManager: lineManager, lineEndings: lineEndings)
+        let textEditResult = textEditHelper.replaceText(in: range, with: text)
+        let lineChangeSet = textEditResult.lineChangeSet
+        let languageModeLineChangeSet = languageMode.textDidChange(textEditResult.textChange)
+        lineChangeSet.union(with: languageModeLineChangeSet)
+        applyLineChangesToLayoutManager(lineChangeSet)
+
+        _selectedRange = NSRange(location: newRange.upperBound, length: 0)
+        delegate?.textInputViewDidChange(self)
         delegate?.textInputViewDidChangeSelection(self)
+        if textEditResult.didAddOrRemoveLines {
+            delegate?.textInputViewDidInvalidateContentSize(self)
+        }
+    }
+
+    /// Internal method for undo/redo operations that properly registers the inverse operation.
+    /// IMPORTANT: This is called DURING undo/redo execution, so we must NOT call
+    /// beginUndoGrouping/endUndoGrouping - NSUndoManager manages groups automatically.
+    private func performReplaceForUndo(in range: NSRange, with text: String, restoreSelection: NSRange?, redoRange: NSRange, redoText: String, redoSelection: NSRange?) {
+        // Register the inverse operation - NSUndoManager automatically handles this as redo/undo
+        // DO NOT call beginUndoGrouping/endUndoGrouping here - we're inside an undo operation
+        timedUndoManager.setActionName("Replace")
+        timedUndoManager.registerUndo(withTarget: self) { [range, text, restoreSelection, redoRange, redoText, redoSelection] textInputView in
+            textInputView.performReplaceForUndo(in: redoRange, with: redoText, restoreSelection: redoSelection, redoRange: range, redoText: text, redoSelection: restoreSelection)
+        }
+
+        // Perform the text replacement
+        let textEditHelper = TextEditHelper(stringView: stringView, lineManager: lineManager, lineEndings: lineEndings)
+        let textEditResult = textEditHelper.replaceText(in: range, with: text)
+        let lineChangeSet = textEditResult.lineChangeSet
+        let languageModeLineChangeSet = languageMode.textDidChange(textEditResult.textChange)
+        lineChangeSet.union(with: languageModeLineChangeSet)
+        applyLineChangesToLayoutManager(lineChangeSet)
+
+        _selectedRange = restoreSelection
+        delegate?.textInputViewDidChange(self)
+        delegate?.textInputViewDidChangeSelection(self)
+        if textEditResult.didAddOrRemoveLines {
+            delegate?.textInputViewDidInvalidateContentSize(self)
+        }
+        layoutSubtreeIfNeeded()
     }
 
     // MARK: - Private Methods
@@ -1038,7 +1149,7 @@ final class TextInputViewMac: NSView, NSTextInputClient {
             textInputView.selection = oldSelection
             textInputView.layoutSubtreeIfNeeded()
         }
-        timedUndoManager.endUndoGrouping()
+        // Note: Group is intentionally left open for TimedUndoManager's coalescing behavior
     }
 
     private func prepareTextForInsertion(_ text: String) -> String {

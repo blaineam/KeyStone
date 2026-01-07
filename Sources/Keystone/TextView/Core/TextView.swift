@@ -1617,6 +1617,14 @@ open class TextView: NSScrollView {
         textInputView.performReplace(in: range, with: text)
     }
 
+    /// Replaces the entire text content with proper undo/redo support.
+    /// Use this for Replace All operations.
+    /// - Parameter newText: The new text to set.
+    public func replaceAll(with newText: String) {
+        textInputView.setStringWithUndoAction(newText as NSString)
+        reflectScrolledClipView(contentView)
+    }
+
     /// A Boolean value that indicates whether the text view is editable.
     public var isEditable = true {
         didSet {

@@ -43,6 +43,8 @@ import TreeSitterPHPQueries
 import TreeSitterSQLQueries
 import TreeSitterJSDoc
 import TreeSitterJSDocQueries
+import TreeSitterRegex
+import TreeSitterRegexQueries
 
 /// Represents comment syntax for a programming language.
 public struct CommentSyntax: Sendable {
@@ -85,6 +87,7 @@ public enum KeystoneLanguage: String, CaseIterable, Identifiable, Sendable {
     case sql
     case php
     case jsdoc
+    case regex
     case conf
 
     public var id: String { rawValue }
@@ -114,6 +117,7 @@ public enum KeystoneLanguage: String, CaseIterable, Identifiable, Sendable {
         case .sql: return "SQL"
         case .php: return "PHP"
         case .jsdoc: return "JSDoc"
+        case .regex: return "Regex"
         case .conf: return "Config"
         }
     }
@@ -135,7 +139,7 @@ public enum KeystoneLanguage: String, CaseIterable, Identifiable, Sendable {
             return CommentSyntax(lineComment: "--", blockComment: ("/*", "*/"))
         case .markdown:
             return CommentSyntax(blockComment: ("<!--", "-->"))
-        case .json:
+        case .json, .regex:
             return nil
         }
     }
@@ -299,6 +303,11 @@ public enum KeystoneLanguage: String, CaseIterable, Identifiable, Sendable {
             return TreeSitterLanguage(
                 tree_sitter_jsdoc(),
                 highlightsQuery: TreeSitterLanguage.Query(contentsOf: TreeSitterJSDocQueries.Query.highlightsFileURL)
+            )
+        case .regex:
+            return TreeSitterLanguage(
+                tree_sitter_regex(),
+                highlightsQuery: TreeSitterLanguage.Query(contentsOf: TreeSitterRegexQueries.Query.highlightsFileURL)
             )
         case .conf:
             return nil

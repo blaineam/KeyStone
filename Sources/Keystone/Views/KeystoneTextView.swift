@@ -964,6 +964,12 @@ public struct KeystoneTextView: NSViewRepresentable {
             return textView.text
         }
 
+        undoController.replaceAllAction = { [weak textView] newText in
+            guard let textView = textView else { return nil }
+            textView.replaceAll(with: newText)
+            return textView.text
+        }
+
         undoController.beginUndoGroupingAction = { [weak textView] in
             textView?.textUndoManager.beginUndoGrouping()
         }

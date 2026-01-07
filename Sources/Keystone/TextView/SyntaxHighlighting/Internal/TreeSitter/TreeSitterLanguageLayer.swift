@@ -104,32 +104,12 @@ extension TreeSitterLanguageLayer {
         tree = parser.parse(text)
         childLanguageLayerStore.removeAll()
         guard let injectionsQuery = language.injectionsQuery, let node = tree?.rootNode else {
-            #if DEBUG
-            if language.injectionsQuery == nil {
-                print("[TreeSitterLanguageLayer] No injections query for this language")
-            }
-            #endif
             return
         }
-        #if DEBUG
-        print("[TreeSitterLanguageLayer] Processing injections query")
-        #endif
         let queryCursor = TreeSitterQueryCursor(query: injectionsQuery, node: node)
         queryCursor.execute()
         let captures = queryCursor.validCaptures(in: stringView)
-        #if DEBUG
-        print("[TreeSitterLanguageLayer] Found \(captures.count) injection captures")
-        for capture in captures {
-            print("[TreeSitterLanguageLayer]   - Capture: \(capture.name), byteRange: \(capture.byteRange), properties: \(capture.properties)")
-        }
-        #endif
         let injectedLanguages = injectedLanguages(from: captures)
-        #if DEBUG
-        print("[TreeSitterLanguageLayer] Mapped to \(injectedLanguages.count) injected languages")
-        for lang in injectedLanguages {
-            print("[TreeSitterLanguageLayer]   - Language: \(lang.languageName)")
-        }
-        #endif
         for injectedLanguage in injectedLanguages {
             if let childLanguageLayer = childLanguageLayer(withID: injectedLanguage.id, forLanguageNamed: injectedLanguage.languageName) {
                 childLanguageLayer.parse([injectedLanguage.textRange], from: text)

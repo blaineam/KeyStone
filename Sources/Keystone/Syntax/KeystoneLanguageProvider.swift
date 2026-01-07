@@ -38,9 +38,6 @@ public final class KeystoneLanguageProvider: TreeSitterLanguageProvider {
     public func treeSitterLanguage(named languageName: String) -> TreeSitterLanguage? {
         // Map the language name to KeystoneLanguage and return its TreeSitterLanguage
         let normalizedName = languageName.lowercased()
-        #if DEBUG
-        print("[KeystoneLanguageProvider] Requested language: '\(languageName)' (normalized: '\(normalizedName)')")
-        #endif
 
         let keystoneLanguage: KeystoneLanguage?
         switch normalizedName {
@@ -74,6 +71,16 @@ public final class KeystoneLanguageProvider: TreeSitterLanguageProvider {
             keystoneLanguage = .shell
         case "markdown", "md":
             keystoneLanguage = .markdown
+        case "java":
+            keystoneLanguage = .java
+        case "sql":
+            keystoneLanguage = .sql
+        case "php":
+            keystoneLanguage = .php
+        case "jsdoc":
+            keystoneLanguage = .jsdoc
+        case "regex":
+            keystoneLanguage = .regex
         default:
             keystoneLanguage = nil
         }

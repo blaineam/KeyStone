@@ -323,6 +323,14 @@ public struct KeystoneEditor: View {
         }
         .onAppear {
             updateLineCount(from: text)
+
+            // Set up callback to refresh search on undo/redo
+            undoController.onUndoRedo = { [weak findReplaceManager] in
+                guard let manager = findReplaceManager, manager.isVisible else { return }
+                Task { @MainActor in
+                    manager.search(in: self.text)
+                }
+            }
         }
         .alert("Go to Line", isPresented: showGoToLine) {
             TextField("Line or Line:Column (e.g., 42 or 42:10)", text: $goToLineText)
@@ -909,18 +917,12 @@ struct KeystoneFindReplaceBar: View {
 
         // Try to use undoController for proper undo support
         if let undoController = undoController {
-            // Group all changes into a single undo operation
-            undoController.beginUndoGrouping()
-
-            // Replace entire content in one operation
-            let fullRange = NSRange(location: 0, length: (text as NSString).length)
-            if let newText = undoController.replaceText(in: fullRange, with: finalText) {
+            // Use replaceAll for full document replacement with proper undo/redo
+            if let newText = undoController.replaceAll(with: finalText) {
                 text = newText
             } else {
                 text = finalText
             }
-
-            undoController.endUndoGrouping()
 
             // Only re-search if the replacement text contains the search query
             // (meaning new matches might have been created by the replacement)
