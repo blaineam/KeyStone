@@ -13,87 +13,6 @@ enum HighlightQueries {
     // MARK: - Swift
 
     static let swift = """
-    ; Types
-    (type_identifier) @type
-    (class_declaration name: (type_identifier) @type)
-    (protocol_declaration name: (type_identifier) @type)
-    (struct_declaration name: (type_identifier) @type)
-    (enum_declaration name: (type_identifier) @type)
-    (extension_declaration name: (type_identifier) @type)
-    (actor_declaration name: (type_identifier) @type)
-
-    ; Functions
-    (function_declaration name: (simple_identifier) @function)
-    (call_expression (simple_identifier) @function)
-
-    ; Properties and variables
-    (property_declaration (pattern (simple_identifier) @property))
-    (value_binding_pattern (simple_identifier) @variable)
-
-    ; Keywords
-    [
-      "actor"
-      "any"
-      "as"
-      "async"
-      "await"
-      "break"
-      "case"
-      "catch"
-      "class"
-      "continue"
-      "default"
-      "defer"
-      "deinit"
-      "do"
-      "else"
-      "enum"
-      "extension"
-      "fallthrough"
-      "fileprivate"
-      "for"
-      "func"
-      "guard"
-      "if"
-      "import"
-      "in"
-      "init"
-      "inout"
-      "internal"
-      "is"
-      "let"
-      "nonisolated"
-      "open"
-      "operator"
-      "override"
-      "private"
-      "protocol"
-      "public"
-      "repeat"
-      "rethrows"
-      "return"
-      "some"
-      "static"
-      "struct"
-      "subscript"
-      "super"
-      "switch"
-      "throw"
-      "throws"
-      "try"
-      "typealias"
-      "var"
-      "where"
-      "while"
-    ] @keyword
-
-    ; Builtins
-    [
-      "true"
-      "false"
-      "nil"
-    ] @constant.builtin
-
     ; Strings
     (line_string_literal) @string
     (multi_line_string_literal) @string
@@ -106,12 +25,12 @@ enum HighlightQueries {
     (oct_literal) @number
     (bin_literal) @number
 
+    ; Booleans
+    (boolean_literal) @constant.builtin
+
     ; Comments
     (comment) @comment
     (multiline_comment) @comment
-
-    ; Operators
-    (custom_operator) @operator
 
     ; Punctuation
     ["(" ")" "[" "]" "{" "}"] @punctuation
@@ -121,68 +40,8 @@ enum HighlightQueries {
     // MARK: - JavaScript
 
     static let javascript = """
-    ; Variables
-    (identifier) @variable
-
     ; Properties
     (property_identifier) @property
-
-    ; Functions
-    (function_declaration name: (identifier) @function)
-    (method_definition name: (property_identifier) @function)
-    (call_expression function: (identifier) @function)
-    (call_expression function: (member_expression property: (property_identifier) @function))
-
-    ; Keywords
-    [
-      "async"
-      "await"
-      "break"
-      "case"
-      "catch"
-      "class"
-      "const"
-      "continue"
-      "debugger"
-      "default"
-      "delete"
-      "do"
-      "else"
-      "export"
-      "extends"
-      "finally"
-      "for"
-      "from"
-      "function"
-      "get"
-      "if"
-      "import"
-      "in"
-      "instanceof"
-      "let"
-      "new"
-      "of"
-      "return"
-      "set"
-      "static"
-      "switch"
-      "throw"
-      "try"
-      "typeof"
-      "var"
-      "void"
-      "while"
-      "with"
-      "yield"
-    ] @keyword
-
-    ; Builtins
-    [
-      "true"
-      "false"
-      "null"
-      "undefined"
-    ] @constant.builtin
 
     ; Strings
     (string) @string
@@ -191,6 +50,11 @@ enum HighlightQueries {
     ; Numbers
     (number) @number
 
+    ; Booleans and constants
+    (true) @constant.builtin
+    (false) @constant.builtin
+    (null) @constant.builtin
+
     ; Comments
     (comment) @comment
     """
@@ -198,102 +62,32 @@ enum HighlightQueries {
     // MARK: - TypeScript
 
     static let typescript = """
-    ; Inherit from JavaScript
-    \(javascript)
+    ; Properties
+    (property_identifier) @property
 
-    ; Type annotations
+    ; Types
     (type_identifier) @type
     (predefined_type) @type
 
-    ; Type parameters
-    (type_parameter name: (type_identifier) @type)
+    ; Strings
+    (string) @string
+    (template_string) @string
 
-    ; Interface and type declarations
-    (interface_declaration name: (type_identifier) @type)
-    (type_alias_declaration name: (type_identifier) @type)
+    ; Numbers
+    (number) @number
 
-    ; Additional TypeScript keywords
-    [
-      "abstract"
-      "declare"
-      "enum"
-      "implements"
-      "interface"
-      "namespace"
-      "private"
-      "protected"
-      "public"
-      "readonly"
-      "type"
-    ] @keyword
+    ; Booleans and constants
+    (true) @constant.builtin
+    (false) @constant.builtin
+    (null) @constant.builtin
+
+    ; Comments
+    (comment) @comment
     """
 
     // MARK: - Python
 
     static let python = """
-    ; Variables
-    (identifier) @variable
-
-    ; Functions
-    (function_definition name: (identifier) @function)
-    (call function: (identifier) @function)
-    (call function: (attribute attribute: (identifier) @function))
-
-    ; Parameters
-    (parameters (identifier) @variable)
-
-    ; Types
-    (class_definition name: (identifier) @type)
-    (type (identifier) @type)
-
-    ; Keywords
-    [
-      "and"
-      "as"
-      "assert"
-      "async"
-      "await"
-      "break"
-      "class"
-      "continue"
-      "def"
-      "del"
-      "elif"
-      "else"
-      "except"
-      "exec"
-      "finally"
-      "for"
-      "from"
-      "global"
-      "if"
-      "import"
-      "in"
-      "is"
-      "lambda"
-      "nonlocal"
-      "not"
-      "or"
-      "pass"
-      "print"
-      "raise"
-      "return"
-      "try"
-      "while"
-      "with"
-      "yield"
-    ] @keyword
-
-    ; Builtins
-    [
-      "True"
-      "False"
-      "None"
-    ] @constant.builtin
-
-    ((identifier) @variable.builtin
-      (#match? @variable.builtin "^(self|cls)$"))
-
     ; Strings
     (string) @string
 
@@ -301,85 +95,20 @@ enum HighlightQueries {
     (integer) @number
     (float) @number
 
+    ; Booleans and constants
+    (true) @constant.builtin
+    (false) @constant.builtin
+    (none) @constant.builtin
+
     ; Comments
     (comment) @comment
-
-    ; Operators
-    [
-      "+"
-      "-"
-      "*"
-      "/"
-      "//"
-      "%"
-      "**"
-      "=="
-      "!="
-      "<"
-      "<="
-      ">"
-      ">="
-      "&"
-      "|"
-      "^"
-      "~"
-      "<<"
-      ">>"
-    ] @operator
     """
 
     // MARK: - Go
 
     static let go = """
-    ; Variables
-    (identifier) @variable
-
-    ; Functions
-    (function_declaration name: (identifier) @function)
-    (method_declaration name: (field_identifier) @function)
-    (call_expression function: (identifier) @function)
-    (call_expression function: (selector_expression field: (field_identifier) @function))
-
     ; Types
     (type_identifier) @type
-    (type_declaration (type_spec name: (type_identifier) @type))
-
-    ; Keywords
-    [
-      "break"
-      "case"
-      "chan"
-      "const"
-      "continue"
-      "default"
-      "defer"
-      "else"
-      "fallthrough"
-      "for"
-      "func"
-      "go"
-      "goto"
-      "if"
-      "import"
-      "interface"
-      "map"
-      "package"
-      "range"
-      "return"
-      "select"
-      "struct"
-      "switch"
-      "type"
-      "var"
-    ] @keyword
-
-    ; Builtins
-    [
-      "true"
-      "false"
-      "nil"
-      "iota"
-    ] @constant.builtin
 
     ; Strings
     (raw_string_literal) @string
@@ -390,6 +119,12 @@ enum HighlightQueries {
     (float_literal) @number
     (imaginary_literal) @number
 
+    ; Booleans
+    (true) @constant.builtin
+    (false) @constant.builtin
+    (nil) @constant.builtin
+    (iota) @constant.builtin
+
     ; Comments
     (comment) @comment
     """
@@ -397,65 +132,8 @@ enum HighlightQueries {
     // MARK: - Rust
 
     static let rust = """
-    ; Variables
-    (identifier) @variable
-
-    ; Functions
-    (function_item name: (identifier) @function)
-    (call_expression function: (identifier) @function)
-    (call_expression function: (field_expression field: (field_identifier) @function))
-
     ; Types
     (type_identifier) @type
-    (struct_item name: (type_identifier) @type)
-    (enum_item name: (type_identifier) @type)
-    (trait_item name: (type_identifier) @type)
-
-    ; Keywords
-    [
-      "as"
-      "async"
-      "await"
-      "break"
-      "const"
-      "continue"
-      "crate"
-      "dyn"
-      "else"
-      "enum"
-      "extern"
-      "fn"
-      "for"
-      "if"
-      "impl"
-      "in"
-      "let"
-      "loop"
-      "match"
-      "mod"
-      "move"
-      "mut"
-      "pub"
-      "ref"
-      "return"
-      "self"
-      "Self"
-      "static"
-      "struct"
-      "super"
-      "trait"
-      "type"
-      "unsafe"
-      "use"
-      "where"
-      "while"
-    ] @keyword
-
-    ; Builtins
-    [
-      "true"
-      "false"
-    ] @constant.builtin
 
     ; Strings
     (string_literal) @string
@@ -466,6 +144,9 @@ enum HighlightQueries {
     (integer_literal) @number
     (float_literal) @number
 
+    ; Booleans
+    (boolean_literal) @constant.builtin
+
     ; Comments
     (line_comment) @comment
     (block_comment) @comment
@@ -474,44 +155,10 @@ enum HighlightQueries {
     // MARK: - C
 
     static let c = """
-    ; Variables
-    (identifier) @variable
-
-    ; Functions
-    (function_declarator declarator: (identifier) @function)
-    (call_expression function: (identifier) @function)
-
     ; Types
     (type_identifier) @type
     (primitive_type) @type
     (sized_type_specifier) @type
-
-    ; Keywords
-    [
-      "break"
-      "case"
-      "const"
-      "continue"
-      "default"
-      "do"
-      "else"
-      "enum"
-      "extern"
-      "for"
-      "goto"
-      "if"
-      "inline"
-      "register"
-      "return"
-      "sizeof"
-      "static"
-      "struct"
-      "switch"
-      "typedef"
-      "union"
-      "volatile"
-      "while"
-    ] @keyword
 
     ; Preprocessor
     (preproc_include) @keyword
@@ -520,19 +167,16 @@ enum HighlightQueries {
     (preproc_else) @keyword
     (preproc_endif) @keyword
 
-    ; Builtins
-    [
-      "true"
-      "false"
-      "NULL"
-    ] @constant.builtin
-
     ; Strings
     (string_literal) @string
     (char_literal) @string
 
     ; Numbers
     (number_literal) @number
+
+    ; Booleans
+    (true) @constant.builtin
+    (false) @constant.builtin
 
     ; Comments
     (comment) @comment
@@ -541,34 +185,33 @@ enum HighlightQueries {
     // MARK: - C++
 
     static let cpp = """
-    ; Inherit from C
-    \(c)
+    ; Types
+    (type_identifier) @type
+    (primitive_type) @type
+    (sized_type_specifier) @type
 
-    ; Additional C++ keywords
-    [
-      "catch"
-      "class"
-      "constexpr"
-      "delete"
-      "explicit"
-      "friend"
-      "mutable"
-      "namespace"
-      "new"
-      "noexcept"
-      "nullptr"
-      "operator"
-      "private"
-      "protected"
-      "public"
-      "template"
-      "this"
-      "throw"
-      "try"
-      "typename"
-      "using"
-      "virtual"
-    ] @keyword
+    ; Preprocessor
+    (preproc_include) @keyword
+    (preproc_def) @keyword
+    (preproc_ifdef) @keyword
+    (preproc_else) @keyword
+    (preproc_endif) @keyword
+
+    ; Strings
+    (string_literal) @string
+    (raw_string_literal) @string
+    (char_literal) @string
+
+    ; Numbers
+    (number_literal) @number
+
+    ; Booleans
+    (true) @constant.builtin
+    (false) @constant.builtin
+    (nullptr) @constant.builtin
+
+    ; Comments
+    (comment) @comment
     """
 
     // MARK: - HTML
@@ -590,12 +233,9 @@ enum HighlightQueries {
     ; Selectors
     (class_selector) @type
     (id_selector) @type
-    (pseudo_class_selector) @keyword
-    (pseudo_element_selector) @keyword
 
     ; Properties and values
     (property_name) @property
-    (plain_value) @variable
     (color_value) @number
     (integer_value) @number
     (float_value) @number
@@ -603,29 +243,21 @@ enum HighlightQueries {
 
     ; Comments
     (comment) @comment
-
-    ; At-rules
-    (at_keyword) @keyword
     """
 
     // MARK: - JSON
 
     static let json = """
-    (pair key: (string) @property)
     (string) @string
     (number) @number
-    [
-      "true"
-      "false"
-      "null"
-    ] @constant.builtin
+    (true) @constant.builtin
+    (false) @constant.builtin
+    (null) @constant.builtin
     """
 
     // MARK: - YAML
 
     static let yaml = """
-    (block_mapping_pair key: (flow_node) @property)
-    (flow_mapping_pair key: (flow_node) @property)
     (string_scalar) @string
     (double_quote_scalar) @string
     (single_quote_scalar) @string
@@ -658,29 +290,10 @@ enum HighlightQueries {
     static let bash = """
     ; Variables
     (variable_name) @variable
-    (special_variable_name) @variable.builtin
+    (special_variable_name) @variable
 
     ; Commands
     (command_name) @function
-
-    ; Keywords
-    [
-      "case"
-      "do"
-      "done"
-      "elif"
-      "else"
-      "esac"
-      "fi"
-      "for"
-      "function"
-      "if"
-      "in"
-      "select"
-      "then"
-      "until"
-      "while"
-    ] @keyword
 
     ; Strings
     (string) @string
@@ -695,63 +308,12 @@ enum HighlightQueries {
 
     static let ruby = """
     ; Variables
-    (identifier) @variable
     (instance_variable) @variable
     (class_variable) @variable
     (global_variable) @variable
 
-    ; Functions
-    (method name: (identifier) @function)
-    (call method: (identifier) @function)
-    (method_call method: (identifier) @function)
-
     ; Types
     (constant) @type
-    (class name: (constant) @type)
-    (module name: (constant) @type)
-
-    ; Keywords
-    [
-      "alias"
-      "and"
-      "begin"
-      "break"
-      "case"
-      "class"
-      "def"
-      "defined?"
-      "do"
-      "else"
-      "elsif"
-      "end"
-      "ensure"
-      "for"
-      "if"
-      "in"
-      "module"
-      "next"
-      "not"
-      "or"
-      "redo"
-      "rescue"
-      "retry"
-      "return"
-      "self"
-      "super"
-      "then"
-      "unless"
-      "until"
-      "when"
-      "while"
-      "yield"
-    ] @keyword
-
-    ; Builtins
-    [
-      "true"
-      "false"
-      "nil"
-    ] @constant.builtin
 
     ; Strings
     (string) @string
@@ -761,6 +323,11 @@ enum HighlightQueries {
     ; Numbers
     (integer) @number
     (float) @number
+
+    ; Booleans
+    (true) @constant.builtin
+    (false) @constant.builtin
+    (nil) @constant.builtin
 
     ; Comments
     (comment) @comment
