@@ -131,6 +131,17 @@ public struct KeystoneTextView: UIViewRepresentable {
         let theme = KeystoneRunestoneTheme(configuration: configuration)
         textView.theme = theme
 
+        // Handle language changes - update syntax highlighting when language changes
+        if language != coordinator.lastSyncedLanguage {
+            coordinator.lastSyncedLanguage = language
+            if let tsLanguage = language.treeSitterLanguage {
+                let languageMode = TreeSitterLanguageMode(language: tsLanguage, languageProvider: KeystoneLanguageProvider.shared)
+                textView.setLanguageMode(languageMode)
+            } else {
+                textView.setLanguageMode(PlainTextLanguageMode())
+            }
+        }
+
         // Handle external text changes (file loads) SAFELY
         // NEVER call setState from updateUIView - it causes crashes because
         // the keyboard queries line structure before RedBlackTree is ready.
@@ -301,6 +312,7 @@ public struct KeystoneTextView: UIViewRepresentable {
         var lastScrollOffset: CGFloat = 0
         var lastSyncedText: String = ""
         var lastSyncedCursorPosition: CursorPosition?
+        var lastSyncedLanguage: KeystoneLanguage?
         private var highlightedRanges: [HighlightedRange] = []
         let codeFoldingManager = CodeFoldingManager()
         private var foldingAnalysisWorkItem: DispatchWorkItem?
@@ -313,6 +325,7 @@ public struct KeystoneTextView: UIViewRepresentable {
         init(_ parent: KeystoneTextView) {
             self.parent = parent
             self.lastSyncedText = parent.text
+            self.lastSyncedLanguage = parent.language
             super.init()
 
             // Observe keyboard dismiss to apply pending updates safely
@@ -790,6 +803,17 @@ public struct KeystoneTextView: NSViewRepresentable {
         let theme = KeystoneRunestoneThemeMac(configuration: configuration)
         textView.theme = theme
 
+        // Handle language changes - update syntax highlighting when language changes
+        if language != coordinator.lastSyncedLanguage {
+            coordinator.lastSyncedLanguage = language
+            if let tsLanguage = language.treeSitterLanguage {
+                let languageMode = TreeSitterLanguageMode(language: tsLanguage, languageProvider: KeystoneLanguageProvider.shared)
+                textView.setLanguageMode(languageMode)
+            } else {
+                textView.setLanguageMode(PlainTextLanguageMode())
+            }
+        }
+
         // Handle external text changes (file loads)
         if textView.text != text && !coordinator.isUpdatingText && text != coordinator.lastSyncedText {
             // Queue the pending text update - will be applied when safe
@@ -954,6 +978,7 @@ public struct KeystoneTextView: NSViewRepresentable {
         var isUpdatingCursor = false
         var lastSyncedText: String = ""
         var lastSyncedCursorPosition: CursorPosition?
+        var lastSyncedLanguage: KeystoneLanguage?
         private var highlightedRanges: [HighlightedRange] = []
         let codeFoldingManager = CodeFoldingManager()
         private var foldingAnalysisWorkItem: DispatchWorkItem?
@@ -966,6 +991,7 @@ public struct KeystoneTextView: NSViewRepresentable {
             self.parent = parent
             self.lastSyncedText = parent.text
             self.lastSyncedCursorPosition = parent.cursorPosition
+            self.lastSyncedLanguage = parent.language
             super.init()
         }
 

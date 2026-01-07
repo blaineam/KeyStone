@@ -78,11 +78,28 @@ final class TextInputViewMac: NSView, NSTextInputClient {
         get { _selectedRange }
         set {
             if newValue != _selectedRange {
+                // Capture the old caret rect BEFORE changing selection
+                // This ensures we properly clear the old cursor position
+                if let oldRange = _selectedRange, oldRange.length == 0, isEditing {
+                    let oldCaretRect = caretRectService.caretRect(at: oldRange.location, allowMovingCaretToNextLineFragment: true)
+                    previousCaretRect = oldCaretRect
+                    // Invalidate the old caret position immediately
+                    setNeedsDisplay(oldCaretRect.insetBy(dx: -2, dy: -2))
+                }
+
                 _selectedRange = newValue
                 layoutManager.selectedRange = _selectedRange
                 layoutManager.setNeedsLayoutLineSelection()
                 needsLayout = true
-                needsDisplay = true  // Redraw selection highlight
+
+                // When cursor moves during editing, restart blink cycle to ensure
+                // the new position is immediately visible and old position is cleared
+                if isEditing && (newValue?.length ?? 0) == 0 {
+                    restartCaretBlinking()
+                } else {
+                    needsDisplay = true  // Redraw selection highlight
+                }
+
                 // Don't update caret here - wait for layout to complete
                 delegate?.textInputViewDidChangeSelection(self)
             }
@@ -392,6 +409,8 @@ final class TextInputViewMac: NSView, NSTextInputClient {
     private var caretBlinkTimer: Timer?
     private var isCaretVisible = true
     private let caretView = NSView()
+    /// Track the previous caret rect to ensure old cursor positions are properly cleared
+    private var previousCaretRect: CGRect?
 
     private var estimatedLineHeight: CGFloat {
         theme.font.totalLineHeight * lineHeightMultiplier
@@ -476,8 +495,33 @@ final class TextInputViewMac: NSView, NSTextInputClient {
         needsDisplay = true
     }
 
+    private func restartCaretBlinking() {
+        // Invalidate the previous caret position if we have one
+        if let prevRect = previousCaretRect {
+            setNeedsDisplay(prevRect.insetBy(dx: -2, dy: -2))
+            previousCaretRect = nil
+        }
+
+        // Stop any existing timer and start fresh with caret visible
+        caretBlinkTimer?.invalidate()
+        isCaretVisible = true
+        needsDisplay = true
+
+        // Start a new blink timer
+        caretBlinkTimer = Timer.scheduledTimer(withTimeInterval: 0.53, repeats: true) { [weak self] _ in
+            self?.toggleCaretVisibility()
+        }
+    }
+
     private func toggleCaretVisibility() {
         isCaretVisible.toggle()
+
+        // Also invalidate any previous caret rect to ensure old positions are cleared
+        if let prevRect = previousCaretRect {
+            setNeedsDisplay(prevRect.insetBy(dx: -2, dy: -2))
+            previousCaretRect = nil
+        }
+
         // Only invalidate the caret rect area for efficiency
         if let sel = selection, sel.length == 0 {
             let caretRect = caretRectService.caretRect(at: sel.location, allowMovingCaretToNextLineFragment: true)
