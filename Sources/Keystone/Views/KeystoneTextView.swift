@@ -136,9 +136,14 @@ public struct KeystoneTextView: UIViewRepresentable {
             coordinator.lastSyncedLanguage = language
             if let tsLanguage = language.treeSitterLanguage {
                 let languageMode = TreeSitterLanguageMode(language: tsLanguage, languageProvider: KeystoneLanguageProvider.shared)
-                textView.setLanguageMode(languageMode)
+                textView.setLanguageMode(languageMode) { _ in
+                    // Force redraw after language mode parsing completes
+                    textView.redisplayVisibleLines()
+                }
             } else {
-                textView.setLanguageMode(PlainTextLanguageMode())
+                textView.setLanguageMode(PlainTextLanguageMode()) { _ in
+                    textView.redisplayVisibleLines()
+                }
             }
         }
 
@@ -808,9 +813,14 @@ public struct KeystoneTextView: NSViewRepresentable {
             coordinator.lastSyncedLanguage = language
             if let tsLanguage = language.treeSitterLanguage {
                 let languageMode = TreeSitterLanguageMode(language: tsLanguage, languageProvider: KeystoneLanguageProvider.shared)
-                textView.setLanguageMode(languageMode)
+                textView.setLanguageMode(languageMode) { _ in
+                    // Force redraw after language mode parsing completes
+                    textView.redisplayVisibleLines()
+                }
             } else {
-                textView.setLanguageMode(PlainTextLanguageMode())
+                textView.setLanguageMode(PlainTextLanguageMode()) { _ in
+                    textView.redisplayVisibleLines()
+                }
             }
         }
 
