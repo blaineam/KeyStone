@@ -1573,3 +1573,502 @@ extension TextView: UITextInteractionDelegate {
 // swiftlint:enable type_body_length
 
 #endif // canImport(UIKit)
+
+#if canImport(AppKit)
+import AppKit
+
+/// A macOS text view with features commonly found in code editors.
+///
+/// This is the macOS equivalent of the iOS `TextView`, providing the same high-performance
+/// architecture using `TextInputViewMac` which implements `NSTextInputClient`.
+open class TextView: NSScrollView {
+    /// Delegate to receive callbacks for events triggered by the editor.
+    public weak var editorDelegate: TextViewDelegate?
+
+    /// Whether the text view is in a state where the contents can be edited.
+    public private(set) var isEditing = false {
+        didSet {
+            if isEditing != oldValue {
+                textInputView.isEditing = isEditing
+            }
+        }
+    }
+
+    /// The text that the text view displays.
+    public var text: String {
+        get { textInputView.string as String }
+        set {
+            textInputView.string = newValue as NSString
+            reflectScrolledClipView(contentView)
+        }
+    }
+
+    /// Sets the text content while preserving the undo stack.
+    public func setTextPreservingUndo(_ newText: String) {
+        textInputView.setTextPreservingUndo(newText as NSString)
+        reflectScrolledClipView(contentView)
+    }
+
+    /// A Boolean value that indicates whether the text view is editable.
+    public var isEditable = true {
+        didSet {
+            if isEditable != oldValue && !isEditable && isEditing {
+                window?.makeFirstResponder(nil)
+            }
+        }
+    }
+
+    /// A Boolean value that indicates whether the text view is selectable.
+    public var isSelectable = true {
+        didSet {
+            if isSelectable != oldValue && !isSelectable && isEditing {
+                window?.makeFirstResponder(nil)
+                textInputView.clearSelection()
+            }
+        }
+    }
+
+    /// Colors and fonts to be used by the editor.
+    public var theme: Theme {
+        get { textInputView.theme }
+        set { textInputView.theme = newValue }
+    }
+
+    /// The color of the insertion point.
+    public var insertionPointColor: NSColor {
+        get { textInputView.insertionPointColor }
+        set { textInputView.insertionPointColor = newValue }
+    }
+
+    /// The color of the selection highlight.
+    public var selectionHighlightColor: NSColor {
+        get { textInputView.selectionHighlightColor }
+        set { textInputView.selectionHighlightColor = newValue }
+    }
+
+    /// The current selection range of the text view.
+    public var selectedRange: NSRange {
+        get {
+            textInputView.selection ?? NSRange(location: textInputView.string.length, length: 0)
+        }
+        set {
+            textInputView.selection = newValue
+        }
+    }
+
+    /// Character pairs for automatic insertion.
+    public var characterPairs: [CharacterPair] {
+        get { textInputView.characterPairs }
+        set { textInputView.characterPairs = newValue }
+    }
+
+    /// Determines what should happen to the trailing component of a character pair when deleting the leading component.
+    public var characterPairTrailingComponentDeletionMode: CharacterPairTrailingComponentDeletionMode {
+        get { textInputView.characterPairTrailingComponentDeletionMode }
+        set { textInputView.characterPairTrailingComponentDeletionMode = newValue }
+    }
+
+    /// Enable to show line numbers in the gutter.
+    public var showLineNumbers: Bool {
+        get { textInputView.showLineNumbers }
+        set { textInputView.showLineNumbers = newValue }
+    }
+
+    /// Enable to show code folding indicators in the gutter.
+    public var showCodeFolding: Bool {
+        get { textInputView.showCodeFolding }
+        set { textInputView.showCodeFolding = newValue }
+    }
+
+    /// The code folding manager for tracking foldable regions.
+    public var codeFoldingManager: CodeFoldingManager? {
+        get { textInputView.codeFoldingManager }
+        set { textInputView.codeFoldingManager = newValue }
+    }
+
+    /// Called when a fold toggle button is tapped, with the line number (0-indexed).
+    public var onFoldToggle: ((Int) -> Void)? {
+        get { textInputView.onFoldToggle }
+        set { textInputView.onFoldToggle = newValue }
+    }
+
+    /// Forces an immediate layout refresh.
+    public func forceLayoutRefresh() {
+        textInputView.forceLayoutRefresh()
+    }
+
+    /// Enable to highlight the selected lines.
+    public var lineSelectionDisplayType: LineSelectionDisplayType {
+        get { textInputView.lineSelectionDisplayType }
+        set { textInputView.lineSelectionDisplayType = newValue }
+    }
+
+    /// The text view renders invisible tabs when enabled.
+    public var showTabs: Bool {
+        get { textInputView.showTabs }
+        set { textInputView.showTabs = newValue }
+    }
+
+    /// The text view renders invisible spaces when enabled.
+    public var showSpaces: Bool {
+        get { textInputView.showSpaces }
+        set { textInputView.showSpaces = newValue }
+    }
+
+    /// The text view renders invisible line breaks when enabled.
+    public var showLineBreaks: Bool {
+        get { textInputView.showLineBreaks }
+        set { textInputView.showLineBreaks = newValue }
+    }
+
+    /// The strategy used when indenting text.
+    public var indentStrategy: IndentStrategy {
+        get { textInputView.indentStrategy }
+        set { textInputView.indentStrategy = newValue }
+    }
+
+    /// The amount of padding before the line numbers inside the gutter.
+    public var gutterLeadingPadding: CGFloat {
+        get { textInputView.gutterLeadingPadding }
+        set { textInputView.gutterLeadingPadding = newValue }
+    }
+
+    /// The amount of padding after the line numbers inside the gutter.
+    public var gutterTrailingPadding: CGFloat {
+        get { textInputView.gutterTrailingPadding }
+        set { textInputView.gutterTrailingPadding = newValue }
+    }
+
+    /// The amount of spacing surrounding the lines.
+    public var textContainerInset: NSEdgeInsets {
+        get { textInputView.textContainerInset }
+        set { textInputView.textContainerInset = newValue }
+    }
+
+    /// When line wrapping is disabled, users can scroll the text view horizontally.
+    public var isLineWrappingEnabled: Bool {
+        get { textInputView.isLineWrappingEnabled }
+        set {
+            textInputView.isLineWrappingEnabled = newValue
+            hasHorizontalScroller = !newValue
+        }
+    }
+
+    /// Line break mode for text view.
+    public var lineBreakMode: LineBreakMode {
+        get { textInputView.lineBreakMode }
+        set { textInputView.lineBreakMode = newValue }
+    }
+
+    /// Width of the gutter.
+    public var gutterWidth: CGFloat {
+        textInputView.gutterWidth
+    }
+
+    /// The line-height multiplier.
+    public var lineHeightMultiplier: CGFloat {
+        get { textInputView.lineHeightMultiplier }
+        set { textInputView.lineHeightMultiplier = newValue }
+    }
+
+    /// The number of points by which to adjust kern.
+    public var kern: CGFloat {
+        get { textInputView.kern }
+        set { textInputView.kern = newValue }
+    }
+
+    /// Ranges in the text to be highlighted.
+    public var highlightedRanges: [HighlightedRange] {
+        get { textInputView.highlightedRanges }
+        set { textInputView.highlightedRanges = newValue }
+    }
+
+    /// Line endings to use when inserting a line break.
+    public var lineEndings: LineEnding {
+        get { textInputView.lineEndings }
+        set { textInputView.lineEndings = newValue }
+    }
+
+    /// The undo manager for text editing operations.
+    public var textUndoManager: UndoManager {
+        textInputView.textUndoManager
+    }
+
+    /// The text view's background color.
+    public var editorBackgroundColor: NSColor? {
+        get {
+            guard let cgColor = textInputView.layer?.backgroundColor else { return nil }
+            return NSColor(cgColor: cgColor)
+        }
+        set {
+            textInputView.wantsLayer = true
+            textInputView.layer?.backgroundColor = newValue?.cgColor
+            // Also set on the scroll view's content view for consistent appearance
+            contentView.wantsLayer = true
+            contentView.layer?.backgroundColor = newValue?.cgColor
+        }
+    }
+
+    /// Automatically scrolls the text view to show the caret when typing.
+    public var isAutomaticScrollEnabled = true
+
+    /// Amount of vertical overscroll.
+    public var verticalOverscrollFactor: CGFloat = 0 {
+        didSet {
+            if verticalOverscrollFactor != oldValue {
+                updateContentSize()
+            }
+        }
+    }
+
+    /// Amount of horizontal overscroll.
+    public var horizontalOverscrollFactor: CGFloat = 0 {
+        didSet {
+            if horizontalOverscrollFactor != oldValue {
+                updateContentSize()
+            }
+        }
+    }
+
+    // MARK: - Private Properties
+
+    private let textInputView: TextInputViewMac
+
+    private var preferredContentSize: CGSize {
+        let horizontalOverscrollLength = max(frame.width * horizontalOverscrollFactor, 0)
+        let verticalOverscrollLength = max(frame.height * verticalOverscrollFactor, 0)
+        let baseContentSize = textInputView.contentSize
+        let width = isLineWrappingEnabled ? max(baseContentSize.width, contentView.bounds.width) : baseContentSize.width + horizontalOverscrollLength
+        let height = baseContentSize.height + verticalOverscrollLength
+        return CGSize(width: width, height: height)
+    }
+
+    // MARK: - Initialization
+
+    /// Create a new text view.
+    public override init(frame frameRect: NSRect) {
+        textInputView = TextInputViewMac(theme: DefaultTheme())
+        super.init(frame: frameRect)
+        setupScrollView()
+        textInputView.delegate = self
+    }
+
+    public required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    private func setupScrollView() {
+        // Configure scroll view
+        hasVerticalScroller = true
+        hasHorizontalScroller = !isLineWrappingEnabled
+        autohidesScrollers = true
+        borderType = .noBorder
+        drawsBackground = false
+
+        // Set up the document view
+        documentView = textInputView
+        contentView.postsBoundsChangedNotifications = true
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(boundsDidChange(_:)),
+            name: NSView.boundsDidChangeNotification,
+            object: contentView
+        )
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
+
+    // MARK: - Layout
+
+    open override func layout() {
+        super.layout()
+        textInputView.scrollViewWidth = frame.width
+        textInputView.viewport = CGRect(origin: contentView.bounds.origin, size: contentView.bounds.size)
+        updateContentSize()
+    }
+
+    private func updateContentSize() {
+        let newSize = preferredContentSize
+        if textInputView.frame.size != newSize {
+            textInputView.frame = CGRect(origin: .zero, size: newSize)
+        }
+    }
+
+    @objc private func boundsDidChange(_ notification: Notification) {
+        textInputView.viewport = CGRect(origin: contentView.bounds.origin, size: contentView.bounds.size)
+    }
+
+    // MARK: - First Responder
+
+    open override var acceptsFirstResponder: Bool { true }
+
+    open override func becomeFirstResponder() -> Bool {
+        return window?.makeFirstResponder(textInputView) ?? false
+    }
+
+    // MARK: - Public Methods
+
+    /// Sets the current state of the editor.
+    public func setState(_ state: TextViewState, addUndoAction: Bool = false) {
+        textInputView.setState(state, addUndoAction: addUndoAction)
+        updateContentSize()
+    }
+
+    /// Returns the row and column at the specified location in the text.
+    public func textLocation(at location: Int) -> TextLocation? {
+        if let linePosition = textInputView.linePosition(at: location) {
+            return TextLocation(linePosition)
+        }
+        return nil
+    }
+
+    /// Sets the language mode on a background thread.
+    public func setLanguageMode(_ languageMode: LanguageMode, completion: ((Bool) -> Void)? = nil) {
+        textInputView.setLanguageMode(languageMode, completion: completion)
+    }
+
+    /// Returns the text in the specified range.
+    public func text(in range: NSRange) -> String? {
+        textInputView.text(in: range)
+    }
+
+    /// Scrolls the text view to reveal the text in the specified range.
+    public func scrollRangeToVisible(_ range: NSRange) {
+        let caretRect = textInputView.caretRect(at: range.location)
+        let visibleRect = contentView.bounds
+
+        // Use a larger margin so the target is clearly visible (not at the edge)
+        let verticalMargin: CGFloat = visibleRect.height * 0.3  // 30% from top/bottom
+        let horizontalMargin: CGFloat = 50
+
+        // Create an inset rect - if caret is within this, it's "comfortably" visible
+        let comfortableRect = visibleRect.insetBy(dx: horizontalMargin, dy: verticalMargin)
+
+        // Check if the rect is already comfortably visible
+        if comfortableRect.contains(caretRect) {
+            return
+        }
+
+        // Calculate the target scroll position - try to center the caret vertically
+        var targetPoint = contentView.bounds.origin
+
+        // For vertical scrolling, try to place the caret at about 1/3 from the top
+        // This gives better context (more content below the cursor)
+        let preferredY = caretRect.minY - (visibleRect.height * 0.33)
+        targetPoint.y = max(0, preferredY)
+
+        // Scroll horizontally if needed (for non-wrapped lines)
+        if caretRect.minX < visibleRect.minX + horizontalMargin {
+            targetPoint.x = max(0, caretRect.minX - horizontalMargin)
+        } else if caretRect.maxX > visibleRect.maxX - horizontalMargin {
+            targetPoint.x = caretRect.maxX - visibleRect.width + horizontalMargin
+        }
+
+        // Clamp to valid content bounds
+        let maxX = max(0, (documentView?.frame.width ?? 0) - visibleRect.width)
+        let maxY = max(0, (documentView?.frame.height ?? 0) - visibleRect.height)
+        targetPoint.x = min(max(0, targetPoint.x), maxX)
+        targetPoint.y = min(max(0, targetPoint.y), maxY)
+
+        contentView.scroll(to: targetPoint)
+        reflectScrolledClipView(contentView)
+    }
+
+    /// Scrolls to the end of the document.
+    public func scrollToEnd() {
+        let contentHeight = documentView?.frame.height ?? 0
+        let visibleHeight = contentView.bounds.height
+        let targetY = max(0, contentHeight - visibleHeight)
+        let targetPoint = CGPoint(x: contentView.bounds.origin.x, y: targetY)
+        contentView.scroll(to: targetPoint)
+        reflectScrolledClipView(contentView)
+    }
+
+    /// Synchronously displays the visible lines.
+    public func redisplayVisibleLines() {
+        textInputView.redisplayVisibleLines()
+    }
+
+    // MARK: - UITextInput-like API
+
+    /// A Boolean value that indicates whether the text-entry object has any text.
+    public var hasText: Bool {
+        textInputView.hasText
+    }
+}
+
+// MARK: - TextInputViewMacDelegate
+
+extension TextView: TextInputViewMacDelegate {
+    func textInputViewWillBeginEditing(_ view: TextInputViewMac) {
+        guard isEditable else { return }
+        isEditing = true
+    }
+
+    func textInputViewDidBeginEditing(_ view: TextInputViewMac) {
+        editorDelegate?.textViewDidBeginEditing(self)
+    }
+
+    func textInputViewDidEndEditing(_ view: TextInputViewMac) {
+        isEditing = false
+        editorDelegate?.textViewDidEndEditing(self)
+    }
+
+    func textInputViewDidCancelBeginEditing(_ view: TextInputViewMac) {
+        isEditing = false
+    }
+
+    func textInputViewDidChange(_ view: TextInputViewMac) {
+        if isAutomaticScrollEnabled, let newRange = textInputView.selection, newRange.length == 0 {
+            scrollRangeToVisible(newRange)
+        }
+        editorDelegate?.textViewDidChange(self)
+    }
+
+    func textInputViewDidChangeSelection(_ view: TextInputViewMac) {
+        if isAutomaticScrollEnabled, let newRange = textInputView.selection, newRange.length == 0 {
+            scrollRangeToVisible(newRange)
+        }
+        editorDelegate?.textViewDidChangeSelection(self)
+    }
+
+    func textInputView(_ view: TextInputViewMac, shouldChangeTextIn range: NSRange, replacementText text: String) -> Bool {
+        editorDelegate?.textView(self, shouldChangeTextIn: range, replacementText: text) ?? true
+    }
+
+    func textInputViewDidInvalidateContentSize(_ view: TextInputViewMac) {
+        updateContentSize()
+    }
+
+    func textInputView(_ view: TextInputViewMac, didProposeContentOffsetAdjustment contentOffsetAdjustment: CGPoint) {
+        // Handle content offset adjustment during scrolling
+        if contentOffsetAdjustment != .zero {
+            let currentOrigin = contentView.bounds.origin
+            let newOrigin = CGPoint(
+                x: currentOrigin.x + contentOffsetAdjustment.x,
+                y: currentOrigin.y + contentOffsetAdjustment.y
+            )
+            contentView.scroll(to: newOrigin)
+        }
+    }
+
+    func textInputViewDidChangeGutterWidth(_ view: TextInputViewMac) {
+        editorDelegate?.textViewDidChangeGutterWidth(self)
+    }
+
+    func textInputViewDidUpdateMarkedRange(_ view: TextInputViewMac) {
+        // Handle marked text range updates (for input methods)
+    }
+
+    func textInputView(_ view: TextInputViewMac, canReplaceTextIn highlightedRange: HighlightedRange) -> Bool {
+        editorDelegate?.textView(self, canReplaceTextIn: highlightedRange) ?? false
+    }
+
+    func textInputView(_ view: TextInputViewMac, replaceTextIn highlightedRange: HighlightedRange) {
+        editorDelegate?.textView(self, replaceTextIn: highlightedRange)
+    }
+}
+
+#endif // canImport(AppKit)

@@ -153,17 +153,23 @@ public struct KeystoneTextView: UIViewRepresentable {
         // Only update if not currently editing to avoid fighting with user input
         // MUST defer to async to avoid RedBlackTree crash - setting selectedRange
         // triggers keyboard tokenizer which queries line structure before tree is ready
-        if !textView.isFirstResponder && coordinator.pendingTextUpdate == nil {
+        if coordinator.pendingTextUpdate == nil && !coordinator.isUpdatingCursor && !coordinator.isUpdatingText {
             let expectedRange = NSRange(location: cursorPosition.offset, length: cursorPosition.selectionLength)
-            if textView.selectedRange != expectedRange && !coordinator.isUpdatingText && !textView.isUpdatingText {
+            let currentRange = textView.selectedRange
+            let isExternalChange = cursorPosition != coordinator.lastSyncedCursorPosition
+
+            if isExternalChange && currentRange != expectedRange && !textView.isUpdatingText {
                 DispatchQueue.main.async {
                     // Double-check conditions are still valid
-                    guard !textView.isFirstResponder && !coordinator.isUpdatingText && !textView.isUpdatingText else { return }
+                    guard !coordinator.isUpdatingText && !coordinator.isUpdatingCursor && !textView.isUpdatingText else { return }
+                    coordinator.isUpdatingCursor = true
+                    coordinator.lastSyncedCursorPosition = self.cursorPosition
                     // Set isUpdatingText on textView to prevent TextInputStringTokenizer
                     // from querying RedBlackTree mid-update (causes assertion failure)
                     textView.isUpdatingText = true
                     textView.selectedRange = expectedRange
                     textView.isUpdatingText = false
+                    coordinator.isUpdatingCursor = false
                 }
             }
         }
@@ -291,8 +297,10 @@ public struct KeystoneTextView: UIViewRepresentable {
         var parent: KeystoneTextView
         weak var textView: TextView?
         var isUpdatingText = false
+        var isUpdatingCursor = false
         var lastScrollOffset: CGFloat = 0
         var lastSyncedText: String = ""
+        var lastSyncedCursorPosition: CursorPosition?
         private var highlightedRanges: [HighlightedRange] = []
         let codeFoldingManager = CodeFoldingManager()
         private var foldingAnalysisWorkItem: DispatchWorkItem?
@@ -468,12 +476,9 @@ public struct KeystoneTextView: UIViewRepresentable {
         }
 
         public func textViewDidChangeSelection(_ textView: TextView) {
-            // Skip updating cursor binding during multi-step text operations
-            // This prevents SwiftUI state inconsistencies when character pairs are inserted
-            guard !isUpdatingText && !textView.isUpdatingText else { return }
-
-            // Cancel any pending cursor update
-            cursorUpdateWorkItem?.cancel()
+            // Skip updating cursor binding during multi-step text operations or external updates
+            // This prevents SwiftUI state inconsistencies and feedback loops
+            guard !isUpdatingText && !isUpdatingCursor && !textView.isUpdatingText else { return }
 
             let selectedRange = textView.selectedRange
             let text = textView.text
@@ -483,18 +488,23 @@ public struct KeystoneTextView: UIViewRepresentable {
                 selectionLength: selectedRange.length
             )
 
+            // Skip if position hasn't actually changed (prevents feedback loops)
+            guard newPosition != lastSyncedCursorPosition else { return }
+
+            // Cancel any pending cursor update
+            cursorUpdateWorkItem?.cancel()
+
             // Debounce cursor position updates to prevent rapid-fire binding updates
             // during multi-step operations (like character pairs or comment toggle)
             let workItem = DispatchWorkItem { [weak self] in
-                guard let self = self else { return }
-                // Only update if the position actually changed
-                if self.parent.cursorPosition != newPosition {
-                    self.parent.cursorPosition = newPosition
-                }
+                guard let self = self, !self.isUpdatingText && !self.isUpdatingCursor else { return }
+                self.isUpdatingCursor = true
+                self.lastSyncedCursorPosition = newPosition
+                self.parent.cursorPosition = newPosition
+                self.isUpdatingCursor = false
             }
             cursorUpdateWorkItem = workItem
-            // Use a very short delay (16ms = 1 frame) to batch rapid updates
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.016, execute: workItem)
+            DispatchQueue.main.async(execute: workItem)
 
             // Update bracket matching immediately (visual feedback)
             updateBracketMatch(textView: textView)
@@ -668,7 +678,8 @@ class KeystoneRunestoneTheme: Theme {
 #elseif canImport(AppKit)
 import AppKit
 
-// macOS implementation using NSTextView (Runestone is iOS-only)
+/// macOS implementation using native Runestone TextView for iOS/macOS feature parity.
+/// Uses the same high-performance architecture as iOS: TextInputViewMac + NSTextInputClient.
 public struct KeystoneTextView: NSViewRepresentable {
     @Binding var text: String
     let language: KeystoneLanguage
@@ -705,137 +716,352 @@ public struct KeystoneTextView: NSViewRepresentable {
         self.undoController = undoController
     }
 
-    public func makeNSView(context: Context) -> NSScrollView {
-        let scrollView = NSScrollView()
-        let textView = NSTextView()
+    public func makeNSView(context: Context) -> TextView {
+        let textView = TextView()
 
-        textView.isEditable = true
-        textView.isSelectable = true
-        textView.allowsUndo = true
-        textView.isRichText = false
-        textView.usesFontPanel = false
-        textView.font = .monospacedSystemFont(ofSize: configuration.fontSize, weight: .regular)
-        textView.backgroundColor = NSColor(configuration.theme.background)
-        textView.textColor = NSColor(configuration.theme.text)
-        textView.autoresizingMask = [.width]
-        textView.isHorizontallyResizable = false
-        textView.isVerticallyResizable = true
-        textView.textContainer?.widthTracksTextView = configuration.lineWrapping
-        textView.textContainer?.containerSize = NSSize(
-            width: configuration.lineWrapping ? scrollView.contentSize.width : CGFloat.greatestFiniteMagnitude,
-            height: CGFloat.greatestFiniteMagnitude
-        )
+        // Configure the text view
+        textView.editorDelegate = context.coordinator
 
-        textView.delegate = context.coordinator
-        textView.string = text
+        // Apply initial configuration
+        applyConfiguration(to: textView)
 
-        scrollView.documentView = textView
-        scrollView.hasVerticalScroller = true
-        scrollView.hasHorizontalScroller = !configuration.lineWrapping
-        scrollView.autohidesScrollers = true
-
-        context.coordinator.textView = textView
-        context.coordinator.scrollView = scrollView
+        // Set up language if available
+        if let tsLanguage = language.treeSitterLanguage {
+            let theme = KeystoneRunestoneThemeMac(configuration: configuration)
+            let state = TextViewState(
+                text: text,
+                theme: theme,
+                language: tsLanguage,
+                languageProvider: KeystoneLanguageProvider.shared
+            )
+            textView.setState(state)
+        } else {
+            // No tree-sitter language, just set the text with theme
+            let theme = KeystoneRunestoneThemeMac(configuration: configuration)
+            textView.theme = theme
+            textView.text = text
+        }
 
         // Set up undo controller
         setupUndoController(textView: textView, context: context)
 
-        return scrollView
+        // Set up code folding
+        setupCodeFolding(textView: textView, context: context)
+
+        context.coordinator.textView = textView
+
+        return textView
     }
 
-    public func updateNSView(_ scrollView: NSScrollView, context: Context) {
-        guard let textView = scrollView.documentView as? NSTextView else { return }
+    private func setupCodeFolding(textView: TextView, context: Context) {
+        let coordinator = context.coordinator
+        let foldingManager = coordinator.codeFoldingManager
 
-        context.coordinator.parent = self
+        // Connect the manager to the text view
+        textView.codeFoldingManager = foldingManager
 
-        if textView.string != text && !context.coordinator.isUpdatingText {
-            context.coordinator.isUpdatingText = true
-            textView.string = text
-            context.coordinator.isUpdatingText = false
-        }
-
-        // Apply configuration
-        textView.font = .monospacedSystemFont(ofSize: configuration.fontSize, weight: .regular)
-        textView.backgroundColor = NSColor(configuration.theme.background)
-        textView.textColor = NSColor(configuration.theme.text)
-        textView.textContainer?.widthTracksTextView = configuration.lineWrapping
-
-        if scrollToCursor {
-            DispatchQueue.main.async {
-                self.scrollToCursor = false
-                textView.scrollToEndOfDocument(nil)
+        // Set up the fold toggle handler - triggers immediate refresh
+        textView.onFoldToggle = { [weak foldingManager, weak textView] lineIndex in
+            guard let manager = foldingManager, let tv = textView else { return }
+            if let region = manager.regionStarting(atLine: lineIndex) {
+                manager.toggleFold(for: region)
+                // Force immediate layout refresh after fold state changes
+                tv.forceLayoutRefresh()
             }
         }
 
-        // Update bracket matching
-        context.coordinator.updateBracketMatch()
+        // Trigger layout update when fold state changes (for programmatic changes)
+        foldingManager.onFoldingChanged = { [weak textView] in
+            textView?.forceLayoutRefresh()
+        }
+
+        // Initial analysis of text (only for non-large files)
+        foldingManager.analyzeText(text)
+    }
+
+    public func updateNSView(_ textView: TextView, context: Context) {
+        context.coordinator.parent = self
+        let coordinator = context.coordinator
+
+        // Apply configuration changes first (includes background color)
+        applyConfiguration(to: textView)
+
+        // Update theme colors
+        let theme = KeystoneRunestoneThemeMac(configuration: configuration)
+        textView.theme = theme
+
+        // Handle external text changes (file loads)
+        if textView.text != text && !coordinator.isUpdatingText && text != coordinator.lastSyncedText {
+            // Queue the pending text update - will be applied when safe
+            coordinator.pendingTextUpdate = (text: text, language: language.treeSitterLanguage, theme: theme)
+
+            // Try to apply immediately
+            DispatchQueue.main.async {
+                coordinator.applyPendingTextUpdate()
+            }
+        }
+
+        // Update cursor position if it changed externally (e.g., from jump to line)
+        if coordinator.pendingTextUpdate == nil && !coordinator.isUpdatingCursor && !coordinator.isUpdatingText {
+            let expectedRange = NSRange(location: cursorPosition.offset, length: cursorPosition.selectionLength)
+            let currentRange = textView.selectedRange
+
+            // Check if this is a genuine external change (not from the text view itself)
+            let isExternalChange = cursorPosition != coordinator.lastSyncedCursorPosition
+
+            if isExternalChange && currentRange != expectedRange {
+                coordinator.isUpdatingCursor = true
+                coordinator.lastSyncedCursorPosition = cursorPosition
+                textView.selectedRange = expectedRange
+
+                // Handle scroll to cursor
+                if scrollToCursor {
+                    DispatchQueue.main.async {
+                        self.scrollToCursor = false
+                    }
+                    textView.scrollRangeToVisible(expectedRange)
+                }
+                coordinator.isUpdatingCursor = false
+            } else if scrollToCursor {
+                // Just scroll, no cursor update needed
+                DispatchQueue.main.async {
+                    self.scrollToCursor = false
+                }
+                textView.scrollRangeToVisible(currentRange)
+            }
+        } else if scrollToCursor {
+            // Handle scroll to cursor when there's a pending update
+            DispatchQueue.main.async {
+                self.scrollToCursor = false
+                let range = NSRange(location: self.cursorPosition.offset, length: self.cursorPosition.selectionLength)
+                textView.scrollRangeToVisible(range)
+            }
+        }
+
+        // Update search match highlighting
+        coordinator.updateSearchHighlights(textView: textView, searchMatches: searchMatches, currentMatchIndex: currentMatchIndex)
+
+        // Defer bracket matching update
+        DispatchQueue.main.async {
+            coordinator.updateBracketMatch(textView: textView)
+        }
     }
 
     public func makeCoordinator() -> Coordinator {
         Coordinator(self)
     }
 
-    private func setupUndoController(textView: NSTextView, context: Context) {
+    private func applyConfiguration(to textView: TextView) {
+        // Background color from theme
+        textView.editorBackgroundColor = NSColor(configuration.theme.background)
+
+        // Appearance settings
+        textView.showLineNumbers = configuration.showLineNumbers
+        textView.showCodeFolding = configuration.showCodeFolding
+        textView.lineHeightMultiplier = configuration.lineHeightMultiplier
+        textView.isLineWrappingEnabled = configuration.lineWrapping
+
+        // Line selection highlighting
+        if configuration.highlightCurrentLine {
+            textView.lineSelectionDisplayType = .line
+        } else {
+            textView.lineSelectionDisplayType = .disabled
+        }
+
+        // Invisible characters
+        let showInvisibles = configuration.showInvisibleCharacters
+        textView.showTabs = showInvisibles
+        textView.showSpaces = showInvisibles
+        textView.showLineBreaks = showInvisibles
+
+        // Indentation
+        switch configuration.indentation.type {
+        case .tabs:
+            textView.indentStrategy = .tab(length: configuration.indentation.width)
+        case .spaces:
+            textView.indentStrategy = .space(length: configuration.indentation.width)
+        }
+
+        // Character pairs
+        if configuration.autoInsertPairs {
+            textView.characterPairs = [
+                BasicCharacterPair(leading: "(", trailing: ")"),
+                BasicCharacterPair(leading: "[", trailing: "]"),
+                BasicCharacterPair(leading: "{", trailing: "}"),
+                BasicCharacterPair(leading: "\"", trailing: "\""),
+                BasicCharacterPair(leading: "'", trailing: "'"),
+                BasicCharacterPair(leading: "`", trailing: "`")
+            ]
+            textView.characterPairTrailingComponentDeletionMode = .disabled
+        } else {
+            textView.characterPairs = []
+        }
+
+        // Line ending
+        textView.lineEndings = configuration.lineEnding
+    }
+
+    private func setupUndoController(textView: TextView, context: Context) {
         guard let undoController = undoController else { return }
 
         let coordinator = context.coordinator
 
         undoController.undoAction = { [weak textView, weak coordinator] in
-            textView?.undoManager?.undo()
+            textView?.textUndoManager.undo()
             coordinator?.syncTextNow()
         }
 
         undoController.redoAction = { [weak textView, weak coordinator] in
-            textView?.undoManager?.redo()
+            textView?.textUndoManager.redo()
             coordinator?.syncTextNow()
         }
 
         undoController.checkUndoState = { [weak textView] in
-            (canUndo: textView?.undoManager?.canUndo ?? false,
-             canRedo: textView?.undoManager?.canRedo ?? false)
+            (canUndo: textView?.textUndoManager.canUndo ?? false,
+             canRedo: textView?.textUndoManager.canRedo ?? false)
         }
 
         undoController.replaceTextAction = { [weak textView] range, replacementText in
             guard let textView = textView else { return nil }
-            guard range.location + range.length <= textView.string.count else { return nil }
+            guard range.location + range.length <= textView.text.count else { return nil }
 
-            textView.replaceCharacters(in: range, with: replacementText)
-            return textView.string
+            // Use direct text replacement through the view
+            let startIndex = textView.text.index(textView.text.startIndex, offsetBy: range.location)
+            let endIndex = textView.text.index(startIndex, offsetBy: range.length)
+            var newText = textView.text
+            newText.replaceSubrange(startIndex..<endIndex, with: replacementText)
+            textView.text = newText
+            return textView.text
         }
 
         undoController.beginUndoGroupingAction = { [weak textView] in
-            textView?.undoManager?.beginUndoGrouping()
+            textView?.textUndoManager.beginUndoGrouping()
         }
 
         undoController.endUndoGroupingAction = { [weak textView] in
-            textView?.undoManager?.endUndoGrouping()
+            textView?.textUndoManager.endUndoGrouping()
         }
 
         undoController.startUpdating()
     }
 
-    public class Coordinator: NSObject, NSTextViewDelegate {
+    // MARK: - Coordinator
+
+    public class Coordinator: NSObject, TextViewDelegate {
         var parent: KeystoneTextView
-        weak var textView: NSTextView?
-        weak var scrollView: NSScrollView?
+        weak var textView: TextView?
         var isUpdatingText = false
+        var isUpdatingCursor = false
+        var lastSyncedText: String = ""
+        var lastSyncedCursorPosition: CursorPosition?
+        private var highlightedRanges: [HighlightedRange] = []
+        let codeFoldingManager = CodeFoldingManager()
+        private var foldingAnalysisWorkItem: DispatchWorkItem?
+        private var cursorUpdateWorkItem: DispatchWorkItem?
+
+        /// Pending text update to apply when safe
+        var pendingTextUpdate: (text: String, language: TreeSitterLanguage?, theme: KeystoneRunestoneThemeMac)?
 
         init(_ parent: KeystoneTextView) {
             self.parent = parent
+            self.lastSyncedText = parent.text
+            self.lastSyncedCursorPosition = parent.cursorPosition
+            super.init()
         }
 
         func syncTextNow() {
             guard let textView = textView, !isUpdatingText else { return }
             isUpdatingText = true
-            parent.text = textView.string
+            let currentText = textView.text
+            parent.text = currentText
+            lastSyncedText = currentText
             isUpdatingText = false
         }
 
-        func updateBracketMatch() {
-            guard let textView = textView else { return }
+        /// Apply pending text update safely
+        func applyPendingTextUpdate() {
+            guard let pending = pendingTextUpdate, let textView = textView else { return }
 
-            let offset = textView.selectedRange().location
-            let text = textView.string
+            // Clear the pending update first
+            pendingTextUpdate = nil
+
+            // Double-check that we still need to update
+            guard textView.text != pending.text else {
+                lastSyncedText = pending.text
+                return
+            }
+
+            isUpdatingText = true
+
+            if let language = pending.language {
+                // Check if this is a significant change (like file load)
+                let isSignificantChange = abs(textView.text.count - pending.text.count) > pending.text.count / 2
+                    || textView.text.isEmpty
+                    || pending.text.isEmpty
+
+                if isSignificantChange {
+                    // Major change - use setState
+                    let state = TextViewState(
+                        text: pending.text,
+                        theme: pending.theme,
+                        language: language,
+                        languageProvider: KeystoneLanguageProvider.shared
+                    )
+                    textView.setState(state)
+                } else {
+                    // Minor change - preserve undo
+                    textView.setTextPreservingUndo(pending.text)
+                    textView.theme = pending.theme
+                }
+            } else {
+                textView.setTextPreservingUndo(pending.text)
+            }
+
+            lastSyncedText = pending.text
+            isUpdatingText = false
+        }
+
+        // MARK: - Search Highlighting
+
+        func updateSearchHighlights(textView: TextView, searchMatches: [SearchMatch], currentMatchIndex: Int) {
+            guard !searchMatches.isEmpty else {
+                highlightedRanges.removeAll()
+                textView.highlightedRanges = []
+                return
+            }
+
+            var newHighlights: [HighlightedRange] = []
+
+            for (index, match) in searchMatches.enumerated() {
+                let isCurrentMatch = index == currentMatchIndex
+
+                let backgroundColor: NSColor
+                if isCurrentMatch {
+                    backgroundColor = NSColor.systemOrange.withAlphaComponent(0.6)
+                } else {
+                    backgroundColor = NSColor.systemYellow.withAlphaComponent(0.4)
+                }
+
+                let text = textView.text
+                let nsRange = NSRange(match.range, in: text)
+
+                let highlightedRange = HighlightedRange(
+                    range: nsRange,
+                    color: backgroundColor,
+                    cornerRadius: 2
+                )
+                newHighlights.append(highlightedRange)
+            }
+
+            highlightedRanges = newHighlights
+            textView.highlightedRanges = newHighlights
+        }
+
+        // MARK: - Bracket Matching
+
+        func updateBracketMatch(textView: TextView) {
+            let offset = textView.selectedRange.location
+            let text = textView.text
 
             if let match = BracketMatcher.findMatch(in: text, at: offset) {
                 parent.matchingBracket = match
@@ -846,28 +1072,207 @@ public struct KeystoneTextView: NSViewRepresentable {
             }
         }
 
-        public func textDidChange(_ notification: Notification) {
-            guard !isUpdatingText, let textView = textView else { return }
+        // MARK: - TextViewDelegate
+
+        public func textViewDidChange(_ textView: TextView) {
+            guard !isUpdatingText else { return }
 
             isUpdatingText = true
-            parent.text = textView.string
+            let currentText = textView.text
+            parent.text = currentText
+            lastSyncedText = currentText
             isUpdatingText = false
+
+            // Debounced code folding analysis
+            foldingAnalysisWorkItem?.cancel()
+
+            let workItem = DispatchWorkItem { [weak self] in
+                guard let self = self else { return }
+                self.codeFoldingManager.analyzeText(currentText)
+            }
+            foldingAnalysisWorkItem = workItem
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.5, execute: workItem)
         }
 
-        public func textViewDidChangeSelection(_ notification: Notification) {
-            guard let textView = textView else { return }
+        public func textViewDidChangeSelection(_ textView: TextView) {
+            guard !isUpdatingText && !isUpdatingCursor else { return }
 
-            let selectedRange = textView.selectedRange()
-            let text = textView.string
+            let selectedRange = textView.selectedRange
+            let text = textView.text
             let newPosition = CursorPosition.from(
                 offset: selectedRange.location,
                 in: text,
                 selectionLength: selectedRange.length
             )
 
-            parent.cursorPosition = newPosition
-            updateBracketMatch()
+            // Only update if actually changed
+            guard newPosition != lastSyncedCursorPosition else { return }
+
+            // Cancel any pending cursor update
+            cursorUpdateWorkItem?.cancel()
+
+            // Debounce cursor updates to avoid multiple updates per frame
+            let workItem = DispatchWorkItem { [weak self] in
+                guard let self = self, !self.isUpdatingText && !self.isUpdatingCursor else { return }
+                self.isUpdatingCursor = true
+                self.lastSyncedCursorPosition = newPosition
+                self.parent.cursorPosition = newPosition
+                self.isUpdatingCursor = false
+            }
+            cursorUpdateWorkItem = workItem
+            DispatchQueue.main.async(execute: workItem)
+
+            updateBracketMatch(textView: textView)
+        }
+
+        public func textView(_ textView: TextView, shouldChangeTextIn range: NSRange, replacementText text: String) -> Bool {
+            return true
         }
     }
 }
+
+// MARK: - BasicCharacterPair (macOS)
+
+struct BasicCharacterPair: CharacterPair {
+    let leading: String
+    let trailing: String
+}
+
+// MARK: - KeystoneRunestoneThemeMac
+
+/// Adapts KeystoneTheme colors to Runestone's Theme protocol for macOS.
+class KeystoneRunestoneThemeMac: Theme {
+    private let _fontSize: CGFloat
+    private let _textColor: NSColor
+    private let _backgroundColor: NSColor
+    private let _gutterBackgroundColor: NSColor
+    private let _lineNumberColor: NSColor
+    private let _currentLineHighlight: NSColor
+    private let _invisibleCharacter: NSColor
+    private let _keywordColor: NSColor
+    private let _stringColor: NSColor
+    private let _commentColor: NSColor
+    private let _typeColor: NSColor
+    private let _functionColor: NSColor
+    private let _numberColor: NSColor
+    private let _operatorColor: NSColor
+    private let _propertyColor: NSColor
+
+    @MainActor
+    init(configuration: KeystoneConfiguration) {
+        let theme = configuration.theme
+        _fontSize = configuration.fontSize
+        _textColor = NSColor(theme.text)
+        _backgroundColor = NSColor(theme.background)
+        _gutterBackgroundColor = NSColor(theme.gutterBackground)
+        _lineNumberColor = NSColor(theme.lineNumber)
+        _currentLineHighlight = NSColor(theme.currentLineHighlight)
+        _invisibleCharacter = NSColor(theme.invisibleCharacter)
+        _keywordColor = NSColor(theme.keyword)
+        _stringColor = NSColor(theme.string)
+        _commentColor = NSColor(theme.comment)
+        _typeColor = NSColor(theme.type)
+        _functionColor = NSColor(theme.function)
+        _numberColor = NSColor(theme.number)
+        _operatorColor = NSColor(theme.operator)
+        _propertyColor = NSColor(theme.property)
+    }
+
+    var font: NSFont {
+        .monospacedSystemFont(ofSize: _fontSize, weight: .regular)
+    }
+
+    var textColor: NSColor {
+        _textColor
+    }
+
+    var gutterBackgroundColor: NSColor {
+        _gutterBackgroundColor
+    }
+
+    var gutterHairlineColor: NSColor {
+        NSColor.separatorColor
+    }
+
+    var lineNumberColor: NSColor {
+        _lineNumberColor
+    }
+
+    var lineNumberFont: NSFont {
+        .monospacedSystemFont(ofSize: _fontSize * 0.85, weight: .regular)
+    }
+
+    var selectedLineBackgroundColor: NSColor {
+        _currentLineHighlight
+    }
+
+    var selectedLinesLineNumberColor: NSColor {
+        _textColor
+    }
+
+    var selectedLinesGutterBackgroundColor: NSColor {
+        _currentLineHighlight
+    }
+
+    var invisibleCharactersColor: NSColor {
+        _invisibleCharacter
+    }
+
+    var pageGuideHairlineColor: NSColor {
+        NSColor.separatorColor
+    }
+
+    var pageGuideBackgroundColor: NSColor {
+        _backgroundColor.withAlphaComponent(0.5)
+    }
+
+    var markedTextBackgroundColor: NSColor {
+        NSColor.systemYellow.withAlphaComponent(0.3)
+    }
+
+    func textColor(for rawHighlightName: String) -> NSColor? {
+        guard let highlightName = HighlightName(rawHighlightName) else {
+            return nil
+        }
+        switch highlightName {
+        case .keyword:
+            return _keywordColor
+        case .string:
+            return _stringColor
+        case .comment:
+            return _commentColor
+        case .type, .constructor:
+            return _typeColor
+        case .function:
+            return _functionColor
+        case .variable:
+            return _textColor
+        case .variableBuiltin:
+            return _propertyColor
+        case .number, .constantBuiltin, .constantCharacter:
+            return _numberColor
+        case .operator:
+            return _operatorColor
+        case .punctuation:
+            return _textColor
+        case .property:
+            return _propertyColor
+        }
+    }
+
+    func fontTraits(for rawHighlightName: String) -> FontTraits {
+        guard let highlightName = HighlightName(rawHighlightName) else {
+            return []
+        }
+        switch highlightName {
+        case .keyword:
+            return .bold
+        case .comment:
+            return .italic
+        default:
+            return []
+        }
+    }
+}
+
 #endif

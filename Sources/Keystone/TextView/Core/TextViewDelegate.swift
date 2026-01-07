@@ -151,3 +151,47 @@ public extension TextViewDelegate {
 }
 
 #endif // canImport(UIKit)
+
+#if canImport(AppKit)
+import Foundation
+
+/// The methods for receiving editing-related messages for the text view on macOS.
+public protocol TextViewDelegate: AnyObject {
+    /// Tells the delegate when editing of the text view begins.
+    func textViewDidBeginEditing(_ textView: TextView)
+    /// Tells the delegate when editing of the text view ends.
+    func textViewDidEndEditing(_ textView: TextView)
+    /// Tells the delegate when the user changes the text in the text view.
+    func textViewDidChange(_ textView: TextView)
+    /// Tells the delegate when the text selection changes in the text view.
+    func textViewDidChangeSelection(_ textView: TextView)
+    /// Asks the delegate whether to replace the specified text in the text view.
+    func textView(_ textView: TextView, shouldChangeTextIn range: NSRange, replacementText text: String) -> Bool
+    /// Tells the delegate that the width of the gutter changed.
+    func textViewDidChangeGutterWidth(_ textView: TextView)
+    /// Asks the delegate if the text in the highlighted range can be replaced.
+    func textView(_ textView: TextView, canReplaceTextIn highlightedRange: HighlightedRange) -> Bool
+    /// Tells the delegate to replace the text in the specified highlighted range.
+    func textView(_ textView: TextView, replaceTextIn highlightedRange: HighlightedRange)
+}
+
+public extension TextViewDelegate {
+    func textViewDidBeginEditing(_ textView: TextView) {}
+    func textViewDidEndEditing(_ textView: TextView) {}
+    func textViewDidChange(_ textView: TextView) {}
+    func textViewDidChangeSelection(_ textView: TextView) {}
+
+    func textView(_ textView: TextView, shouldChangeTextIn range: NSRange, replacementText text: String) -> Bool {
+        true
+    }
+
+    func textViewDidChangeGutterWidth(_ textView: TextView) {}
+
+    func textView(_ textView: TextView, canReplaceTextIn highlightedRange: HighlightedRange) -> Bool {
+        false
+    }
+
+    func textView(_ textView: TextView, replaceTextIn highlightedRange: HighlightedRange) {}
+}
+
+#endif // canImport(AppKit)

@@ -31,7 +31,7 @@ class ViewController: UIViewController {
     }
 
     private func setTextViewState(on textView: TextView) {
-        
+
     }
 }
 

@@ -501,7 +501,8 @@ public struct KeystoneEditor: View {
         let cursor = cursorPosition.wrappedValue
         let selectedRange = NSRange(location: cursor.offset, length: cursor.selectionLength)
 
-        guard let result = CommentToggle.toggleCommentWithRange(
+        // Use the version that also returns the new cursor position
+        guard let (newText, newSelection) = CommentToggle.toggleComment(
             text: text,
             selectedRange: selectedRange,
             language: internalLanguage
@@ -509,18 +510,28 @@ public struct KeystoneEditor: View {
             return // Language doesn't support comments
         }
 
-        // Use undo controller for proper undo support - only replace the affected range
-        if let newText = undoController.replaceText(in: result.replacedRange, with: result.replacementText) {
-            text = newText
-        } else {
-            // Fallback: apply the change manually
-            let nsText = text as NSString
-            text = nsText.replacingCharacters(in: result.replacedRange, with: result.replacementText)
+        // Calculate the replacement range for undo support
+        // We need to use the range-based API for proper undo registration
+        if let result = CommentToggle.toggleCommentWithRange(
+            text: text,
+            selectedRange: selectedRange,
+            language: internalLanguage
+        ) {
+            // Use undo controller for proper undo support
+            _ = undoController.replaceText(in: result.replacedRange, with: result.replacementText)
         }
 
-        // Note: We don't update cursorPosition here because the text view will maintain
-        // the cursor position relative to the edit. The cursor binding will be updated
-        // by the text view delegate when the cursor actually moves.
+        // Update the text binding
+        text = newText
+
+        // Update cursor position to the computed new position
+        // This prevents the scroll from jumping to an incorrect position
+        let clampedOffset = min(newSelection.location, newText.count)
+        cursorPosition.wrappedValue = CursorPosition.from(
+            offset: clampedOffset,
+            in: newText,
+            selectionLength: newSelection.length
+        )
     }
 
     /// Parses input in format "line" or "line:column" and navigates to that position.
@@ -546,54 +557,56 @@ public struct KeystoneEditor: View {
         let maxLine = max(1, lineCount)
         let targetLine = min(max(1, lineNumber), maxLine)
 
-        var currentLine = 1
-        var lineStartOffset = 0
-        var lineEndOffset = text.count
+        // Use NSString for efficient character access
+        let nsText = text as NSString
+        let textLength = nsText.length
 
-        // Find the start of the target line
-        for (index, char) in text.enumerated() {
+        var lineStartOffset = 0
+        var lineEndOffset = textLength
+        var currentLine = 1
+
+        // Find the start of the target line by counting newlines
+        for i in 0..<textLength {
             if currentLine == targetLine {
-                lineStartOffset = index
-                // Now find the end of this line
-                for (endIndex, endChar) in text.enumerated().dropFirst(index) {
-                    if endChar == "\n" {
-                        lineEndOffset = endIndex
+                lineStartOffset = i
+                // Find end of this line
+                for j in i..<textLength {
+                    if nsText.character(at: j) == 0x0A { // '\n'
+                        lineEndOffset = j
                         break
                     }
                 }
                 break
             }
-            if char == "\n" {
+            if nsText.character(at: i) == 0x0A { // '\n'
                 currentLine += 1
             }
         }
 
         // Handle case where target line is the last line or beyond
         if currentLine < targetLine {
-            // We didn't reach the target line, go to end of file
-            lineStartOffset = text.count
-            lineEndOffset = text.count
+            // Didn't reach target line, go to end of file
+            lineStartOffset = textLength
+            lineEndOffset = textLength
         }
 
         // Calculate final offset with column (clamped to line length)
         let lineLength = lineEndOffset - lineStartOffset
         let columnOffset = min(max(0, column - 1), lineLength)
-        let finalOffset = min(lineStartOffset + columnOffset, text.count)
+        let finalOffset = min(lineStartOffset + columnOffset, textLength)
 
-        // Update cursor position after a brief delay to ensure the alert has fully dismissed
-        Task { @MainActor in
-            // Small delay to allow the alert to dismiss
-            try? await Task.sleep(nanoseconds: 50_000_000) // 50ms
+        // Create the new cursor position
+        let newPosition = CursorPosition(
+            line: targetLine,
+            column: min(column, lineLength + 1),
+            selectionLength: 0,
+            offset: finalOffset
+        )
 
-            // Set the cursor position first
-            cursorPosition.wrappedValue = CursorPosition.from(offset: finalOffset, in: text, selectionLength: 0)
-
-            // Request scroll to cursor when going to a specific line
-            scrollToCursor.wrappedValue = true
-
-            // Focus the editor after position is set
-            isEditorFocused = true
-        }
+        // Set cursor position and scroll (no delay needed - alert dismisses synchronously)
+        cursorPosition.wrappedValue = newPosition
+        scrollToCursor.wrappedValue = true
+        isEditorFocused = true
     }
 
     private func navigateToMatch(_ match: SearchMatch) {

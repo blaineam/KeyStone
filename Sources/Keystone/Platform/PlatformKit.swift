@@ -217,6 +217,18 @@ import AppKit
 
 /// Base view class with cross-platform layout method naming
 open class RSBaseView: NSView {
+    /// Use flipped coordinates (origin at top-left like iOS)
+    open override var isFlipped: Bool { true }
+
+    public override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+    }
+
+    public required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
     /// Cross-platform layout method - override this in subclasses
     open func performLayout() {
         // Override in subclasses

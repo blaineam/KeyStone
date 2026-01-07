@@ -2,11 +2,26 @@
 #if canImport(UIKit)
 import UIKit
 typealias RSLayoutView = UIView
+typealias RSLayoutParentView = UIView
 typealias RSLayoutEdgeInsets = UIEdgeInsets
 #elseif canImport(AppKit)
 import AppKit
-typealias RSLayoutView = NSView
+typealias RSLayoutParentView = NSView
 typealias RSLayoutEdgeInsets = NSEdgeInsets
+
+/// Flipped NSView for proper coordinate system (origin at top-left like iOS)
+class RSLayoutView: NSView {
+    override var isFlipped: Bool { true }
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+}
 #endif
 
 protocol LayoutManagerDelegate: AnyObject {
@@ -15,14 +30,14 @@ protocol LayoutManagerDelegate: AnyObject {
 
 final class LayoutManager {
     weak var delegate: LayoutManagerDelegate?
-    weak var gutterParentView: RSLayoutView? {
+    weak var gutterParentView: RSLayoutParentView? {
         didSet {
             if gutterParentView != oldValue {
                 setupViewHierarchy()
             }
         }
     }
-    weak var textInputView: RSLayoutView? {
+    weak var textInputView: RSLayoutParentView? {
         didSet {
             if textInputView != oldValue {
                 setupViewHierarchy()
@@ -196,6 +211,10 @@ final class LayoutManager {
         self.gutterSelectionBackgroundView.isUserInteractionEnabled = false
         self.lineSelectionBackgroundView.isUserInteractionEnabled = false
         self.foldIndicatorsContainerView.isUserInteractionEnabled = true
+        #elseif canImport(AppKit)
+        // macOS: RSLayoutView already handles wantsLayer and isFlipped
+        // Just ensure special views also have layer backing
+        self.gutterBackgroundView.wantsLayer = true
         #endif
         self.updateShownViews()
         #if canImport(UIKit)

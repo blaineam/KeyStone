@@ -6,5 +6,5 @@ import AppKit
 #endif
 
 class TomorrowTheme: Theme {
-    
+
 }

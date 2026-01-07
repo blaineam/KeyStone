@@ -41,6 +41,8 @@ final class LineNumberView: UIView, ReusableView {
 import AppKit
 
 final class LineNumberView: NSView, ReusableView {
+    override var isFlipped: Bool { true }
+
     var textColor: NSColor {
         get { titleLabel.textColor ?? .textColor }
         set { titleLabel.textColor = newValue }
@@ -66,6 +68,7 @@ final class LineNumberView: NSView, ReusableView {
 
     override init(frame: CGRect) {
         super.init(frame: frame)
+        wantsLayer = true
         addSubview(titleLabel)
     }
 

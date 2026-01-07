@@ -32,7 +32,7 @@ class ViewController: UIViewController {
 
     private func setTextViewState(on textView: TextView) {
         DispatchQueue.global(qos: .userInitiated).async {
-            
+
         }
     }
 }

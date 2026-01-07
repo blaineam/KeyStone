@@ -59,7 +59,8 @@ jobs:
       run: |
         # Check for common issues (basic lint without external tools)
         echo "Checking for trailing whitespace..."
-        ! grep -rn " $" Sources/ Tests/ || (echo "Found trailing whitespace" && false)
+        # Exclude binary files (images, etc.) using -I flag
+        ! grep -rIn " $" Sources/ Tests/ --include="*.swift" --include="*.tutorial" --include="*.plist" || (echo "Found trailing whitespace" && false)
         echo "Checking for TODO/FIXME comments..."
-        grep -rn "TODO\|FIXME" Sources/ Tests/ || echo "No TODO/FIXME found"
+        grep -rn "TODO\|FIXME" Sources/ Tests/ --include="*.swift" || echo "No TODO/FIXME found"
         echo "Lint check passed!"
