@@ -44,6 +44,7 @@ let package = Package(
                 .product(name: "TreeSitterJava", package: "TreeSitterLanguages"),
                 .product(name: "TreeSitterPHP", package: "TreeSitterLanguages"),
                 .product(name: "TreeSitterSQL", package: "TreeSitterLanguages"),
+                .product(name: "TreeSitterJSDoc", package: "TreeSitterLanguages"),
                 // Highlight query files
                 .product(name: "TreeSitterSwiftQueries", package: "TreeSitterLanguages"),
                 .product(name: "TreeSitterPythonQueries", package: "TreeSitterLanguages"),
@@ -63,6 +64,7 @@ let package = Package(
                 .product(name: "TreeSitterJavaQueries", package: "TreeSitterLanguages"),
                 .product(name: "TreeSitterPHPQueries", package: "TreeSitterLanguages"),
                 .product(name: "TreeSitterSQLQueries", package: "TreeSitterLanguages"),
+                .product(name: "TreeSitterJSDocQueries", package: "TreeSitterLanguages"),
             ],
             path: "Sources/Keystone",
             resources: [

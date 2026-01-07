@@ -41,6 +41,8 @@ import TreeSitterBashQueries
 import TreeSitterJavaQueries
 import TreeSitterPHPQueries
 import TreeSitterSQLQueries
+import TreeSitterJSDoc
+import TreeSitterJSDocQueries
 
 /// Represents comment syntax for a programming language.
 public struct CommentSyntax: Sendable {
@@ -82,6 +84,7 @@ public enum KeystoneLanguage: String, CaseIterable, Identifiable, Sendable {
     case shell
     case sql
     case php
+    case jsdoc
     case conf
 
     public var id: String { rawValue }
@@ -110,6 +113,7 @@ public enum KeystoneLanguage: String, CaseIterable, Identifiable, Sendable {
         case .shell: return "Shell"
         case .sql: return "SQL"
         case .php: return "PHP"
+        case .jsdoc: return "JSDoc"
         case .conf: return "Config"
         }
     }
@@ -119,7 +123,7 @@ public enum KeystoneLanguage: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .plainText:
             return nil
-        case .swift, .kotlin, .java, .c, .cpp, .go, .rust, .javascript, .typescript, .php:
+        case .swift, .kotlin, .java, .c, .cpp, .go, .rust, .javascript, .typescript, .php, .jsdoc:
             return CommentSyntax(lineComment: "//", blockComment: ("/*", "*/"))
         case .python, .ruby, .shell, .yaml, .conf:
             return CommentSyntax(lineComment: "#")
@@ -290,6 +294,11 @@ public enum KeystoneLanguage: String, CaseIterable, Identifiable, Sendable {
                 tree_sitter_php(),
                 highlightsQuery: TreeSitterLanguage.Query(contentsOf: TreeSitterPHPQueries.Query.highlightsFileURL),
                 injectionsQuery: TreeSitterLanguage.Query(contentsOf: TreeSitterPHPQueries.Query.injectionsFileURL)
+            )
+        case .jsdoc:
+            return TreeSitterLanguage(
+                tree_sitter_jsdoc(),
+                highlightsQuery: TreeSitterLanguage.Query(contentsOf: TreeSitterJSDocQueries.Query.highlightsFileURL)
             )
         case .conf:
             return nil
