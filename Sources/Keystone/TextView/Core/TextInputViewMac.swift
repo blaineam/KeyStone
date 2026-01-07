@@ -945,6 +945,16 @@ final class TextInputViewMac: NSView, NSTextInputClient {
         layoutManager.redisplayVisibleLines()
     }
 
+    /// Public method to replace text at a range, properly registering with the undo manager.
+    /// This is used by find/replace operations to ensure undo/redo works correctly.
+    func performReplace(in range: NSRange, with text: String) {
+        guard delegate?.textInputView(self, shouldChangeTextIn: range, replacementText: text) ?? true else {
+            return
+        }
+        replaceText(in: range, with: text)
+        delegate?.textInputViewDidChangeSelection(self)
+    }
+
     // MARK: - Private Methods
 
     private func applyThemeToChildren() {

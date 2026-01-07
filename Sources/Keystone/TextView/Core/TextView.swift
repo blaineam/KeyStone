@@ -1609,6 +1609,14 @@ open class TextView: NSScrollView {
         reflectScrolledClipView(contentView)
     }
 
+    /// Replaces the text in the specified range, properly registering with the undo manager.
+    /// - Parameters:
+    ///   - range: The range of text to replace.
+    ///   - text: The replacement text.
+    public func replace(_ range: NSRange, withText text: String) {
+        textInputView.performReplace(in: range, with: text)
+    }
+
     /// A Boolean value that indicates whether the text view is editable.
     public var isEditable = true {
         didSet {

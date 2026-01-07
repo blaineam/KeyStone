@@ -959,12 +959,8 @@ public struct KeystoneTextView: NSViewRepresentable {
             guard let textView = textView else { return nil }
             guard range.location + range.length <= textView.text.count else { return nil }
 
-            // Use direct text replacement through the view
-            let startIndex = textView.text.index(textView.text.startIndex, offsetBy: range.location)
-            let endIndex = textView.text.index(startIndex, offsetBy: range.length)
-            var newText = textView.text
-            newText.replaceSubrange(startIndex..<endIndex, with: replacementText)
-            textView.text = newText
+            // Use the replace method which properly registers with the undo manager
+            textView.replace(range, withText: replacementText)
             return textView.text
         }
 
