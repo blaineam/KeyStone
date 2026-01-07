@@ -22,7 +22,7 @@ Keystone powers the code editing features in [**Enter Space**](https://wemiller.
 
 ---
 
-## Features
+## 🚀 Features
 
 ### Core Editor
 - **Syntax Highlighting** — Support for 15+ programming languages including Swift, Python, JavaScript, TypeScript, HTML, CSS, JSON, and more via TreeSitter
@@ -58,7 +58,7 @@ Keystone powers the code editing features in [**Enter Space**](https://wemiller.
 
 ---
 
-## Requirements
+## 📋 Requirements
 
 | Requirement | Version |
 |-------------|---------|
@@ -69,7 +69,7 @@ Keystone powers the code editing features in [**Enter Space**](https://wemiller.
 
 ---
 
-## Installation
+## 📦 Installation
 
 ### Swift Package Manager
 
@@ -101,7 +101,7 @@ Then add "Keystone" as a dependency to your target:
 
 ---
 
-## Quick Start
+## ⚡ Quick Start
 
 ### Basic Usage
 
@@ -197,7 +197,7 @@ The toolbar provides access to:
 
 ---
 
-## Configuration
+## ⚙️ Configuration
 
 ### KeystoneConfiguration
 
@@ -264,7 +264,7 @@ let customTheme = KeystoneTheme(
 
 ---
 
-## Supported Languages
+## 🌐 Supported Languages
 
 | Language | Extensions |
 |----------|------------|
@@ -288,7 +288,7 @@ let customTheme = KeystoneTheme(
 
 ---
 
-## API Reference
+## 📖 API Reference
 
 ### KeystoneEditor
 
@@ -396,7 +396,7 @@ public struct IndentationSettings {
 
 ---
 
-## Architecture
+## 🏗️ Architecture
 
 ```
 Keystone/
@@ -428,19 +428,19 @@ Keystone/
 
 ---
 
-## Acknowledgments
+## 🙏 Acknowledgments
 
 Keystone was heavily inspired by the excellent [Runestone](https://github.com/simonbs/Runestone) library by Simon B. Støvring. Keystone builds upon Runestone's foundation with a focus on feature expansion and full cross-platform support for both iOS and macOS.
 
 ---
 
-## License
+## 📄 License
 
 Keystone is available under the MIT License. See the [LICENSE](LICENSE) file for more information.
 
 ---
 
-## Contributing
+## 🤝 Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
 
