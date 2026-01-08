@@ -1951,35 +1951,44 @@ open class TextView: NSScrollView {
     }
 
     /// Scrolls the text view to reveal the text in the specified range.
-    public func scrollRangeToVisible(_ range: NSRange) {
+    /// - Parameter range: The range to scroll to
+    /// - Parameter centerVertically: If true, centers the caret vertically (for find/replace navigation).
+    ///                               If false, only scrolls minimally to bring caret into view.
+    public func scrollRangeToVisible(_ range: NSRange, centerVertically: Bool = false) {
         let caretRect = textInputView.caretRect(at: range.location)
         let visibleRect = contentView.bounds
 
-        // Use a larger margin so the target is clearly visible (not at the edge)
-        let verticalMargin: CGFloat = visibleRect.height * 0.3  // 30% from top/bottom
-        let horizontalMargin: CGFloat = 50
+        // Small margin to keep caret away from the very edge
+        let edgeMargin: CGFloat = 20
 
-        // Create an inset rect - if caret is within this, it's "comfortably" visible
-        let comfortableRect = visibleRect.insetBy(dx: horizontalMargin, dy: verticalMargin)
-
-        // Check if the rect is already comfortably visible
-        if comfortableRect.contains(caretRect) {
+        // Check if caret is already visible (with small margin)
+        let visibleWithMargin = visibleRect.insetBy(dx: edgeMargin, dy: edgeMargin)
+        if visibleWithMargin.contains(caretRect) {
             return
         }
 
-        // Calculate the target scroll position - try to center the caret vertically
         var targetPoint = contentView.bounds.origin
 
-        // For vertical scrolling, try to place the caret at about 1/3 from the top
-        // This gives better context (more content below the cursor)
-        let preferredY = caretRect.minY - (visibleRect.height * 0.33)
-        targetPoint.y = max(0, preferredY)
+        if centerVertically {
+            // For find/replace navigation: center the caret at about 1/3 from the top
+            let preferredY = caretRect.minY - (visibleRect.height * 0.33)
+            targetPoint.y = max(0, preferredY)
+        } else {
+            // For normal cursor movement: minimal scroll to bring caret into view
+            if caretRect.minY < visibleRect.minY + edgeMargin {
+                // Caret above visible area - scroll up
+                targetPoint.y = max(0, caretRect.minY - edgeMargin)
+            } else if caretRect.maxY > visibleRect.maxY - edgeMargin {
+                // Caret below visible area - scroll down
+                targetPoint.y = caretRect.maxY - visibleRect.height + edgeMargin
+            }
+        }
 
         // Scroll horizontally if needed (for non-wrapped lines)
-        if caretRect.minX < visibleRect.minX + horizontalMargin {
-            targetPoint.x = max(0, caretRect.minX - horizontalMargin)
-        } else if caretRect.maxX > visibleRect.maxX - horizontalMargin {
-            targetPoint.x = caretRect.maxX - visibleRect.width + horizontalMargin
+        if caretRect.minX < visibleRect.minX + edgeMargin {
+            targetPoint.x = max(0, caretRect.minX - edgeMargin)
+        } else if caretRect.maxX > visibleRect.maxX - edgeMargin {
+            targetPoint.x = caretRect.maxX - visibleRect.width + edgeMargin
         }
 
         // Clamp to valid content bounds

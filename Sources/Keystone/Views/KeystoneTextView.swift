@@ -848,27 +848,27 @@ public struct KeystoneTextView: NSViewRepresentable {
                 coordinator.lastSyncedCursorPosition = cursorPosition
                 textView.selectedRange = expectedRange
 
-                // Handle scroll to cursor
+                // Handle scroll to cursor (for find/replace and tail follow - center vertically)
                 if scrollToCursor {
                     DispatchQueue.main.async {
                         self.scrollToCursor = false
                     }
-                    textView.scrollRangeToVisible(expectedRange)
+                    textView.scrollRangeToVisible(expectedRange, centerVertically: true)
                 }
                 coordinator.isUpdatingCursor = false
             } else if scrollToCursor {
-                // Just scroll, no cursor update needed
+                // Just scroll, no cursor update needed (for find/replace and tail follow - center vertically)
                 DispatchQueue.main.async {
                     self.scrollToCursor = false
                 }
-                textView.scrollRangeToVisible(currentRange)
+                textView.scrollRangeToVisible(currentRange, centerVertically: true)
             }
         } else if scrollToCursor {
-            // Handle scroll to cursor when there's a pending update
+            // Handle scroll to cursor when there's a pending update (for find/replace - center vertically)
             DispatchQueue.main.async {
                 self.scrollToCursor = false
                 let range = NSRange(location: self.cursorPosition.offset, length: self.cursorPosition.selectionLength)
-                textView.scrollRangeToVisible(range)
+                textView.scrollRangeToVisible(range, centerVertically: true)
             }
         }
 

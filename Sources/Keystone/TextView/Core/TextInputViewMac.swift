@@ -831,24 +831,99 @@ final class TextInputViewMac: NSView, NSTextInputClient {
         selection = NSRange(location: 0, length: string.length)
     }
 
+    @objc func copy(_ sender: Any?) {
+        guard let selectedRange = selection, selectedRange.length > 0 else { return }
+        let selectedText = stringView.string.substring(with: selectedRange)
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(selectedText, forType: .string)
+    }
+
+    @objc func cut(_ sender: Any?) {
+        guard let selectedRange = selection, selectedRange.length > 0 else { return }
+        let selectedText = stringView.string.substring(with: selectedRange)
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(selectedText, forType: .string)
+        // Delete the selected text
+        replaceText(in: selectedRange, with: "")
+    }
+
+    @objc func paste(_ sender: Any?) {
+        let pasteboard = NSPasteboard.general
+        guard let pasteString = pasteboard.string(forType: .string) else { return }
+        let range = selection ?? NSRange(location: stringView.string.length, length: 0)
+        replaceText(in: range, with: pasteString)
+    }
+
     // MARK: - Mouse Events
 
     /// The anchor point for mouse selection (where the selection started).
     private var selectionAnchor: Int?
+    /// Track whether we're in word/line selection mode from double/triple click
+    private var wordSelectionMode = false
+    private var lineSelectionMode = false
+    /// Original word/line range for extending selection during drag
+    private var originalWordRange: NSRange?
+    private var originalLineRange: NSRange?
 
     override func mouseDown(with event: NSEvent) {
         window?.makeFirstResponder(self)
         let point = convert(event.locationInWindow, from: nil)
-        if let index = layoutManager.closestIndex(to: point) {
+        guard let index = layoutManager.closestIndex(to: point) else { return }
+
+        // Reset selection modes
+        wordSelectionMode = false
+        lineSelectionMode = false
+        originalWordRange = nil
+        originalLineRange = nil
+
+        switch event.clickCount {
+        case 1:
+            // Single click - position cursor
             selectionAnchor = index
             selection = NSRange(location: index, length: 0)
+
+        case 2:
+            // Double click - select word
+            wordSelectionMode = true
+            let wordRange = wordRange(at: index)
+            originalWordRange = wordRange
+            selectionAnchor = wordRange.location
+            selection = wordRange
+
+        case 3:
+            // Triple click - select entire line
+            lineSelectionMode = true
+            let lineRange = lineRange(at: index)
+            originalLineRange = lineRange
+            selectionAnchor = lineRange.location
+            selection = lineRange
+
+        default:
+            break
         }
     }
 
     override func mouseDragged(with event: NSEvent) {
         guard let anchor = selectionAnchor else { return }
         let point = convert(event.locationInWindow, from: nil)
-        if let index = layoutManager.closestIndex(to: point) {
+        guard let index = layoutManager.closestIndex(to: point) else { return }
+
+        if lineSelectionMode, let originalRange = originalLineRange {
+            // Extend selection by lines
+            let currentLineRange = lineRange(at: index)
+            let start = min(originalRange.location, currentLineRange.location)
+            let end = max(originalRange.upperBound, currentLineRange.upperBound)
+            selection = NSRange(location: start, length: end - start)
+        } else if wordSelectionMode, let originalRange = originalWordRange {
+            // Extend selection by words
+            let currentWordRange = wordRange(at: index)
+            let start = min(originalRange.location, currentWordRange.location)
+            let end = max(originalRange.upperBound, currentWordRange.upperBound)
+            selection = NSRange(location: start, length: end - start)
+        } else {
+            // Normal character-by-character selection
             let start = min(anchor, index)
             let end = max(anchor, index)
             selection = NSRange(location: start, length: end - start)
@@ -857,6 +932,70 @@ final class TextInputViewMac: NSView, NSTextInputClient {
 
     override func mouseUp(with event: NSEvent) {
         selectionAnchor = nil
+        wordSelectionMode = false
+        lineSelectionMode = false
+        originalWordRange = nil
+        originalLineRange = nil
+    }
+
+    /// Returns the range of the word at the given index
+    private func wordRange(at index: Int) -> NSRange {
+        let nsString = stringView.string
+        let length = nsString.length
+        guard index >= 0 && index <= length else {
+            return NSRange(location: index, length: 0)
+        }
+
+        // Find word boundaries using character sets
+        let wordCharacters = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "_"))
+
+        var start = index
+        var end = index
+
+        // Expand backwards to find word start
+        while start > 0 {
+            let charIndex = start - 1
+            let char = nsString.character(at: charIndex)
+            guard let scalar = Unicode.Scalar(char), wordCharacters.contains(scalar) else { break }
+            start -= 1
+        }
+
+        // Expand forwards to find word end
+        while end < length {
+            let char = nsString.character(at: end)
+            guard let scalar = Unicode.Scalar(char), wordCharacters.contains(scalar) else { break }
+            end += 1
+        }
+
+        return NSRange(location: start, length: end - start)
+    }
+
+    /// Returns the range of the line at the given index
+    private func lineRange(at index: Int) -> NSRange {
+        let nsString = stringView.string
+        let length = nsString.length
+        guard index >= 0 && index <= length else {
+            return NSRange(location: index, length: 0)
+        }
+
+        var start = index
+        var end = index
+
+        // Find line start
+        while start > 0 {
+            let char = nsString.character(at: start - 1)
+            if char == 0x0A || char == 0x0D { break } // \n or \r
+            start -= 1
+        }
+
+        // Find line end (include the newline character if present)
+        while end < length {
+            let char = nsString.character(at: end)
+            end += 1
+            if char == 0x0A || char == 0x0D { break } // \n or \r
+        }
+
+        return NSRange(location: start, length: end - start)
     }
 
     // MARK: - Public Methods
