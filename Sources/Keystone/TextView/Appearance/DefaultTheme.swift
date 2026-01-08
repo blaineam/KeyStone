@@ -20,40 +20,78 @@ public final class DefaultTheme: Theme {
 
     public init() {}
 
-    // swiftlint:disable:next cyclomatic_complexity
+    // swiftlint:disable:next cyclomatic_complexity function_body_length
     public func textColor(for highlightName: String) -> UIColor? {
         guard let highlightName = HighlightName(highlightName) else {
             return nil
         }
         switch highlightName {
+        case .attribute:
+            return UIColor(themeColorNamed: "attribute")
+        case .boolean:
+            return UIColor(themeColorNamed: "constant_builtin")
+        case .character:
+            return UIColor(themeColorNamed: "string")
         case .comment:
             return UIColor(themeColorNamed: "comment")
+        case .conditional:
+            return UIColor(themeColorNamed: "keyword")
+        case .constant:
+            return UIColor(themeColorNamed: "constant_builtin")
         case .constantBuiltin:
             return UIColor(themeColorNamed: "constant_builtin")
         case .constantCharacter:
             return UIColor(themeColorNamed: "constant_character")
         case .constructor:
             return UIColor(themeColorNamed: "constructor")
+        case .delimiter:
+            return UIColor(themeColorNamed: "punctuation")
+        case .escape:
+            return UIColor(themeColorNamed: "constant_character")
+        case .field:
+            return UIColor(themeColorNamed: "property")
+        case .float:
+            return UIColor(themeColorNamed: "number")
         case .function:
             return UIColor(themeColorNamed: "function")
+        case .include:
+            return UIColor(themeColorNamed: "keyword")
         case .keyword:
             return UIColor(themeColorNamed: "keyword")
+        case .label:
+            return UIColor(themeColorNamed: "tag")
+        case .method:
+            return UIColor(themeColorNamed: "function")
+        case .module:
+            return UIColor(themeColorNamed: "type")
+        case .namespace:
+            return UIColor(themeColorNamed: "type")
         case .number:
             return UIColor(themeColorNamed: "number")
+        case .operator:
+            return UIColor(themeColorNamed: "operator")
+        case .parameter:
+            return UIColor(themeColorNamed: "property")
         case .property:
             return UIColor(themeColorNamed: "property")
+        case .punctuation:
+            return UIColor(themeColorNamed: "punctuation")
+        case .repeat:
+            return UIColor(themeColorNamed: "keyword")
         case .string:
             return UIColor(themeColorNamed: "string")
+        case .symbol:
+            return UIColor(themeColorNamed: "constant_builtin")
+        case .tag:
+            return UIColor(themeColorNamed: "tag")
+        case .text:
+            return nil
         case .type:
             return UIColor(themeColorNamed: "type")
         case .variable:
             return nil
         case .variableBuiltin:
             return UIColor(themeColorNamed: "variable_builtin")
-        case .operator:
-            return UIColor(themeColorNamed: "operator")
-        case .punctuation:
-            return UIColor(themeColorNamed: "punctuation")
         }
     }
 
@@ -113,40 +151,78 @@ public final class DefaultTheme: Theme {
 
     public init() {}
 
-    // swiftlint:disable:next cyclomatic_complexity
+    // swiftlint:disable:next cyclomatic_complexity function_body_length
     public func textColor(for highlightName: String) -> NSColor? {
         guard let highlightName = HighlightName(highlightName) else {
             return nil
         }
         switch highlightName {
+        case .attribute:
+            return NSColor(themeColorNamed: "attribute")
+        case .boolean:
+            return NSColor(themeColorNamed: "constant_builtin")
+        case .character:
+            return NSColor(themeColorNamed: "string")
         case .comment:
             return NSColor(themeColorNamed: "comment")
+        case .conditional:
+            return NSColor(themeColorNamed: "keyword")
+        case .constant:
+            return NSColor(themeColorNamed: "constant_builtin")
         case .constantBuiltin:
             return NSColor(themeColorNamed: "constant_builtin")
         case .constantCharacter:
             return NSColor(themeColorNamed: "constant_character")
         case .constructor:
             return NSColor(themeColorNamed: "constructor")
+        case .delimiter:
+            return NSColor(themeColorNamed: "punctuation")
+        case .escape:
+            return NSColor(themeColorNamed: "constant_character")
+        case .field:
+            return NSColor(themeColorNamed: "property")
+        case .float:
+            return NSColor(themeColorNamed: "number")
         case .function:
             return NSColor(themeColorNamed: "function")
+        case .include:
+            return NSColor(themeColorNamed: "keyword")
         case .keyword:
             return NSColor(themeColorNamed: "keyword")
+        case .label:
+            return NSColor(themeColorNamed: "tag")
+        case .method:
+            return NSColor(themeColorNamed: "function")
+        case .module:
+            return NSColor(themeColorNamed: "type")
+        case .namespace:
+            return NSColor(themeColorNamed: "type")
         case .number:
             return NSColor(themeColorNamed: "number")
+        case .operator:
+            return NSColor(themeColorNamed: "operator")
+        case .parameter:
+            return NSColor(themeColorNamed: "property")
         case .property:
             return NSColor(themeColorNamed: "property")
+        case .punctuation:
+            return NSColor(themeColorNamed: "punctuation")
+        case .repeat:
+            return NSColor(themeColorNamed: "keyword")
         case .string:
             return NSColor(themeColorNamed: "string")
+        case .symbol:
+            return NSColor(themeColorNamed: "constant_builtin")
+        case .tag:
+            return NSColor(themeColorNamed: "tag")
+        case .text:
+            return nil
         case .type:
             return NSColor(themeColorNamed: "type")
         case .variable:
             return nil
         case .variableBuiltin:
             return NSColor(themeColorNamed: "variable_builtin")
-        case .operator:
-            return NSColor(themeColorNamed: "operator")
-        case .punctuation:
-            return NSColor(themeColorNamed: "punctuation")
         }
     }
 

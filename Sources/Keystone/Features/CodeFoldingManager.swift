@@ -174,18 +174,21 @@ public final class CodeFoldingManager: ObservableObject {
         let lines = text.components(separatedBy: .newlines)
         let nsText = text as NSString
 
-        // Track brace-based folding
-        var braceStack: [(line: Int, location: Int, char: Character)] = []
+        // Track brace and bracket-based folding
+        // Separate stacks for {} and [] to ensure proper matching
+        var braceStack: [(line: Int, location: Int)]  = []  // For {}
+        var bracketStack: [(line: Int, location: Int)] = []  // For []
         var currentLocation = 0
 
         for (lineIndex, line) in lines.enumerated() {
             let trimmed = line.trimmingCharacters(in: .whitespaces)
 
-            // Track braces for block folding
+            // Track braces and brackets for block folding
             for (charIndex, char) in line.enumerated() {
-                if char == "{" {
-                    braceStack.append((lineIndex, currentLocation + charIndex, char))
-                } else if char == "}" && !braceStack.isEmpty {
+                switch char {
+                case "{":
+                    braceStack.append((lineIndex, currentLocation + charIndex))
+                case "}":
                     if let openBrace = braceStack.popLast() {
                         // Only create fold regions for multi-line blocks
                         if lineIndex > openBrace.line {
@@ -205,6 +208,29 @@ public final class CodeFoldingManager: ObservableObject {
                             detectedRegions.append(region)
                         }
                     }
+                case "[":
+                    bracketStack.append((lineIndex, currentLocation + charIndex))
+                case "]":
+                    if let openBracket = bracketStack.popLast() {
+                        // Only create fold regions for multi-line arrays/brackets
+                        if lineIndex > openBracket.line {
+                            let startLoc = lineLocation(forLine: openBracket.line, in: lines)
+                            let endLoc = lineLocation(forLine: lineIndex, in: lines) + line.count
+                            let range = NSRange(location: startLoc, length: endLoc - startLoc)
+                            let preview = lines[openBracket.line].trimmingCharacters(in: .whitespaces)
+
+                            let region = FoldableRegion(
+                                startLine: openBracket.line,
+                                endLine: lineIndex,
+                                type: .block,  // Arrays/brackets are generic blocks
+                                range: range,
+                                previewText: String(preview.prefix(50))
+                            )
+                            detectedRegions.append(region)
+                        }
+                    }
+                default:
+                    break
                 }
             }
 

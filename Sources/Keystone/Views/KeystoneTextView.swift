@@ -653,28 +653,36 @@ class KeystoneRunestoneTheme: Theme {
             return nil
         }
         switch highlightName {
-        case .keyword:
-            return _keywordColor
-        case .string:
+        case .attribute:
+            return _attributeColor
+        case .boolean, .constant, .constantBuiltin, .constantCharacter, .symbol:
+            return _numberColor
+        case .character:
             return _stringColor
         case .comment:
             return _commentColor
-        case .type, .constructor:
+        case .conditional, .include, .keyword, .repeat:
+            return _keywordColor
+        case .constructor, .type, .module, .namespace:
             return _typeColor
-        case .function:
-            return _functionColor
-        case .variable:
+        case .delimiter, .punctuation:
             return _textColor
-        case .variableBuiltin:
+        case .escape:
+            return _stringColor
+        case .field, .parameter, .property, .variableBuiltin:
             return _propertyColor
-        case .number, .constantBuiltin, .constantCharacter:
+        case .float, .number:
             return _numberColor
+        case .function, .method:
+            return _functionColor
+        case .label, .tag:
+            return _tagColor
         case .operator:
             return _operatorColor
-        case .punctuation:
+        case .string:
+            return _stringColor
+        case .text, .variable:
             return _textColor
-        case .property:
-            return _propertyColor
         }
     }
 
@@ -1195,6 +1203,8 @@ class KeystoneRunestoneThemeMac: Theme {
     private let _numberColor: NSColor
     private let _operatorColor: NSColor
     private let _propertyColor: NSColor
+    private let _attributeColor: NSColor
+    private let _tagColor: NSColor
 
     @MainActor
     init(configuration: KeystoneConfiguration) {
@@ -1214,6 +1224,8 @@ class KeystoneRunestoneThemeMac: Theme {
         _numberColor = NSColor(theme.number)
         _operatorColor = NSColor(theme.operator)
         _propertyColor = NSColor(theme.property)
+        _attributeColor = NSColor(theme.attribute)
+        _tagColor = NSColor(theme.tag)
     }
 
     var font: NSFont {
@@ -1273,28 +1285,36 @@ class KeystoneRunestoneThemeMac: Theme {
             return nil
         }
         switch highlightName {
-        case .keyword:
-            return _keywordColor
-        case .string:
+        case .attribute:
+            return _attributeColor
+        case .boolean, .constant, .constantBuiltin, .constantCharacter, .symbol:
+            return _numberColor
+        case .character:
             return _stringColor
         case .comment:
             return _commentColor
-        case .type, .constructor:
+        case .conditional, .include, .keyword, .repeat:
+            return _keywordColor
+        case .constructor, .type, .module, .namespace:
             return _typeColor
-        case .function:
-            return _functionColor
-        case .variable:
+        case .delimiter, .punctuation:
             return _textColor
-        case .variableBuiltin:
+        case .escape:
+            return _stringColor
+        case .field, .parameter, .property, .variableBuiltin:
             return _propertyColor
-        case .number, .constantBuiltin, .constantCharacter:
+        case .float, .number:
             return _numberColor
+        case .function, .method:
+            return _functionColor
+        case .label, .tag:
+            return _tagColor
         case .operator:
             return _operatorColor
-        case .punctuation:
+        case .string:
+            return _stringColor
+        case .text, .variable:
             return _textColor
-        case .property:
-            return _propertyColor
         }
     }
 

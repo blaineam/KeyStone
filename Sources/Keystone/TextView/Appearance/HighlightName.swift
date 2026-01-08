@@ -3,17 +3,36 @@ private var previousUnrecognizedHighlightNames: [String] = []
 #endif
 
 enum HighlightName: String {
+    case attribute
+    case boolean
+    case character
     case comment
+    case conditional
+    case constant
     case constantBuiltin = "constant.builtin"
     case constantCharacter = "constant.character"
     case constructor
+    case delimiter
+    case escape
+    case field
+    case float
     case function
+    case include
     case keyword
+    case label
+    case method
+    case module
+    case namespace
     case number
     case `operator`
+    case parameter
     case property
     case punctuation
+    case `repeat`
     case string
+    case symbol
+    case tag
+    case text
     case type
     case variable
     case variableBuiltin = "variable.builtin"
