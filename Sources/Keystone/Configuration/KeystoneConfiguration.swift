@@ -4,6 +4,7 @@
 //
 
 import SwiftUI
+import Combine
 
 /// Configuration options for the Keystone code editor.
 @MainActor
@@ -162,11 +163,26 @@ public final class KeystoneConfiguration: ObservableObject {
 
     private var lowPowerModeObserver: NSObjectProtocol?
 
+    // MARK: - Auto-Save
+
+    private var autoSaveCancellable: AnyCancellable?
+
     // MARK: - Initialization
 
     public init() {
         loadFromUserDefaults()
         setupLowPowerModeObserver()
+        setupAutoSave()
+    }
+
+    private func setupAutoSave() {
+        // Auto-save settings whenever any published property changes
+        // Use debounce to avoid excessive writes during rapid changes (e.g., slider adjustments)
+        autoSaveCancellable = objectWillChange
+            .debounce(for: .milliseconds(500), scheduler: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.saveToUserDefaults()
+            }
     }
 
     deinit {
