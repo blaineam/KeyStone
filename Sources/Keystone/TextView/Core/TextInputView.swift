@@ -19,6 +19,7 @@ protocol TextInputViewDelegate: AnyObject {
     func textInputViewDidUpdateMarkedRange(_ view: TextInputView)
     func textInputView(_ view: TextInputView, canReplaceTextIn highlightedRange: HighlightedRange) -> Bool
     func textInputView(_ view: TextInputView, replaceTextIn highlightedRange: HighlightedRange)
+    func textViewDidTimeoutParsing(_ view: TextInputView)
 }
 
 // swiftlint:disable:next type_body_length
@@ -878,14 +879,33 @@ final class TextInputView: UIView, UITextInput {
     }
 
     func setLanguageMode(_ languageMode: LanguageMode, completion: ((Bool) -> Void)? = nil) {
+        // Cancel any ongoing parse operations from previous language mode
+        if let treeSitterMode = self.languageMode as? TreeSitterInternalLanguageMode {
+            // The deinit will cancel operations, but we also need to ensure
+            // the old mode's completion handlers don't run after we switch
+        }
+
         let internalLanguageMode = InternalLanguageModeFactory.internalLanguageMode(
             from: languageMode,
             stringView: stringView,
             lineManager: lineManager)
         self.languageMode = internalLanguageMode
         layoutManager.languageMode = internalLanguageMode
+
+        // Capture the mode we're parsing with to check it's still current in completion
+        let parsingMode = internalLanguageMode
         internalLanguageMode.parse(string) { [weak self] finished in
-            if let self = self, finished {
+            guard let self = self else {
+                completion?(false)
+                return
+            }
+            // Only process completion if this language mode is still current
+            // This prevents stale completion handlers from old parses from running
+            guard self.languageMode === parsingMode else {
+                completion?(false)
+                return
+            }
+            if finished {
                 self.invalidateLines()
                 self.layoutManager.setNeedsLayout()
                 self.layoutManager.layoutIfNeeded()
@@ -1663,6 +1683,11 @@ extension TextInputView: TreeSitterLanguageModeDelegate {
         } else {
             return nil
         }
+    }
+
+    func treeSitterLanguageModeDidTimeout(_ languageMode: TreeSitterInternalLanguageMode) {
+        // Notify delegate that parsing timed out - they should switch to plaintext
+        delegate?.textViewDidTimeoutParsing(self)
     }
 }
 

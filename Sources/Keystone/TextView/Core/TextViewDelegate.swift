@@ -102,6 +102,12 @@ public protocol TextViewDelegate: AnyObject {
     ///
     /// The text view will call this method when the user chooses to replace the text in the highlighted range, for example by selecting the action in a [UIMenuController](https://developer.apple.com/documentation/uikit/uimenucontroller).
     func textView(_ textView: TextView, replaceTextIn highlightedRange: HighlightedRange)
+    /// Tells the delegate that syntax parsing timed out.
+    /// - Parameter textView: The text view in which parsing timed out.
+    ///
+    /// When TreeSitter parsing exceeds the timeout (default 30 seconds), this method is called.
+    /// The delegate should switch to plain text mode to allow editing without syntax highlighting.
+    func textViewDidTimeoutParsing(_ textView: TextView)
 }
 
 public extension TextViewDelegate {
@@ -148,6 +154,8 @@ public extension TextViewDelegate {
     }
 
     func textView(_ textView: TextView, replaceTextIn highlightedRange: HighlightedRange) {}
+
+    func textViewDidTimeoutParsing(_ textView: TextView) {}
 }
 
 #endif // canImport(UIKit)
@@ -173,6 +181,12 @@ public protocol TextViewDelegate: AnyObject {
     func textView(_ textView: TextView, canReplaceTextIn highlightedRange: HighlightedRange) -> Bool
     /// Tells the delegate to replace the text in the specified highlighted range.
     func textView(_ textView: TextView, replaceTextIn highlightedRange: HighlightedRange)
+    /// Tells the delegate that syntax parsing timed out.
+    /// - Parameter textView: The text view in which parsing timed out.
+    ///
+    /// When TreeSitter parsing exceeds the timeout (default 30 seconds), this method is called.
+    /// The delegate should switch to plain text mode to allow editing without syntax highlighting.
+    func textViewDidTimeoutParsing(_ textView: TextView)
 }
 
 public extension TextViewDelegate {
@@ -192,6 +206,8 @@ public extension TextViewDelegate {
     }
 
     func textView(_ textView: TextView, replaceTextIn highlightedRange: HighlightedRange) {}
+
+    func textViewDidTimeoutParsing(_ textView: TextView) {}
 }
 
 #endif // canImport(AppKit)

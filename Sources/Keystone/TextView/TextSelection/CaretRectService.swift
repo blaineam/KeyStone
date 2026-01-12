@@ -32,14 +32,24 @@ final class CaretRectService {
 
     func caretRect(at location: Int, allowMovingCaretToNextLineFragment: Bool) -> CGRect {
         let safeLocation = min(max(location, 0), stringView.string.length)
-        let line = lineManager.line(containingCharacterAt: safeLocation)!
+
+        // Guard against inconsistent state where lineManager might not match stringView
+        guard let line = lineManager.line(containingCharacterAt: safeLocation) else {
+            // Return a safe default rect at origin when structures are stale
+            return CGRect(x: leadingLineSpacing, y: textContainerInset.top, width: 2, height: 15)
+        }
+
         let lineController = lineControllerStorage.getOrCreateLineController(for: line)
         let lineLocalLocation = safeLocation - line.location
-        if allowMovingCaretToNextLineFragment && shouldMoveCaretToNextLineFragment(forLocation: lineLocalLocation, in: line) {
+
+        // Additional bounds check for line-local location against line's actual length
+        let safeLineLocalLocation = max(0, min(lineLocalLocation, line.data.totalLength))
+
+        if allowMovingCaretToNextLineFragment && shouldMoveCaretToNextLineFragment(forLocation: safeLineLocalLocation, in: line) {
             let rect = caretRect(at: location + 1, allowMovingCaretToNextLineFragment: false)
             return CGRect(x: leadingLineSpacing, y: rect.minY, width: rect.width, height: rect.height)
         } else {
-            let localCaretRect = lineController.caretRect(atIndex: lineLocalLocation)
+            let localCaretRect = lineController.caretRect(atIndex: safeLineLocalLocation)
             let globalYPosition = line.yPosition + localCaretRect.minY
             let globalRect = CGRect(x: localCaretRect.minX, y: globalYPosition, width: localCaretRect.width, height: localCaretRect.height)
             return globalRect.offsetBy(dx: leadingLineSpacing, dy: textContainerInset.top)

@@ -25,6 +25,8 @@ protocol TextInputViewMacDelegate: AnyObject {
     func textInputViewDidUpdateMarkedRange(_ view: TextInputViewMac)
     func textInputView(_ view: TextInputViewMac, canReplaceTextIn highlightedRange: HighlightedRange) -> Bool
     func textInputView(_ view: TextInputViewMac, replaceTextIn highlightedRange: HighlightedRange)
+    /// Called when syntax parsing times out. The delegate should switch to plaintext mode.
+    func textInputViewDidTimeoutParsing(_ view: TextInputViewMac)
 }
 
 // swiftlint:disable:next type_body_length
@@ -399,6 +401,9 @@ final class TextInputViewMac: NSView, NSTextInputClient {
     private var preserveUndoStackWhenSettingString = false
     private var cancellables: [AnyCancellable] = []
     private var hasPendingFullLayout = false
+    /// Flag to indicate a replace operation is in progress - used to skip scroll operations
+    /// that could crash due to stale line manager state during large text changes.
+    private(set) var isPerformingReplace = false
     private var caretBlinkTimer: Timer?
     private var isCaretVisible = true
     private let caretView = NSView()
@@ -580,14 +585,14 @@ final class TextInputViewMac: NSView, NSTextInputClient {
 
         if sel.length > 0 {
             // Draw selection highlight
+            // Draw all selection rects without filtering by dirtyRect
+            // to ensure complete selection highlighting for wrapped lines
             let rects = selectionRectService.selectionRects(in: sel)
             selectionHighlightColor.setFill()
             for rect in rects {
                 let selRect = rect.rect
-                if selRect.intersects(dirtyRect) {
-                    let path = NSBezierPath(rect: selRect)
-                    path.fill()
-                }
+                let path = NSBezierPath(rect: selRect)
+                path.fill()
             }
         } else if isEditing && isCaretVisible {
             // Draw caret (insertion point)
@@ -1030,14 +1035,33 @@ final class TextInputViewMac: NSView, NSTextInputClient {
     }
 
     func setLanguageMode(_ languageMode: LanguageMode, completion: ((Bool) -> Void)? = nil) {
+        // Cancel any ongoing parse operations from previous language mode
+        if let treeSitterMode = self.languageMode as? TreeSitterInternalLanguageMode {
+            // The deinit will cancel operations, but we also need to ensure
+            // the old mode's completion handlers don't run after we switch
+        }
+
         let internalLanguageMode = InternalLanguageModeFactory.internalLanguageMode(
             from: languageMode,
             stringView: stringView,
             lineManager: lineManager)
         self.languageMode = internalLanguageMode
         layoutManager.languageMode = internalLanguageMode
+
+        // Capture the mode we're parsing with to check it's still current in completion
+        let parsingMode = internalLanguageMode
         internalLanguageMode.parse(string) { [weak self] finished in
-            if let self = self, finished {
+            guard let self = self else {
+                completion?(false)
+                return
+            }
+            // Only process completion if this language mode is still current
+            // This prevents stale completion handlers from old parses from running
+            guard self.languageMode === parsingMode else {
+                completion?(false)
+                return
+            }
+            if finished {
                 self.invalidateLines()
                 self.layoutManager.setNeedsLayout()
                 self.layoutManager.layoutIfNeeded()
@@ -1162,6 +1186,10 @@ final class TextInputViewMac: NSView, NSTextInputClient {
 
         timedUndoManager.enableUndoCoalescing()
 
+        // Set flag to prevent scroll operations during replace (can crash with stale line manager)
+        isPerformingReplace = true
+        defer { isPerformingReplace = false }
+
         // Perform the actual replacement
         let textEditHelper = TextEditHelper(stringView: stringView, lineManager: lineManager, lineEndings: lineEndings)
         let textEditResult = textEditHelper.replaceText(in: range, with: text)
@@ -1170,7 +1198,11 @@ final class TextInputViewMac: NSView, NSTextInputClient {
         lineChangeSet.union(with: languageModeLineChangeSet)
         applyLineChangesToLayoutManager(lineChangeSet)
 
-        _selectedRange = NSRange(location: newRange.upperBound, length: 0)
+        // Clamp selection to valid bounds - critical when text length changes dramatically
+        // (e.g., base64 decode can shrink text from 4M to 2K chars)
+        let newTextLength = stringView.string.length
+        let safeLocation = min(newRange.upperBound, newTextLength)
+        _selectedRange = NSRange(location: safeLocation, length: 0)
         delegate?.textInputViewDidChange(self)
         delegate?.textInputViewDidChangeSelection(self)
         if textEditResult.didAddOrRemoveLines {
@@ -1189,6 +1221,10 @@ final class TextInputViewMac: NSView, NSTextInputClient {
             textInputView.performReplaceForUndo(in: redoRange, with: redoText, restoreSelection: redoSelection, redoRange: range, redoText: text, redoSelection: restoreSelection)
         }
 
+        // Set flag to prevent scroll operations during replace (can crash with stale line manager)
+        isPerformingReplace = true
+        defer { isPerformingReplace = false }
+
         // Perform the text replacement
         let textEditHelper = TextEditHelper(stringView: stringView, lineManager: lineManager, lineEndings: lineEndings)
         let textEditResult = textEditHelper.replaceText(in: range, with: text)
@@ -1197,7 +1233,16 @@ final class TextInputViewMac: NSView, NSTextInputClient {
         lineChangeSet.union(with: languageModeLineChangeSet)
         applyLineChangesToLayoutManager(lineChangeSet)
 
-        _selectedRange = restoreSelection
+        // Clamp restored selection to valid bounds - critical when text length changes dramatically
+        let newTextLength = stringView.string.length
+        if let restore = restoreSelection {
+            let safeLocation = min(max(0, restore.location), newTextLength)
+            let maxLength = max(0, newTextLength - safeLocation)
+            let safeLength = min(restore.length, maxLength)
+            _selectedRange = NSRange(location: safeLocation, length: safeLength)
+        } else {
+            _selectedRange = NSRange(location: min(newTextLength, 0), length: 0)
+        }
         delegate?.textInputViewDidChange(self)
         delegate?.textInputViewDidChangeSelection(self)
         if textEditResult.didAddOrRemoveLines {
@@ -1364,6 +1409,10 @@ extension TextInputViewMac: TreeSitterLanguageModeDelegate {
         } else {
             return nil
         }
+    }
+
+    func treeSitterLanguageModeDidTimeout(_ languageMode: TreeSitterInternalLanguageMode) {
+        delegate?.textInputViewDidTimeoutParsing(self)
     }
 }
 

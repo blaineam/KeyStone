@@ -74,6 +74,10 @@ public struct KeystoneEditor: View {
     /// Callback when indentation should be converted.
     public var onConvertIndentation: ((IndentationSettings) -> Void)?
 
+    /// Callback when language is automatically changed (e.g., to plaintext for large base64).
+    /// The string parameter contains a user-friendly reason message.
+    public var onAutoLanguageChange: ((KeystoneLanguage, String) -> Void)?
+
     /// Controller for undo/redo operations (bridges to native text view's undo manager).
     @StateObject private var undoController = UndoController()
 
@@ -143,7 +147,8 @@ public struct KeystoneEditor: View {
         onTextChange: ((String) -> Void)? = nil,
         onToggleTailFollow: (() -> Void)? = nil,
         onConvertLineEndings: ((LineEnding) -> Void)? = nil,
-        onConvertIndentation: ((IndentationSettings) -> Void)? = nil
+        onConvertIndentation: ((IndentationSettings) -> Void)? = nil,
+        onAutoLanguageChange: ((KeystoneLanguage, String) -> Void)? = nil
     ) {
         self._text = text
         self.externalLanguage = language
@@ -160,6 +165,7 @@ public struct KeystoneEditor: View {
         self.onToggleTailFollow = onToggleTailFollow
         self.onConvertLineEndings = onConvertLineEndings
         self.onConvertIndentation = onConvertIndentation
+        self.onAutoLanguageChange = onAutoLanguageChange
     }
 
     /// Creates a new code editor with an initial language value.
@@ -178,7 +184,8 @@ public struct KeystoneEditor: View {
         onTextChange: ((String) -> Void)? = nil,
         onToggleTailFollow: (() -> Void)? = nil,
         onConvertLineEndings: ((LineEnding) -> Void)? = nil,
-        onConvertIndentation: ((IndentationSettings) -> Void)? = nil
+        onConvertIndentation: ((IndentationSettings) -> Void)? = nil,
+        onAutoLanguageChange: ((KeystoneLanguage, String) -> Void)? = nil
     ) {
         self._text = text
         self.externalLanguage = nil
@@ -195,6 +202,7 @@ public struct KeystoneEditor: View {
         self.onToggleTailFollow = onToggleTailFollow
         self.onConvertLineEndings = onConvertLineEndings
         self.onConvertIndentation = onConvertIndentation
+        self.onAutoLanguageChange = onAutoLanguageChange
     }
 
     // MARK: - Body
@@ -213,7 +221,8 @@ public struct KeystoneEditor: View {
                 onGoToLine: { showGoToLine.wrappedValue = true },
                 onShowSettings: { showSettings = true },
                 onToggleTailFollow: onToggleTailFollow,
-                onToggleComment: toggleComment
+                onToggleComment: toggleComment,
+                onToggleBase64: toggleBase64
             )
             #else
             // Editor toolbar for macOS
@@ -226,7 +235,8 @@ public struct KeystoneEditor: View {
                 onGoToLine: { showGoToLine.wrappedValue = true },
                 onShowSettings: { showSettings = true },
                 onToggleTailFollow: onToggleTailFollow,
-                onToggleComment: toggleComment
+                onToggleComment: toggleComment,
+                onToggleBase64: toggleBase64
             )
             #endif
 
@@ -263,7 +273,15 @@ public struct KeystoneEditor: View {
                 scrollToCursor: scrollToCursor,
                 searchMatches: findReplaceManager.matches,
                 currentMatchIndex: findReplaceManager.currentMatchIndex,
-                undoController: undoController
+                undoController: undoController,
+                onParsingTimeout: {
+                    // Switch to plaintext when parsing times out or content is too large
+                    if internalLanguage != .plainText {
+                        internalLanguage = .plainText
+                        externalLanguage?.wrappedValue = .plainText
+                        onAutoLanguageChange?(.plainText, "Content is too large for syntax highlighting. Switched to Plain Text.")
+                    }
+                }
             )
             .focused($isEditorFocused)
 
@@ -540,6 +558,68 @@ public struct KeystoneEditor: View {
             in: newText,
             selectionLength: newSelection.length
         )
+    }
+
+    /// Toggles Base64 encoding/decoding on the current selection.
+    private func toggleBase64() {
+        let cursor = cursorPosition.wrappedValue
+        let selectedRange = NSRange(location: cursor.offset, length: cursor.selectionLength)
+
+        // Need a selection to encode/decode
+        guard selectedRange.length > 0 else {
+            return
+        }
+
+        guard let result = Base64Toggle.toggleBase64WithRange(
+            text: text,
+            selectedRange: selectedRange
+        ) else {
+            return
+        }
+
+        // If encoding (result is longer than input) and result is large,
+        // switch to plaintext first to prevent TreeSitter from hanging
+        let isEncoding = result.replacementText.count > selectedRange.length
+        let isLargeResult = result.replacementText.count > 100_000
+        let needsLanguageSwitch = isEncoding && isLargeResult && internalLanguage != .plainText
+
+        // Capture what we need for the closure - undoController is a class so it stays valid
+        let undoCtrl = undoController
+        let cursorBinding = cursorPosition
+        let replacedRange = result.replacedRange
+        let replacementText = result.replacementText
+
+        // Helper to apply the text change
+        let applyChange: () -> Void = {
+            // Use undoController to properly register in undo/redo history
+            if let newText = undoCtrl.replaceText(in: replacedRange, with: replacementText) {
+                // Calculate safe cursor position for the new text
+                let safeOffset: Int = min(replacedRange.location, newText.count)
+                let safeLength: Int = min(replacementText.count, max(0, newText.count - safeOffset))
+
+                // Update cursor position to select the replacement text
+                cursorBinding.wrappedValue = CursorPosition.from(
+                    offset: safeOffset,
+                    in: newText,
+                    selectionLength: safeLength
+                )
+            }
+        }
+
+        if needsLanguageSwitch {
+            // Switch to plaintext first
+            internalLanguage = .plainText
+            externalLanguage?.wrappedValue = .plainText
+            onAutoLanguageChange?(.plainText, "Content too large for syntax highlighting. Switched to Plain Text.")
+
+            // Delay the text change to allow SwiftUI to propagate the language change
+            // This ensures TreeSitter is in plaintext mode before we insert large base64 content
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                applyChange()
+            }
+        } else {
+            applyChange()
+        }
     }
 
     /// Parses input in format "line" or "line:column" and navigates to that position.
@@ -1049,6 +1129,7 @@ struct KeystoneEditorToolbarBar: View {
     var onShowSettings: (() -> Void)?
     var onToggleTailFollow: (() -> Void)?
     var onToggleComment: (() -> Void)?
+    var onToggleBase64: (() -> Void)?
 
     /// Local state to track tail follow - synced with binding for proper SwiftUI updates
     @State private var tailFollowActive: Bool = false
@@ -1070,6 +1151,11 @@ struct KeystoneEditorToolbarBar: View {
                 toolbarButton(icon: "text.bubble", tooltip: "Toggle Comment (⌘/)", enabled: true) {
                     onToggleComment?()
                 }
+            }
+
+            // Toggle Base64 encode/decode
+            toolbarButton(icon: "arrow.triangle.2.circlepath", tooltip: "Toggle Base64 (⌘⇧B)", enabled: true) {
+                onToggleBase64?()
             }
 
             Divider().frame(height: 18)
@@ -1164,6 +1250,11 @@ struct KeystoneEditorToolbarBar: View {
                     Button("", action: { onToggleComment() })
                         .keyboardShortcut("/", modifiers: .command)
                 }
+                // Cmd+Shift+B: Toggle Base64 encode/decode
+                if let onToggleBase64 = onToggleBase64 {
+                    Button("", action: { onToggleBase64() })
+                        .keyboardShortcut("b", modifiers: [.command, .shift])
+                }
                 // Cmd+Shift+T: Toggle follow (if available)
                 if let onToggleTailFollow = onToggleTailFollow {
                     Button("", action: { onToggleTailFollow() })
@@ -1206,6 +1297,7 @@ struct KeystoneEditorToolbarBar: View {
     var onShowSettings: (() -> Void)?
     var onToggleTailFollow: (() -> Void)?
     var onToggleComment: (() -> Void)?
+    var onToggleBase64: (() -> Void)?
 
     /// Local state to track tail follow - synced with binding for proper SwiftUI updates
     @State private var tailFollowActive: Bool = false
@@ -1228,6 +1320,11 @@ struct KeystoneEditorToolbarBar: View {
                     toolbarButton(icon: "text.bubble", enabled: true) {
                         onToggleComment?()
                     }
+                }
+
+                // Toggle Base64 encode/decode
+                toolbarButton(icon: "arrow.triangle.2.circlepath", enabled: true) {
+                    onToggleBase64?()
                 }
 
                 Divider().frame(height: 24)

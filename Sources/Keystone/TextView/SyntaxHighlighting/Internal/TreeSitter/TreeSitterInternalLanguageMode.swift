@@ -3,6 +3,8 @@ import TreeSitter
 
 protocol TreeSitterLanguageModeDelegate: AnyObject {
     func treeSitterLanguageMode(_ languageMode: TreeSitterInternalLanguageMode, bytesAt byteIndex: ByteCount) -> TreeSitterTextProviderResult?
+    /// Called when parsing times out. The delegate should switch to plaintext mode.
+    func treeSitterLanguageModeDidTimeout(_ languageMode: TreeSitterInternalLanguageMode)
 }
 
 final class TreeSitterInternalLanguageMode: InternalLanguageMode {
@@ -40,6 +42,14 @@ final class TreeSitterInternalLanguageMode: InternalLanguageMode {
     func parse(_ text: NSString) {
         parseLock.withLock {
             rootLanguageLayer.parse(text)
+
+            // Check if parsing was cancelled due to timeout (progress callback returned true)
+            if parser.didTimeout {
+                DispatchQueue.main.async { [weak self] in
+                    guard let self = self else { return }
+                    self.delegate?.treeSitterLanguageModeDidTimeout(self)
+                }
+            }
         }
     }
 
@@ -48,9 +58,16 @@ final class TreeSitterInternalLanguageMode: InternalLanguageMode {
         let operation = BlockOperation()
         operation.addExecutionBlock { [weak operation, weak self] in
             if let self = self, let operation = operation, !operation.isCancelled {
-                self.parse(text)
+                self.parseLock.withLock {
+                    self.rootLanguageLayer.parse(text)
+                }
+                let didTimeout = self.parser.didTimeout
+
                 DispatchQueue.main.async {
-                    completion(!operation.isCancelled)
+                    if didTimeout {
+                        self.delegate?.treeSitterLanguageModeDidTimeout(self)
+                    }
+                    completion(!operation.isCancelled && !didTimeout)
                 }
             } else {
                 DispatchQueue.main.async {

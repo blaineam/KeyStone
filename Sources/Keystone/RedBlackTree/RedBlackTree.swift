@@ -34,14 +34,11 @@ final class RedBlackTree<NodeID: RedBlackTreeNodeID, NodeValue: RedBlackTreeNode
     }
 
     func node(containingLocation location: NodeValue) -> Node? {
+        // Return nil for out-of-bounds locations instead of crashing
+        // This can legitimately happen when text changes dramatically and
+        // internal structures (line managers, line controllers) are temporarily stale
         guard location >= minimumValue && location <= root.nodeTotalValue else {
-            #if DEBUG
-            fatalError("\(location) is out of bounds. Valid range is \(minimumValue) - \(root.nodeTotalValue)."
-                       + " This issue is under investigation. Please open an issue at https://github.com/simonbs/Runestone/issues"
-                       + " and include this stack trace and a sample text file if possible. This fatal error is only thrown in debug builds.")
-            #else
             return nil
-            #endif
         }
         return node(containingLocation: location, minimumValue: minimumValue, valueKeyPath: \.value, totalValueKeyPath: \.nodeTotalValue)
     }

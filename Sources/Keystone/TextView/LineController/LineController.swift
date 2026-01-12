@@ -167,6 +167,8 @@ final class LineController {
     }
 
     func lineFragmentNode(containingCharacterAt location: Int) -> LineFragmentNode? {
+        // RedBlackTree.node(containingLocation:) now returns nil for out-of-bounds locations
+        // instead of crashing, so this gracefully handles temporarily stale structures
         lineFragmentTree.node(containingLocation: location)
     }
 
@@ -418,6 +420,7 @@ private extension LineController {
 // MARK: - UITextInput
 extension LineController {
     func caretRect(atIndex lineLocalLocation: Int) -> CGRect {
+        // First check existing line fragments
         for lineFragment in typesetter.lineFragments {
             if let caretLocation = lineFragment.caretLocation(forLineLocalLocation: lineLocalLocation) {
                 let xPosition = CTLineGetOffsetForStringIndex(lineFragment.line, caretLocation, nil)
@@ -425,6 +428,38 @@ extension LineController {
                 return CGRect(x: xPosition, y: yPosition, width: Caret.width, height: lineFragment.baseSize.height)
             }
         }
+
+        // If not found, try limited on-demand typesetting for find/replace navigation
+        // Limit to 50KB ahead to avoid hanging on very large lines (e.g., Command+A on 5M chars)
+        let maxTypesetAhead = 50_000
+        let lastTypesetLocation = typesetter.lineFragments.last?.visibleRange.upperBound ?? 0
+        let distanceToTarget = lineLocalLocation - lastTypesetLocation
+
+        if distanceToTarget > 0 && distanceToTarget <= maxTypesetAhead {
+            let newLineFragments = typesetter.typesetLineFragments(toLocation: lineLocalLocation, additionalLineFragmentCount: 1)
+            updateLineHeight(for: newLineFragments)
+
+            // Try again with the newly typeset fragments
+            for lineFragment in typesetter.lineFragments {
+                if let caretLocation = lineFragment.caretLocation(forLineLocalLocation: lineLocalLocation) {
+                    let xPosition = CTLineGetOffsetForStringIndex(lineFragment.line, caretLocation, nil)
+                    let yPosition = lineFragment.yPosition + (lineFragment.scaledSize.height - lineFragment.baseSize.height) / 2
+                    return CGRect(x: xPosition, y: yPosition, width: Caret.width, height: lineFragment.baseSize.height)
+                }
+            }
+        }
+
+        // Fallback: use estimated position based on last typeset fragment
+        // This handles very distant positions (like Command+A on huge lines) without hanging
+        if let lastFragment = typesetter.lineFragments.last {
+            let avgCharsPerFragment = max(1, lastFragment.visibleRange.length)
+            let fragmentHeight = lastFragment.scaledSize.height
+            let estimatedFragmentsAhead = CGFloat(distanceToTarget) / CGFloat(avgCharsPerFragment)
+            let estimatedY = lastFragment.yPosition + fragmentHeight + (estimatedFragmentsAhead * fragmentHeight)
+            let yPosition = estimatedY + (fragmentHeight * lineFragmentHeightMultiplier - fragmentHeight) / 2
+            return CGRect(x: 0, y: yPosition, width: Caret.width, height: fragmentHeight)
+        }
+
         let yPosition = (estimatedLineFragmentHeight * lineFragmentHeightMultiplier - estimatedLineFragmentHeight) / 2
         return CGRect(x: 0, y: yPosition, width: Caret.width, height: estimatedLineFragmentHeight)
     }

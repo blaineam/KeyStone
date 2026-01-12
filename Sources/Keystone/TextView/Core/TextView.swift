@@ -1478,6 +1478,10 @@ extension TextView: TextInputViewDelegate {
     func textInputView(_ view: TextInputView, replaceTextIn highlightedRange: HighlightedRange) {
         editorDelegate?.textView(self, replaceTextIn: highlightedRange)
     }
+
+    func textViewDidTimeoutParsing(_ view: TextInputView) {
+        editorDelegate?.textViewDidTimeoutParsing(self)
+    }
 }
 
 // MARK: - HighlightNavigationControllerDelegate
@@ -1955,7 +1959,11 @@ open class TextView: NSScrollView {
     /// - Parameter centerVertically: If true, centers the caret vertically (for find/replace navigation).
     ///                               If false, only scrolls minimally to bring caret into view.
     public func scrollRangeToVisible(_ range: NSRange, centerVertically: Bool = false) {
-        let caretRect = textInputView.caretRect(at: range.location)
+        // Clamp range to valid bounds to prevent crashes when text length changes dramatically
+        let textLength = text.count
+        let safeLocation = min(max(0, range.location), textLength)
+        let safeRange = NSRange(location: safeLocation, length: 0)
+        let caretRect = textInputView.caretRect(at: safeRange.location)
         let visibleRect = contentView.bounds
 
         // Small margin to keep caret away from the very edge
@@ -2046,15 +2054,29 @@ extension TextView: TextInputViewMacDelegate {
     }
 
     func textInputViewDidChange(_ view: TextInputViewMac) {
-        if isAutomaticScrollEnabled, let newRange = textInputView.selection, newRange.length == 0 {
-            scrollRangeToVisible(newRange)
+        // Skip scrolling during replace operations - line manager may have stale data
+        // that causes crashes when computing caret position
+        if isAutomaticScrollEnabled, !textInputView.isPerformingReplace,
+           let newRange = textInputView.selection, newRange.length == 0 {
+            // Clamp selection to valid bounds before scrolling
+            // This prevents crashes when text length changes dramatically
+            let textLength = text.count
+            if newRange.location <= textLength {
+                scrollRangeToVisible(newRange)
+            }
         }
         editorDelegate?.textViewDidChange(self)
     }
 
     func textInputViewDidChangeSelection(_ view: TextInputViewMac) {
-        if isAutomaticScrollEnabled, let newRange = textInputView.selection, newRange.length == 0 {
-            scrollRangeToVisible(newRange)
+        // Skip scrolling during replace operations - line manager may have stale data
+        if isAutomaticScrollEnabled, !textInputView.isPerformingReplace,
+           let newRange = textInputView.selection, newRange.length == 0 {
+            // Clamp selection to valid bounds before scrolling
+            let textLength = text.count
+            if newRange.location <= textLength {
+                scrollRangeToVisible(newRange)
+            }
         }
         editorDelegate?.textViewDidChangeSelection(self)
     }
@@ -2093,6 +2115,10 @@ extension TextView: TextInputViewMacDelegate {
 
     func textInputView(_ view: TextInputViewMac, replaceTextIn highlightedRange: HighlightedRange) {
         editorDelegate?.textView(self, replaceTextIn: highlightedRange)
+    }
+
+    func textInputViewDidTimeoutParsing(_ view: TextInputViewMac) {
+        editorDelegate?.textViewDidTimeoutParsing(self)
     }
 }
 

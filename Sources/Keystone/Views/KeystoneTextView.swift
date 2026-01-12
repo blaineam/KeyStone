@@ -127,22 +127,33 @@ public struct KeystoneTextView: UIViewRepresentable {
         // Apply configuration changes first (includes background color)
         applyConfiguration(to: textView)
 
-        // Update theme colors
-        let theme = KeystoneRunestoneTheme(configuration: configuration)
-        textView.theme = theme
+        // Update theme colors only when theme or font size actually changes
+        // This prevents syntax highlighting re-evaluation on every cursor move
+        let currentTheme = configuration.theme
+        let currentFontSize = configuration.fontSize
+        if currentTheme != coordinator.lastSyncedTheme || currentFontSize != coordinator.lastSyncedFontSize {
+            coordinator.lastSyncedTheme = currentTheme
+            coordinator.lastSyncedFontSize = currentFontSize
+            let theme = KeystoneRunestoneTheme(configuration: configuration)
+            textView.theme = theme
+        }
 
         // Handle language changes - update syntax highlighting when language changes
         if language != coordinator.lastSyncedLanguage {
             coordinator.lastSyncedLanguage = language
             if let tsLanguage = language.treeSitterLanguage {
                 let languageMode = TreeSitterLanguageMode(language: tsLanguage, languageProvider: KeystoneLanguageProvider.shared)
-                textView.setLanguageMode(languageMode) { _ in
-                    // Force redraw after language mode parsing completes
-                    textView.redisplayVisibleLines()
+                textView.setLanguageMode(languageMode) { finished in
+                    // Only redraw if parsing finished and mode is still current
+                    if finished {
+                        textView.redisplayVisibleLines()
+                    }
                 }
             } else {
-                textView.setLanguageMode(PlainTextLanguageMode()) { _ in
-                    textView.redisplayVisibleLines()
+                textView.setLanguageMode(PlainTextLanguageMode()) { finished in
+                    if finished {
+                        textView.redisplayVisibleLines()
+                    }
                 }
             }
         }
@@ -153,7 +164,8 @@ public struct KeystoneTextView: UIViewRepresentable {
         // Instead, we queue the update and apply it when truly safe.
         if textView.text != text && !coordinator.isUpdatingText && text != coordinator.lastSyncedText {
             // Queue the pending text update - will be applied when keyboard is fully dismissed
-            coordinator.pendingTextUpdate = (text: text, language: language.treeSitterLanguage, theme: theme)
+            let pendingTheme = KeystoneRunestoneTheme(configuration: configuration)
+            coordinator.pendingTextUpdate = (text: text, language: language.treeSitterLanguage, theme: pendingTheme)
 
             // Try to apply immediately only if not editing (keyboard hidden)
             if !textView.isFirstResponder {
@@ -309,7 +321,7 @@ public struct KeystoneTextView: UIViewRepresentable {
 
     // MARK: - Coordinator
 
-    public class Coordinator: NSObject, TextViewDelegate, UIScrollViewDelegate {
+    @MainActor public class Coordinator: NSObject, TextViewDelegate, UIScrollViewDelegate {
         var parent: KeystoneTextView
         weak var textView: TextView?
         var isUpdatingText = false
@@ -318,6 +330,8 @@ public struct KeystoneTextView: UIViewRepresentable {
         var lastSyncedText: String = ""
         var lastSyncedCursorPosition: CursorPosition?
         var lastSyncedLanguage: KeystoneLanguage?
+        var lastSyncedTheme: KeystoneTheme
+        var lastSyncedFontSize: CGFloat
         private var highlightedRanges: [HighlightedRange] = []
         let codeFoldingManager = CodeFoldingManager()
         private var foldingAnalysisWorkItem: DispatchWorkItem?
@@ -331,6 +345,8 @@ public struct KeystoneTextView: UIViewRepresentable {
             self.parent = parent
             self.lastSyncedText = parent.text
             self.lastSyncedLanguage = parent.language
+            self.lastSyncedTheme = parent.configuration.theme
+            self.lastSyncedFontSize = parent.configuration.fontSize
             super.init()
 
             // Observe keyboard dismiss to apply pending updates safely
@@ -717,6 +733,8 @@ public struct KeystoneTextView: NSViewRepresentable {
     var searchMatches: [SearchMatch]
     var currentMatchIndex: Int
     var undoController: UndoController?
+    /// Called when TreeSitter parsing times out (default 30 seconds).
+    var onParsingTimeout: (() -> Void)?
 
     public init(
         text: Binding<String>,
@@ -728,7 +746,8 @@ public struct KeystoneTextView: NSViewRepresentable {
         scrollToCursor: Binding<Bool>,
         searchMatches: [SearchMatch] = [],
         currentMatchIndex: Int = 0,
-        undoController: UndoController? = nil
+        undoController: UndoController? = nil,
+        onParsingTimeout: (() -> Void)? = nil
     ) {
         self._text = text
         self.language = language
@@ -740,6 +759,7 @@ public struct KeystoneTextView: NSViewRepresentable {
         self.searchMatches = searchMatches
         self.currentMatchIndex = currentMatchIndex
         self.undoController = undoController
+        self.onParsingTimeout = onParsingTimeout
     }
 
     public func makeNSView(context: Context) -> TextView {
@@ -812,22 +832,33 @@ public struct KeystoneTextView: NSViewRepresentable {
         // Apply configuration changes first (includes background color)
         applyConfiguration(to: textView)
 
-        // Update theme colors
-        let theme = KeystoneRunestoneThemeMac(configuration: configuration)
-        textView.theme = theme
+        // Update theme colors only when theme or font size actually changes
+        // This prevents syntax highlighting re-evaluation on every cursor move
+        let currentTheme = configuration.theme
+        let currentFontSize = configuration.fontSize
+        if currentTheme != coordinator.lastSyncedTheme || currentFontSize != coordinator.lastSyncedFontSize {
+            coordinator.lastSyncedTheme = currentTheme
+            coordinator.lastSyncedFontSize = currentFontSize
+            let theme = KeystoneRunestoneThemeMac(configuration: configuration)
+            textView.theme = theme
+        }
 
         // Handle language changes - update syntax highlighting when language changes
         if language != coordinator.lastSyncedLanguage {
             coordinator.lastSyncedLanguage = language
             if let tsLanguage = language.treeSitterLanguage {
                 let languageMode = TreeSitterLanguageMode(language: tsLanguage, languageProvider: KeystoneLanguageProvider.shared)
-                textView.setLanguageMode(languageMode) { _ in
-                    // Force redraw after language mode parsing completes
-                    textView.redisplayVisibleLines()
+                textView.setLanguageMode(languageMode) { finished in
+                    // Only redraw if parsing finished and mode is still current
+                    if finished {
+                        textView.redisplayVisibleLines()
+                    }
                 }
             } else {
-                textView.setLanguageMode(PlainTextLanguageMode()) { _ in
-                    textView.redisplayVisibleLines()
+                textView.setLanguageMode(PlainTextLanguageMode()) { finished in
+                    if finished {
+                        textView.redisplayVisibleLines()
+                    }
                 }
             }
         }
@@ -835,7 +866,8 @@ public struct KeystoneTextView: NSViewRepresentable {
         // Handle external text changes (file loads)
         if textView.text != text && !coordinator.isUpdatingText && text != coordinator.lastSyncedText {
             // Queue the pending text update - will be applied when safe
-            coordinator.pendingTextUpdate = (text: text, language: language.treeSitterLanguage, theme: theme)
+            let pendingTheme = KeystoneRunestoneThemeMac(configuration: configuration)
+            coordinator.pendingTextUpdate = (text: text, language: language.treeSitterLanguage, theme: pendingTheme)
 
             // Try to apply immediately
             DispatchQueue.main.async {
@@ -991,7 +1023,7 @@ public struct KeystoneTextView: NSViewRepresentable {
 
     // MARK: - Coordinator
 
-    public class Coordinator: NSObject, TextViewDelegate {
+    @MainActor public class Coordinator: NSObject, TextViewDelegate {
         var parent: KeystoneTextView
         weak var textView: TextView?
         var isUpdatingText = false
@@ -999,6 +1031,8 @@ public struct KeystoneTextView: NSViewRepresentable {
         var lastSyncedText: String = ""
         var lastSyncedCursorPosition: CursorPosition?
         var lastSyncedLanguage: KeystoneLanguage?
+        var lastSyncedTheme: KeystoneTheme
+        var lastSyncedFontSize: CGFloat
         private var highlightedRanges: [HighlightedRange] = []
         let codeFoldingManager = CodeFoldingManager()
         private var foldingAnalysisWorkItem: DispatchWorkItem?
@@ -1012,6 +1046,8 @@ public struct KeystoneTextView: NSViewRepresentable {
             self.lastSyncedText = parent.text
             self.lastSyncedCursorPosition = parent.cursorPosition
             self.lastSyncedLanguage = parent.language
+            self.lastSyncedTheme = parent.configuration.theme
+            self.lastSyncedFontSize = parent.configuration.fontSize
             super.init()
         }
 
@@ -1173,6 +1209,10 @@ public struct KeystoneTextView: NSViewRepresentable {
 
         public func textView(_ textView: TextView, shouldChangeTextIn range: NSRange, replacementText text: String) -> Bool {
             return true
+        }
+
+        public func textViewDidTimeoutParsing(_ textView: TextView) {
+            parent.onParsingTimeout?()
         }
     }
 }

@@ -2,62 +2,49 @@ import Foundation
 
 final class TreeSitterLanguageLayerStore {
     var allIDs: [UnsafeRawPointer] {
-        defer {
-            semaphore.signal()
+        lock.withLock {
+            Array(store.keys)
         }
-        semaphore.wait()
-        return Array(store.keys)
     }
 
     var allLayers: [TreeSitterLanguageLayer] {
-        defer {
-            semaphore.signal()
+        lock.withLock {
+            Array(store.values)
         }
-        semaphore.wait()
-        return Array(store.values)
     }
 
     var isEmpty: Bool {
-        defer {
-            semaphore.signal()
+        lock.withLock {
+            store.isEmpty
         }
-        semaphore.wait()
-        return store.isEmpty
     }
 
     private var store: [UnsafeRawPointer: TreeSitterLanguageLayer] = [:]
-    private let semaphore = DispatchSemaphore(value: 1)
+    // Use NSLock instead of DispatchSemaphore for priority inheritance support.
+    // This prevents priority inversion when main thread waits for background thread.
+    private let lock = NSLock()
 
     func storeLayer(_ layer: TreeSitterLanguageLayer, forKey key: UnsafeRawPointer) {
-        defer {
-            semaphore.signal()
+        lock.withLock {
+            store[key] = layer
         }
-        semaphore.wait()
-        store[key] = layer
     }
 
     func layer(forKey key: UnsafeRawPointer) -> TreeSitterLanguageLayer? {
-        defer {
-            semaphore.signal()
+        lock.withLock {
+            store[key]
         }
-        semaphore.wait()
-        let value = store[key]
-        return value
     }
 
     func removeLayer(forKey key: UnsafeRawPointer) {
-        defer {
-            semaphore.signal()
+        lock.withLock {
+            store.removeValue(forKey: key)
         }
-        semaphore.wait()
-        store.removeValue(forKey: key)
     }
 
     func removeAll() {
-        defer {
-            semaphore.signal()
+        lock.withLock {
+            store.removeAll()
         }
-        semaphore.wait()
-        store.removeAll()
     }
 }
