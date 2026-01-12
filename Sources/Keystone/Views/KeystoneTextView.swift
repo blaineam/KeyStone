@@ -24,6 +24,7 @@ public struct KeystoneTextView: UIViewRepresentable {
     var searchMatches: [SearchMatch]
     var currentMatchIndex: Int
     var undoController: UndoController?
+    var onParsingTimeout: (() -> Void)?
 
     public init(
         text: Binding<String>,
@@ -35,7 +36,8 @@ public struct KeystoneTextView: UIViewRepresentable {
         scrollToCursor: Binding<Bool>,
         searchMatches: [SearchMatch] = [],
         currentMatchIndex: Int = 0,
-        undoController: UndoController? = nil
+        undoController: UndoController? = nil,
+        onParsingTimeout: (() -> Void)? = nil
     ) {
         self._text = text
         self.language = language
@@ -47,6 +49,7 @@ public struct KeystoneTextView: UIViewRepresentable {
         self.searchMatches = searchMatches
         self.currentMatchIndex = currentMatchIndex
         self.undoController = undoController
+        self.onParsingTimeout = onParsingTimeout
     }
 
     public func makeUIView(context: Context) -> TextView {

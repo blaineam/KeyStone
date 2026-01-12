@@ -205,144 +205,164 @@ public struct KeystoneEditor: View {
         self.onAutoLanguageChange = onAutoLanguageChange
     }
 
-    // MARK: - Body
+    // MARK: - Body Components
 
-    public var body: some View {
-        VStack(spacing: 0) {
+    @ViewBuilder
+    private var editorToolbar: some View {
+        #if os(iOS)
+        KeystoneEditorToolbarBar(
+            configuration: configuration,
+            findReplaceManager: findReplaceManager,
+            showSymbolKeyboard: $configuration.showSymbolKeyboard,
+            undoController: undoController,
+            isTailFollowEnabled: isTailFollowEnabled,
+            language: internalLanguage,
+            onGoToLine: { showGoToLine.wrappedValue = true },
+            onShowSettings: { showSettings = true },
+            onToggleTailFollow: onToggleTailFollow,
+            onToggleComment: toggleComment,
+            onToggleBase64: toggleBase64
+        )
+        #else
+        KeystoneEditorToolbarBar(
+            configuration: configuration,
+            findReplaceManager: findReplaceManager,
+            undoController: undoController,
+            isTailFollowEnabled: isTailFollowEnabled,
+            language: internalLanguage,
+            onGoToLine: { showGoToLine.wrappedValue = true },
+            onShowSettings: { showSettings = true },
+            onToggleTailFollow: onToggleTailFollow,
+            onToggleComment: toggleComment,
+            onToggleBase64: toggleBase64
+        )
+        #endif
+    }
+
+    @ViewBuilder
+    private var findReplaceBarView: some View {
+        if findReplaceManager.isVisible {
             #if os(iOS)
-            // Editor toolbar for iOS
-            KeystoneEditorToolbarBar(
-                configuration: configuration,
-                findReplaceManager: findReplaceManager,
-                showSymbolKeyboard: $configuration.showSymbolKeyboard,
+            KeystoneFindReplaceBar(
+                manager: findReplaceManager,
+                text: $text,
                 undoController: undoController,
-                isTailFollowEnabled: isTailFollowEnabled,
-                language: internalLanguage,
-                onGoToLine: { showGoToLine.wrappedValue = true },
-                onShowSettings: { showSettings = true },
-                onToggleTailFollow: onToggleTailFollow,
-                onToggleComment: toggleComment,
-                onToggleBase64: toggleBase64
+                isLargeFile: configuration.isLargeFileMode,
+                isSearchFieldFocused: $isSearchFieldFocused,
+                onNavigateToMatch: navigateToMatch
             )
             #else
-            // Editor toolbar for macOS
-            KeystoneEditorToolbarBar(
-                configuration: configuration,
-                findReplaceManager: findReplaceManager,
-                undoController: undoController,
-                isTailFollowEnabled: isTailFollowEnabled,
-                language: internalLanguage,
-                onGoToLine: { showGoToLine.wrappedValue = true },
-                onShowSettings: { showSettings = true },
-                onToggleTailFollow: onToggleTailFollow,
-                onToggleComment: toggleComment,
-                onToggleBase64: toggleBase64
-            )
-            #endif
-
-            // Find/Replace bar
-            if findReplaceManager.isVisible {
-                #if os(iOS)
-                KeystoneFindReplaceBar(
-                    manager: findReplaceManager,
-                    text: $text,
-                    undoController: undoController,
-                    isLargeFile: configuration.isLargeFileMode,
-                    isSearchFieldFocused: $isSearchFieldFocused,
-                    onNavigateToMatch: navigateToMatch
-                )
-                #else
-                KeystoneFindReplaceBar(
-                    manager: findReplaceManager,
-                    text: $text,
-                    undoController: undoController,
-                    isLargeFile: configuration.isLargeFileMode,
-                    onNavigateToMatch: navigateToMatch
-                )
-                #endif
-            }
-
-            // Main editor area (line numbers are integrated in KeystoneTextView)
-            KeystoneTextView(
+            KeystoneFindReplaceBar(
+                manager: findReplaceManager,
                 text: $text,
-                language: internalLanguage,
-                configuration: configuration,
-                cursorPosition: cursorPosition,
-                scrollOffset: $scrollOffset,
-                matchingBracket: $matchingBracket,
-                scrollToCursor: scrollToCursor,
-                searchMatches: findReplaceManager.matches,
-                currentMatchIndex: findReplaceManager.currentMatchIndex,
                 undoController: undoController,
-                onParsingTimeout: {
-                    // Switch to plaintext when parsing times out or content is too large
-                    if internalLanguage != .plainText {
-                        internalLanguage = .plainText
-                        externalLanguage?.wrappedValue = .plainText
-                        onAutoLanguageChange?(.plainText, "Content is too large for syntax highlighting. Switched to Plain Text.")
-                    }
-                }
+                isLargeFile: configuration.isLargeFileMode,
+                onNavigateToMatch: navigateToMatch
             )
-            .focused($isEditorFocused)
-
-            #if os(iOS)
-            // Symbol keyboard bar (always visible when enabled, persisted in configuration)
-            if configuration.showSymbolKeyboard {
-                SymbolKeyboard(
-                    indentString: configuration.indentation.indentString,
-                    onSymbol: insertSymbol
-                )
-            }
             #endif
+        }
+    }
 
-            // Status bar
-            EditorStatusBar(
-                cursorPosition: cursorPosition.wrappedValue,
-                lineCount: lineCount,
-                configuration: configuration,
-                language: internalLanguage,
-                onLanguageChange: { newLanguage in
-                    internalLanguage = newLanguage
-                    // Sync to external binding if provided
-                    externalLanguage?.wrappedValue = newLanguage
+    @ViewBuilder
+    private var mainEditorView: some View {
+        KeystoneTextView(
+            text: $text,
+            language: internalLanguage,
+            configuration: configuration,
+            cursorPosition: cursorPosition,
+            scrollOffset: $scrollOffset,
+            matchingBracket: $matchingBracket,
+            scrollToCursor: scrollToCursor,
+            searchMatches: findReplaceManager.matches,
+            currentMatchIndex: findReplaceManager.currentMatchIndex,
+            undoController: undoController,
+            onParsingTimeout: {
+                if internalLanguage != .plainText {
+                    internalLanguage = .plainText
+                    externalLanguage?.wrappedValue = .plainText
+                    onAutoLanguageChange?(.plainText, "Content is too large for syntax highlighting. Switched to Plain Text.")
                 }
+            }
+        )
+        .focused($isEditorFocused)
+    }
+
+    @ViewBuilder
+    private var symbolKeyboardView: some View {
+        #if os(iOS)
+        if configuration.showSymbolKeyboard {
+            SymbolKeyboard(
+                indentString: configuration.indentation.indentString,
+                onSymbol: insertSymbol
             )
         }
-        .clipped() // Prevent content from extending beyond bounds
+        #endif
+    }
+
+    @ViewBuilder
+    private var statusBarView: some View {
+        EditorStatusBar(
+            cursorPosition: cursorPosition.wrappedValue,
+            lineCount: lineCount,
+            configuration: configuration,
+            language: internalLanguage,
+            onLanguageChange: { newLanguage in
+                internalLanguage = newLanguage
+                externalLanguage?.wrappedValue = newLanguage
+            }
+        )
+    }
+
+    private var editorSettingsSheet: some View {
+        EditorSettingsView(
+            configuration: configuration,
+            isPresented: $showSettings,
+            onConvertLineEndings: { newEnding in
+                text = LineEnding.convert(text, to: newEnding)
+                onConvertLineEndings?(newEnding)
+            },
+            onConvertIndentation: { newIndentation in
+                text = IndentationSettings.convert(text, to: newIndentation)
+                onConvertIndentation?(newIndentation)
+            }
+        )
+    }
+
+    @ViewBuilder
+    private var editorContent: some View {
+        VStack(spacing: 0) {
+            editorToolbar
+            findReplaceBarView
+            mainEditorView
+            symbolKeyboardView
+            statusBarView
+        }
+        .clipped()
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(configuration.theme.background)
         .onChange(of: externalLanguage?.wrappedValue) { _, newValue in
-            // Sync from external binding if it changes
             if let newValue = newValue, newValue != internalLanguage {
                 internalLanguage = newValue
             }
         }
         .onChange(of: text) { _, newValue in
             updateLineCount(from: newValue)
-            // Only search when find panel is visible (avoid expensive operation on every keystroke)
             if findReplaceManager.isVisible && !findReplaceManager.searchQuery.isEmpty {
                 findReplaceManager.search(in: newValue)
             }
-            // Update bracket matching when text changes (cursor might be at a bracket)
             updateMatchingBracket()
             onTextChange?(newValue)
         }
         .onChange(of: cursorPosition.wrappedValue) { _, newPosition in
             onCursorChange?(newPosition)
-            // Update bracket matching when cursor moves
             updateMatchingBracket()
         }
-        .onChange(of: matchingBracket) { _, _ in
-            // Force view update when bracket match changes
-            // This ensures highlights are applied immediately
-        }
+        .onChange(of: matchingBracket) { _, _ in }
         .onChange(of: scrollOffset) { _, newOffset in
             onScrollChange?(newOffset)
         }
         .onAppear {
             updateLineCount(from: text)
-
-            // Set up callback to refresh search on undo/redo
             undoController.onUndoRedo = { [weak findReplaceManager] in
                 guard let manager = findReplaceManager, manager.isVisible else { return }
                 Task { @MainActor in
@@ -350,45 +370,36 @@ public struct KeystoneEditor: View {
                 }
             }
         }
-        .alert("Go to Line", isPresented: showGoToLine) {
-            TextField("Line or Line:Column (e.g., 42 or 42:10)", text: $goToLineText)
-                #if os(iOS)
-                .keyboardType(.numbersAndPunctuation)
-                #endif
-            Button("Cancel", role: .cancel) { }
-            Button("Go") {
-                parseAndGoToLine(goToLineText)
-            }
-        } message: {
-            Text("Enter line number, or line:column")
-        }
-        .sheet(isPresented: $showSettings) {
-            EditorSettingsView(
-                configuration: configuration,
-                isPresented: $showSettings,
-                onConvertLineEndings: { newEnding in
-                    // Convert the text using Keystone's built-in conversion
-                    text = LineEnding.convert(text, to: newEnding)
-                    // Call external callback if provided (for app-specific handling like marking unsaved)
-                    onConvertLineEndings?(newEnding)
-                },
-                onConvertIndentation: { newIndentation in
-                    // Convert the text using Keystone's built-in conversion
-                    text = IndentationSettings.convert(text, to: newIndentation)
-                    // Call external callback if provided (for app-specific handling like marking unsaved)
-                    onConvertIndentation?(newIndentation)
+    }
+
+    // MARK: - Body
+
+    public var body: some View {
+        editorContent
+            .alert("Go to Line", isPresented: showGoToLine) {
+                TextField("Line or Line:Column (e.g., 42 or 42:10)", text: $goToLineText)
+                    #if os(iOS)
+                    .keyboardType(.numbersAndPunctuation)
+                    #endif
+                Button("Cancel", role: .cancel) { }
+                Button("Go") {
+                    parseAndGoToLine(goToLineText)
                 }
-            )
-        }
-        #if os(macOS)
-        .onKeyPress(.escape) {
-            if findReplaceManager.isVisible {
-                findReplaceManager.hide()
-                return .handled
+            } message: {
+                Text("Enter line number, or line:column")
             }
-            return .ignored
-        }
-        #endif
+            .sheet(isPresented: $showSettings) {
+                editorSettingsSheet
+            }
+            #if os(macOS)
+            .onKeyPress(.escape) {
+                if findReplaceManager.isVisible {
+                    findReplaceManager.hide()
+                    return .handled
+                }
+                return .ignored
+            }
+            #endif
     }
 
     // MARK: - Public Methods
