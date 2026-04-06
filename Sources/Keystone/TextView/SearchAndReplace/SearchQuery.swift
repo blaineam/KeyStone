@@ -70,9 +70,22 @@ public struct SearchQuery: Hashable, Equatable {
     }
 
     func matches(in string: NSString) -> [NSTextCheckingResult] {
+        let pattern = annotatedText
+        if matchMethod == .regularExpression && pattern.count > 1000 {
+            return []
+        }
         do {
-            let regex = try NSRegularExpression(pattern: annotatedText, options: regularExpressionOptions)
-            return regex.matches(in: string as String, range: range ?? NSRange(location: 0, length: string.length))
+            let regex = try NSRegularExpression(pattern: pattern, options: regularExpressionOptions)
+            let searchRange = range ?? NSRange(location: 0, length: string.length)
+            var results: [NSTextCheckingResult] = []
+            regex.enumerateMatches(in: string as String, options: [], range: searchRange) { match, _, stop in
+                guard let match = match else { return }
+                results.append(match)
+                if results.count >= 10_000 {
+                    stop.pointee = true
+                }
+            }
+            return results
         } catch {
             #if DEBUG
             print(error)

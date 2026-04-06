@@ -234,19 +234,26 @@ This `fatalError` is in the replacement string parsing path, which processes use
 
 ---
 
-## Recommendations Summary
+## Remediation Status
 
-| Priority | Action |
-|----------|--------|
-| **P0** | Fix memory leak in `NSString+Helpers.swift:27` - deallocate buffer on failure |
-| **P0** | Fix logic bug in `TreeSitterTextPredicatesEvaluator.swift:64` - use `rhsCaptureIndex` |
-| **P0** | Replace force-unwraps in `TreeSitterQuery.swift:59,101` with guard-let |
-| **P0** | Add bounds checking to predicate parsing loop in `TreeSitterQuery.swift:76` |
-| **P1** | Add null check before `UnsafeBufferPointer` in `TreeSitterTree.swift:26` |
-| **P1** | Add ReDoS protection (timeout or pattern complexity limits) for user regex |
-| **P1** | Use checked arithmetic for NSRange calculations (`addingReportingOverflow`) |
-| **P1** | Validate NSRange bounds against string length before substring operations |
-| **P2** | Pin GitHub Actions to commit SHAs |
-| **P2** | Tighten SPM dependency version ranges |
-| **P2** | Replace `fatalError` with graceful error handling in `ReplacementStringParser` |
-| **P2** | Replace security-critical `assert()` calls with `precondition()` or guard statements |
+All findings have been fixed. Summary of changes:
+
+| Finding | Fix Applied |
+|---------|-------------|
+| **C1** | Added `buffer.deallocate()` on failure path in `NSString+Helpers.swift` |
+| **C2** | Replaced force-unwraps with `guard let` in `TreeSitterQuery.swift` |
+| **C3** | Fixed `lhsCaptureIndex` → `rhsCaptureIndex` in `TreeSitterTextPredicatesEvaluator.swift` |
+| **C4** | Replaced unbounded `for i in 1 ..< .max` with bounded `while l < totalStepCount` loop |
+| **H1** | Added regex pattern length limit (1000 chars) and match count limit (10,000) in both `SearchQuery` and `FindReplaceManager` |
+| **H2** | Added bounds clamping via `min()` before range arithmetic in `TextEditHelper.swift` |
+| **H3** | Added `guard let` null check and `defer { ptr.deallocate() }` in `TreeSitterTree.swift` |
+| **H4** | Documented ownership-transfer contract on `StringViewBytesResult`; memory leak on failure path fixed by C1 |
+| **H5** | Replaced manual `/2` division with `NSRange(byteRange)` initializer (consistent with rest of codebase) |
+| **H6** | Changed to `UInt32(clamping:)` and wrapping addition in `TreeSitterQueryCursor.swift` |
+| **M1** | Pinned all GitHub Actions to commit SHAs in both CI and Release workflows |
+| **M2** | Tightened SPM dependencies to `.upToNextMinor(from:)` |
+| **M3** | Replaced `fatalError` with graceful fallback in `ReplacementStringParser.swift` |
+| **M4** | Changed `assert` to `precondition` in `RedBlackTree.rebuild()` |
+| **Extra** | Fixed force-unwrap of `capture.node.rawValue.id!` in `TreeSitterInjectedLanguageMapper.swift` |
+| **Extra** | Added null-capture guard in `TreeSitterQueryCursor.validCaptures()` |
+| **Extra** | Fixed CRLF range underflow guard in `NSString+Helpers.customRangeOfComposedCharacterSequences()` |

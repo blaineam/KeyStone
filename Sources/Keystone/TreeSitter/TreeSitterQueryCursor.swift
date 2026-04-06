@@ -17,8 +17,9 @@ final class TreeSitterQueryCursor {
     }
 
     func setQueryRange(_ range: ByteRange) {
-        let start = UInt32(range.location.value)
-        let end = UInt32((range.location + range.length).value)
+        let start = UInt32(clamping: range.location.value)
+        let endValue = range.location.value &+ range.length.value
+        let end = UInt32(clamping: max(endValue, range.location.value))
         ts_query_cursor_set_byte_range(pointer, start, end)
     }
 
@@ -37,7 +38,8 @@ final class TreeSitterQueryCursor {
         var result: [TreeSitterCapture] = []
         while ts_query_cursor_next_match(pointer, &match) {
             let captureCount = Int(match.capture_count)
-            let captureBuffer = UnsafeBufferPointer<TSQueryCapture>(start: match.captures, count: captureCount)
+            guard captureCount > 0, let rawCaptures = match.captures else { continue }
+            let captureBuffer = UnsafeBufferPointer<TSQueryCapture>(start: rawCaptures, count: captureCount)
             let captures: [TreeSitterCapture] = captureBuffer.compactMap { capture in
                 let node = TreeSitterNode(node: capture.node)
                 let captureName = query.captureName(forId: capture.index)

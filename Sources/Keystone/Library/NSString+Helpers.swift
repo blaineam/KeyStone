@@ -24,6 +24,7 @@ extension NSString {
         if didGetBytes {
             return UnsafePointer<Int8>(buffer)
         } else {
+            buffer.deallocate()
             return nil
         }
     }
@@ -37,8 +38,11 @@ extension NSString {
     /// A wrapper around `rangeOfComposedCharacterSequences(for:)` that considers CRLF line endings as composed character sequences.
     func customRangeOfComposedCharacterSequences(for range: NSRange) -> NSRange {
         let defaultRange = rangeOfComposedCharacterSequences(for: range)
+        guard defaultRange.location > 0 else {
+            return defaultRange
+        }
         let candidateCRLFRange = NSRange(location: defaultRange.location - 1, length: 2)
-        if candidateCRLFRange.location >= 0 && candidateCRLFRange.upperBound <= length && isCRLFLineEnding(in: candidateCRLFRange) {
+        if candidateCRLFRange.upperBound <= length && isCRLFLineEnding(in: candidateCRLFRange) {
             return NSRange(location: defaultRange.location - 1, length: defaultRange.length + 1)
         } else {
             return defaultRange

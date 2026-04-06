@@ -58,8 +58,10 @@ private extension ReplacementStringParser {
             state = .default
             take(character, at: index)
         } else {
-            // swiftlint:disable:next line_length
-            fatalError("We thought we were collecting a placeholder but the current character isn't valid in a placeholder and the collected string isn't a valid placeholder value either. Since we're peeking at the next character when starting a placeholder we should never be able to end up in this case.")
+            // Collected string wasn't a valid placeholder - treat as literal text.
+            appendCollectedModifiersToCollectedString()
+            collectedString += String(character)
+            state = .default
         }
     }
 
