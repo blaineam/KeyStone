@@ -36,7 +36,11 @@ private func read(payload: UnsafeMutableRawPointer?,
                   byteIndex: UInt32,
                   position: TSPoint,
                   bytesRead: UnsafeMutablePointer<UInt32>?) -> UnsafePointer<Int8>? {
-    let input: TreeSitterTextInput = Unmanaged.fromOpaque(payload!).takeUnretainedValue()
+    guard let payload = payload else {
+        bytesRead?.pointee = 0
+        return nil
+    }
+    let input: TreeSitterTextInput = Unmanaged.fromOpaque(payload).takeUnretainedValue()
     if let result = input.callback(ByteCount(byteIndex), TreeSitterTextPoint(position)) {
         bytesRead?.pointee = result.length
         input.bytePointers.append(result.bytes)
