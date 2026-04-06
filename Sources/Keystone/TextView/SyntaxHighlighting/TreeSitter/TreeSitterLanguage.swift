@@ -16,13 +16,9 @@ public final class TreeSitterLanguage {
     /// Rules used for indenting text.
     public let indentationScopes: TreeSitterIndentationScopes?
 
-    var internalLanguage: TreeSitterInternalLanguage {
+    var internalLanguage: TreeSitterInternalLanguage? {
         prepare()
-        if let _internalLanguage = _internalLanguage {
-            return _internalLanguage
-        } else {
-            fatalError("Cannot get internal representation of Tree-sitter language")
-        }
+        return _internalLanguage
     }
 
     private var isPrepared = false

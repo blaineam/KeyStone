@@ -12,16 +12,25 @@ enum TreeSitterPredicateMapper {
         for predicate in predicates {
             switch predicate.name {
             case "set!":
-                let setProperties = self.properties(fromSetSteps: predicate.steps)
-                properties[setProperties.name] = setProperties.value
+                if let setProperties = self.properties(fromSetSteps: predicate.steps) {
+                    properties[setProperties.name] = setProperties.value
+                }
             case "eq?":
-                textPredicates.append(self.textPredicate(fromEqSteps: predicate.steps, isPositive: true))
+                if let pred = self.textPredicate(fromEqSteps: predicate.steps, isPositive: true) {
+                    textPredicates.append(pred)
+                }
             case "not-eq?":
-                textPredicates.append(self.textPredicate(fromEqSteps: predicate.steps, isPositive: false))
+                if let pred = self.textPredicate(fromEqSteps: predicate.steps, isPositive: false) {
+                    textPredicates.append(pred)
+                }
             case "match?":
-                textPredicates.append(self.textPredicate(fromMatchSteps: predicate.steps, isPositive: true))
+                if let pred = self.textPredicate(fromMatchSteps: predicate.steps, isPositive: true) {
+                    textPredicates.append(pred)
+                }
             case "not-match?":
-                textPredicates.append(textPredicate(fromMatchSteps: predicate.steps, isPositive: false))
+                if let pred = textPredicate(fromMatchSteps: predicate.steps, isPositive: false) {
+                    textPredicates.append(pred)
+                }
             default:
                 let parameters = TreeSitterTextPredicate.UnsupportedParameters(name: predicate.name)
                 textPredicates.append(.unsupported(parameters))
@@ -32,21 +41,21 @@ enum TreeSitterPredicateMapper {
 }
 
 private extension TreeSitterPredicateMapper {
-    private static func properties(fromSetSteps steps: [TreeSitterPredicate.Step]) -> (name: String, value: String) {
+    private static func properties(fromSetSteps steps: [TreeSitterPredicate.Step]) -> (name: String, value: String)? {
         guard steps.count == 2 else {
-            fatalError("Set predicate must contain exactly two steps.")
+            return nil
         }
         switch (steps[0], steps[1]) {
         case let (.string(name), .string(value)):
             return (name, value)
         default:
-            fatalError("Set predicate must contain exactly two string steps.")
+            return nil
         }
     }
 
-    private static func textPredicate(fromEqSteps steps: [TreeSitterPredicate.Step], isPositive: Bool) -> TreeSitterTextPredicate {
+    private static func textPredicate(fromEqSteps steps: [TreeSitterPredicate.Step], isPositive: Bool) -> TreeSitterTextPredicate? {
         guard steps.count == 2 else {
-            fatalError("eq? and not-eq? predicates must contain exactly two teps.")
+            return nil
         }
         switch (steps[0], steps[1]) {
         case let (.capture(captureIndex), .string(value)):
@@ -54,19 +63,19 @@ private extension TreeSitterPredicateMapper {
         case let (.capture(lhsCaptureIndex), .capture(rhsCaptureIndex)):
             return .captureEqualsCapture(.init(lhsCaptureIndex: lhsCaptureIndex, rhsCaptureIndex: rhsCaptureIndex, isPositive: isPositive))
         default:
-            fatalError("Predicate contains invalid combination of steps.")
+            return nil
         }
     }
 
-    private static func textPredicate(fromMatchSteps steps: [TreeSitterPredicate.Step], isPositive: Bool) -> TreeSitterTextPredicate {
+    private static func textPredicate(fromMatchSteps steps: [TreeSitterPredicate.Step], isPositive: Bool) -> TreeSitterTextPredicate? {
         guard steps.count == 2 else {
-            fatalError("match? and not-match? predicates must contain exactly stwo teps.")
+            return nil
         }
         switch (steps[0], steps[1]) {
         case let (.capture(captureIndex), .string(value)):
             return .captureMatchesPattern(.init(captureIndex: captureIndex, pattern: value, isPositive: isPositive))
         default:
-            fatalError("Predicate contains invalid combination of steps.")
+            return nil
         }
     }
 }
