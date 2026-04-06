@@ -257,3 +257,7 @@ All findings have been fixed. Summary of changes:
 | **Extra** | Fixed force-unwrap of `capture.node.rawValue.id!` in `TreeSitterInjectedLanguageMapper.swift` |
 | **Extra** | Added null-capture guard in `TreeSitterQueryCursor.validCaptures()` |
 | **Extra** | Fixed CRLF range underflow guard in `NSString+Helpers.customRangeOfComposedCharacterSequences()` |
+| **Extra** | Replaced 6 `fatalError` calls in `TreeSitterPredicateMapper.swift` with optional returns |
+| **Extra** | Changed `TreeSitterLanguage.internalLanguage` from `fatalError` to optional; callers fall back to PlainText |
+| **Extra** | Fixed force-unwrap in `TreeSitterLanguageLayer.childLanguageHierarchy()` debug method |
+| **Extra** | Added `guard let` for null payload in `TreeSitterTextInput.swift` C callback |
