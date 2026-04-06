@@ -1,7 +1,9 @@
 import Foundation
 
+/// Holds a pointer to bytes extracted from a string view.
+/// Ownership of the bytes pointer is transferred to the caller.
+/// The caller (typically `TreeSitterTextInput`) is responsible for deallocation.
 final class StringViewBytesResult {
-    // The bytes are not deallocated by this type.
     let bytes: UnsafePointer<Int8>
     let length: ByteCount
 

@@ -34,7 +34,7 @@ final class TreeSitterInjectedLanguageMapper {
                 }
             } else {
                 let languageName = languageNamePendingContent ?? capture.properties[CaptureProperty.injectionLanguage] ?? capture.name
-                let id = capture.node.rawValue.id!
+                guard let id = capture.node.rawValue.id else { continue }
                 let textRange = capture.node.textRange
                 let injectedLanguage = TreeSitterInjectedLanguage(id: id, languageName: languageName, textRange: textRange)
                 result.append(injectedLanguage)

@@ -151,9 +151,10 @@ private extension TreeSitterLanguageLayer {
     private func childLanguageLayer(withID id: UnsafeRawPointer, forLanguageNamed languageName: String) -> TreeSitterLanguageLayer? {
         if let childLanguageLayer = childLanguageLayerStore.layer(forKey: id) {
             return childLanguageLayer
-        } else if let language = languageProvider?.treeSitterLanguage(named: languageName) {
+        } else if let language = languageProvider?.treeSitterLanguage(named: languageName),
+                  let internalLanguage = language.internalLanguage {
             let childLanguageLayer = TreeSitterLanguageLayer(
-                language: language.internalLanguage,
+                language: internalLanguage,
                 languageProvider: languageProvider,
                 parser: parser,
                 stringView: stringView,
@@ -234,7 +235,7 @@ extension TreeSitterLanguageLayer {
         let languageIDs = childLanguageLayerStore.allIDs
         for (idx, languageID) in languageIDs.enumerated() {
             let indentStr = String(repeating: "  ", count: indent)
-            let childLanguageLayer = childLanguageLayerStore.layer(forKey: languageID)!
+            guard let childLanguageLayer = childLanguageLayerStore.layer(forKey: languageID) else { continue }
             if let rootNode = childLanguageLayer.tree?.rootNode {
                 str += indentStr + "\(languageID) [\(rootNode.byteRange.lowerBound) - \(rootNode.byteRange.upperBound)]"
             } else {

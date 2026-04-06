@@ -23,8 +23,11 @@ public final class TreeSitterLanguageMode {
 
 extension TreeSitterLanguageMode: LanguageMode {
     func makeInternalLanguageMode(stringView: StringView, lineManager: LineManager) -> InternalLanguageMode {
-        TreeSitterInternalLanguageMode(
-            language: language.internalLanguage,
+        guard let internalLanguage = language.internalLanguage else {
+            return PlainTextInternalLanguageMode()
+        }
+        return TreeSitterInternalLanguageMode(
+            language: internalLanguage,
             languageProvider: languageProvider,
             stringView: stringView,
             lineManager: lineManager)

@@ -61,7 +61,7 @@ private extension TreeSitterTextPredicatesEvaluator {
         guard let lhsCapture = match.capture(forIndex: parameters.lhsCaptureIndex) else {
             return false
         }
-        guard let rhsCapture = match.capture(forIndex: parameters.lhsCaptureIndex) else {
+        guard let rhsCapture = match.capture(forIndex: parameters.rhsCaptureIndex) else {
             return false
         }
         let lhsByteRange = lhsCapture.byteRange
@@ -79,7 +79,7 @@ private extension TreeSitterTextPredicatesEvaluator {
             return false
         }
         let byteRange = capture.byteRange
-        let range = NSRange(location: byteRange.location.value / 2, length: byteRange.length.value / 2)
+        let range = NSRange(byteRange)
         guard let contentText = stringView.substring(in: range) else {
             return false
         }

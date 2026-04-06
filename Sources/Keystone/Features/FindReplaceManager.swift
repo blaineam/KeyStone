@@ -223,14 +223,22 @@ public class FindReplaceManager: ObservableObject {
             regexOptions.insert(.caseInsensitive)
         }
 
+        if options.useRegex && pattern.count > 1000 {
+            return []
+        }
+
         guard let regex = try? NSRegularExpression(pattern: pattern, options: regexOptions) else {
             return []
         }
 
         let fullRange = NSRange(location: 0, length: textLength)
 
-        regex.enumerateMatches(in: text, options: [], range: fullRange) { match, _, _ in
+        regex.enumerateMatches(in: text, options: [], range: fullRange) { match, _, stop in
             guard let match = match else { return }
+            if foundMatches.count >= 10_000 {
+                stop.pointee = true
+                return
+            }
 
             // Calculate line number and column via binary search - O(log n) per match
             let (lineNum, column) = lineNumber(forOffset: match.range.location)

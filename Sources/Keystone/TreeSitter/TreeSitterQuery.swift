@@ -54,9 +54,11 @@ final class TreeSitterQuery {
 
     func captureName(forId id: UInt32) -> String {
         let lengthPointer = UnsafeMutablePointer<UInt32>.allocate(capacity: 1)
-        let cString = ts_query_capture_name_for_id(pointer, id, lengthPointer)
-        lengthPointer.deallocate()
-        return String(cString: cString!)
+        defer { lengthPointer.deallocate() }
+        guard let cString = ts_query_capture_name_for_id(pointer, id, lengthPointer) else {
+            return ""
+        }
+        return String(cString: cString)
     }
 
     func predicates(forPatternIndex index: UInt32) -> [TreeSitterPredicate] {
@@ -67,14 +69,15 @@ final class TreeSitterQuery {
         guard let rawSteps = ts_query_predicates_for_pattern(pointer, index, lengthPointer) else {
             return []
         }
+        let totalStepCount = Int(lengthPointer.pointee)
         var predicates: [TreeSitterPredicate] = []
         var l = 0
-        while l < lengthPointer.pointee {
+        while l < totalStepCount {
             var steps: [TreeSitterPredicate.Step] = []
-            let name = stringValue(forId: rawSteps.pointee.value_id)
+            let name = stringValue(forId: (rawSteps + l).pointee.value_id)
             l += 1
-            for i in 1 ..< .max {
-                let step = (rawSteps + UnsafePointer<TSQueryPredicateStep>.Stride(i)).pointee
+            while l < totalStepCount {
+                let step = (rawSteps + l).pointee
                 l += 1
                 if step.type == TSQueryPredicateStepTypeCapture {
                     steps.append(.capture(step.value_id))
@@ -97,7 +100,9 @@ private extension TreeSitterQuery {
         defer {
             lengthPointer.deallocate()
         }
-        let cString = ts_query_string_value_for_id(pointer, id, lengthPointer)
-        return String(cString: cString!)
+        guard let cString = ts_query_string_value_for_id(pointer, id, lengthPointer) else {
+            return ""
+        }
+        return String(cString: cString)
     }
 }
