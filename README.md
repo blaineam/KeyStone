@@ -434,6 +434,16 @@ Keystone was heavily inspired by the excellent [Runestone](https://github.com/si
 
 ---
 
+## 🔒 Security
+
+- Comprehensive security audit completed April 2026 covering all Swift sources, CI/CD workflows, and package dependencies
+- All critical and high severity findings have been remediated
+- TreeSitter C interop predicates now use graceful error handling (`guard let`) instead of `fatalError` and force-unwraps
+- Regex patterns in Find & Replace have configurable length and match count limits for ReDoS prevention
+- GitHub Actions pinned to commit SHAs and SPM dependencies tightened to `.upToNextMinor`
+
+---
+
 ## 📄 License
 
 Keystone is available under the MIT License. See the [LICENSE](LICENSE) file for more information.
