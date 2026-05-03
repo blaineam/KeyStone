@@ -340,6 +340,16 @@ public struct KeystoneTextView: UIViewRepresentable {
         private var foldingAnalysisWorkItem: DispatchWorkItem?
         /// Debounce timer for cursor position updates to prevent rapid-fire binding updates
         private var cursorUpdateWorkItem: DispatchWorkItem?
+        /// Debounce timer for the SwiftUI `text` binding write. For huge files
+        /// (HTML dumps, JSON payloads, log captures) writing the whole String to
+        /// the binding on every keystroke beachballs because every observer
+        /// (line count, find/replace, host app) re-runs O(N) work. We coalesce
+        /// the write so external listeners only see a fresh snapshot once
+        /// typing pauses.
+        private var parentTextSyncWorkItem: DispatchWorkItem?
+        /// utf16 length above which we debounce the binding write. Below this
+        /// the immediate write keeps incremental UI (e.g. diff banner) snappy.
+        private static let largeTextSyncThreshold = 1_500_000  // ~1.5 MB
 
         /// Pending text update to apply when safe (keyboard fully dismissed)
         var pendingTextUpdate: (text: String, language: TreeSitterLanguage?, theme: KeystoneRunestoneTheme)?
@@ -495,8 +505,22 @@ public struct KeystoneTextView: UIViewRepresentable {
 
             isUpdatingText = true
             let currentText = textView.text
-            parent.text = currentText
+            // Mark this snapshot as ours so the eventual SwiftUI rebound from
+            // our own write doesn't ping-pong back through updateUIView.
             lastSyncedText = currentText
+
+            if currentText.utf16.count >= Self.largeTextSyncThreshold {
+                // Debounce: only push the binding update once typing pauses.
+                parentTextSyncWorkItem?.cancel()
+                let work = DispatchWorkItem { [weak self] in
+                    guard let self = self else { return }
+                    self.parent.text = currentText
+                }
+                parentTextSyncWorkItem = work
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: work)
+            } else {
+                parent.text = currentText
+            }
             isUpdatingText = false
 
             // Debounced code folding analysis - refreshes 2.5s after last change
@@ -1040,6 +1064,10 @@ public struct KeystoneTextView: NSViewRepresentable {
         let codeFoldingManager = CodeFoldingManager()
         private var foldingAnalysisWorkItem: DispatchWorkItem?
         private var cursorUpdateWorkItem: DispatchWorkItem?
+        /// See iOS Coordinator above — debounces the binding write for huge
+        /// files so per-keystroke observers don't re-scan the whole buffer.
+        private var parentTextSyncWorkItem: DispatchWorkItem?
+        private static let largeTextSyncThreshold = 1_500_000  // ~1.5 MB
 
         /// Pending text update to apply when safe
         var pendingTextUpdate: (text: String, language: TreeSitterLanguage?, theme: KeystoneRunestoneThemeMac)?
@@ -1164,8 +1192,19 @@ public struct KeystoneTextView: NSViewRepresentable {
 
             isUpdatingText = true
             let currentText = textView.text
-            parent.text = currentText
             lastSyncedText = currentText
+
+            if currentText.utf16.count >= Self.largeTextSyncThreshold {
+                parentTextSyncWorkItem?.cancel()
+                let work = DispatchWorkItem { [weak self] in
+                    guard let self = self else { return }
+                    self.parent.text = currentText
+                }
+                parentTextSyncWorkItem = work
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: work)
+            } else {
+                parent.text = currentText
+            }
             isUpdatingText = false
 
             // Debounced code folding analysis

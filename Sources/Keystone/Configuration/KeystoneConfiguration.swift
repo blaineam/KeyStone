@@ -279,9 +279,23 @@ public final class KeystoneConfiguration: ObservableObject {
     // MARK: - Methods
 
     /// Detects and applies settings from the given file content.
+    /// For large files we sniff only a leading sample — line-ending and
+    /// indentation conventions don't change halfway through a file, and
+    /// scanning a multi-megabyte string char-by-char on the main thread
+    /// (the previous behavior) blocks the editor for hundreds of ms on
+    /// every load.
     public func detectSettings(from text: String) {
-        lineEnding = LineEnding.detect(in: text)
-        indentation = IndentationSettings.detect(from: text)
+        let sampleByteLimit = 256 * 1024  // 256 KB is plenty to detect both
+        let sample: String
+        if text.utf8.count > sampleByteLimit {
+            // Take a UTF-8-bounded prefix without walking the whole string.
+            let prefix = text.utf8.prefix(sampleByteLimit)
+            sample = String(decoding: prefix, as: UTF8.self)
+        } else {
+            sample = text
+        }
+        lineEnding = LineEnding.detect(in: sample)
+        indentation = IndentationSettings.detect(from: sample)
     }
 
     /// Creates a copy of this configuration.
