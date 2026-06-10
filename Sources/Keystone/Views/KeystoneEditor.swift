@@ -709,11 +709,14 @@ public struct KeystoneEditor: View {
     }
 
     private func navigateToMatch(_ match: SearchMatch) {
+        // The match may be stale if the document was edited after the search —
+        // resolve against the current text rather than trusting its indices.
+        guard let range = match.resolvedRange(in: text) else { return }
         // Request scroll to cursor when navigating to a search match
         scrollToCursor.wrappedValue = true
         // Navigate to the match location
         cursorPosition.wrappedValue = CursorPosition.from(
-            offset: text.distance(from: text.startIndex, to: match.range.lowerBound),
+            offset: text.distance(from: text.startIndex, to: range.lowerBound),
             in: text,
             selectionLength: match.matchedText.count
         )
@@ -976,8 +979,14 @@ struct KeystoneFindReplaceBar: View {
     private func performReplaceCurrent() {
         guard let match = manager.currentMatch else { return }
 
-        // Calculate NSRange from Swift Range
-        let nsRange = NSRange(match.range, in: text)
+        // The match is only valid for the text that was searched. If the
+        // document changed since (edit while the find bar is open), refresh
+        // the search instead of replacing whatever now sits at stale offsets.
+        guard let swiftRange = match.resolvedRange(in: text) else {
+            manager.search(in: text)
+            return
+        }
+        let nsRange = NSRange(swiftRange, in: text)
         let replaceText = manager.replaceText
 
         // Try to use undoController for proper undo support

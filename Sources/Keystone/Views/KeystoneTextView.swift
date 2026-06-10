@@ -453,6 +453,7 @@ public struct KeystoneTextView: UIViewRepresentable {
 
             // Build new highlights array
             var newHighlights: [HighlightedRange] = []
+            let text = textView.text
 
             for (index, match) in searchMatches.enumerated() {
                 let isCurrentMatch = index == currentMatchIndex
@@ -465,9 +466,10 @@ public struct KeystoneTextView: UIViewRepresentable {
                     backgroundColor = UIColor.systemYellow.withAlphaComponent(0.4)
                 }
 
-                // Convert Range<String.Index> to NSRange
-                let text = textView.text
-                let nsRange = NSRange(match.range, in: text)
+                // Matches can be stale — the document may have been edited
+                // (e.g. lines deleted) since the search ran. Skip any whose
+                // offsets no longer fit instead of trapping on conversion.
+                guard let nsRange = match.resolvedNSRange(in: text) else { continue }
 
                 let highlightedRange = HighlightedRange(
                     range: nsRange,
@@ -1144,6 +1146,7 @@ public struct KeystoneTextView: NSViewRepresentable {
             }
 
             var newHighlights: [HighlightedRange] = []
+            let text = textView.text
 
             for (index, match) in searchMatches.enumerated() {
                 let isCurrentMatch = index == currentMatchIndex
@@ -1155,8 +1158,10 @@ public struct KeystoneTextView: NSViewRepresentable {
                     backgroundColor = NSColor.systemYellow.withAlphaComponent(0.4)
                 }
 
-                let text = textView.text
-                let nsRange = NSRange(match.range, in: text)
+                // Matches can be stale — the document may have been edited
+                // (e.g. lines deleted) since the search ran. Skip any whose
+                // offsets no longer fit instead of trapping on conversion.
+                guard let nsRange = match.resolvedNSRange(in: text) else { continue }
 
                 let highlightedRange = HighlightedRange(
                     range: nsRange,

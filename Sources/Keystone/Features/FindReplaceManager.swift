@@ -13,6 +13,11 @@ public struct SearchMatch: Identifiable, Equatable, Sendable {
     public let id: UUID
     /// The range of the match in the text.
     public let range: Range<String.Index>
+    /// The UTF-16 range captured when the search ran. `range` holds
+    /// `String.Index` values that are only valid for the exact string that was
+    /// searched — applying them to a text that has since been edited traps.
+    /// Consumers must go through `resolvedRange(in:)`/`resolvedNSRange(in:)`.
+    public let nsRange: NSRange
     /// The line number where the match occurs (1-based).
     public let lineNumber: Int
     /// The column where the match starts (1-based).
@@ -23,15 +28,42 @@ public struct SearchMatch: Identifiable, Equatable, Sendable {
     public init(
         id: UUID = UUID(),
         range: Range<String.Index>,
+        nsRange: NSRange,
         lineNumber: Int,
         column: Int,
         matchedText: String
     ) {
         self.id = id
         self.range = range
+        self.nsRange = nsRange
         self.lineNumber = lineNumber
         self.column = column
         self.matchedText = matchedText
+    }
+
+    /// Re-validates the match against the text the caller holds NOW. Returns
+    /// nil when the document changed since the search and the offsets no
+    /// longer fit (e.g. lines deleted while the find bar is open).
+    public func resolvedNSRange(in text: String) -> NSRange? {
+        guard nsRange.location != NSNotFound,
+              nsRange.location >= 0,
+              nsRange.length >= 0,
+              nsRange.location + nsRange.length <= text.utf16.count else {
+            return nil
+        }
+        return nsRange
+    }
+
+    /// Stricter variant for mutations: also requires that the text at the
+    /// offsets still equals the originally matched text, so a replace can
+    /// never clobber content that shifted under a stale match.
+    public func resolvedRange(in text: String) -> Range<String.Index>? {
+        guard let validated = resolvedNSRange(in: text),
+              let range = Range(validated, in: text),
+              text[range] == matchedText else {
+            return nil
+        }
+        return range
     }
 }
 
@@ -247,6 +279,7 @@ public class FindReplaceManager: ObservableObject {
                 let matchedText = String(text[swiftRange])
                 foundMatches.append(SearchMatch(
                     range: swiftRange,
+                    nsRange: match.range,
                     lineNumber: lineNum,
                     column: column,
                     matchedText: matchedText
@@ -283,10 +316,14 @@ public class FindReplaceManager: ObservableObject {
     /// - Parameter text: The full text being edited.
     /// - Returns: The text with the replacement made, or nil if no current match.
     public func replaceCurrent(in text: String) -> String? {
-        guard let match = currentMatch else { return nil }
+        // resolvedRange returns nil when the document was edited after the
+        // search (stale offsets, or different text at the offsets) — replacing
+        // through the stale range would trap or clobber the wrong text.
+        guard let match = currentMatch,
+              let range = match.resolvedRange(in: text) else { return nil }
 
         var newText = text
-        newText.replaceSubrange(match.range, with: replaceText)
+        newText.replaceSubrange(range, with: replaceText)
 
         // Re-search to update matches
         search(in: newText)
@@ -300,18 +337,22 @@ public class FindReplaceManager: ObservableObject {
     public func replaceAll(in text: String) -> String {
         guard !matches.isEmpty else { return text }
 
-        var newText = text
-
-        // Replace in reverse order to preserve indices
+        // Replace in reverse order so earlier matches' UTF-16 offsets stay
+        // valid as later ones are rewritten. Matches whose offsets no longer
+        // fit the text, or whose content shifted since the search, are
+        // skipped rather than clobbering unrelated text.
+        let mutable = NSMutableString(string: text)
         for match in matches.reversed() {
-            newText.replaceSubrange(match.range, with: replaceText)
+            guard let nsRange = match.resolvedNSRange(in: text),
+                  mutable.substring(with: nsRange) == match.matchedText else { continue }
+            mutable.replaceCharacters(in: nsRange, with: replaceText)
         }
 
         // Clear matches after replace all
         matches = []
         currentMatchIndex = 0
 
-        return newText
+        return mutable as String
     }
 
     /// Shows the find bar.

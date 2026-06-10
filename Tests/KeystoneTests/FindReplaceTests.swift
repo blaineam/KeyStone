@@ -390,4 +390,79 @@ final class FindReplaceTests: XCTestCase {
 
         XCTAssertNil(manager.currentMatch)
     }
+
+    // MARK: - Stale Match Tests
+    //
+    // Matches hold String.Index values that are only valid for the text that
+    // was searched. Editing the document (e.g. selecting lines and hitting
+    // backspace) without re-searching used to trap when those indices were
+    // applied to the new, shorter text.
+
+    func testResolvedNSRangeNilAfterTextShrinks() async {
+        let manager = FindReplaceManager()
+        manager.searchQuery = "needle"
+
+        let text = "line one\nline two\nneedle at the end"
+        manager.search(in: text)
+        await waitForSearch(manager)
+        XCTAssertEqual(manager.matches.count, 1)
+        let match = manager.matches[0]
+
+        // Simulate select-lines + backspace: the document shrinks below the
+        // match's offsets. Resolution must fail instead of trapping.
+        let editedText = "line one"
+        XCTAssertNil(match.resolvedNSRange(in: editedText))
+        XCTAssertNil(match.resolvedRange(in: editedText))
+
+        // Against the original text the match still resolves.
+        XCTAssertNotNil(match.resolvedNSRange(in: text))
+        XCTAssertEqual(match.resolvedRange(in: text).map { String(text[$0]) }, "needle")
+    }
+
+    func testResolvedRangeNilWhenContentShifted() async {
+        let manager = FindReplaceManager()
+        manager.searchQuery = "needle"
+
+        let text = "padding padding needle"
+        manager.search(in: text)
+        await waitForSearch(manager)
+        XCTAssertEqual(manager.matches.count, 1)
+        let match = manager.matches[0]
+
+        // Same length, but the text at the match's offsets changed — the
+        // mutation-grade resolver must refuse it.
+        let editedText = "padding padding XXXXXX"
+        XCTAssertNil(match.resolvedRange(in: editedText))
+    }
+
+    func testReplaceCurrentReturnsNilOnStaleMatch() async {
+        let manager = FindReplaceManager()
+        manager.searchQuery = "needle"
+        manager.replaceText = "thread"
+
+        let text = "some long text with a needle inside"
+        manager.search(in: text)
+        await waitForSearch(manager)
+        XCTAssertEqual(manager.matches.count, 1)
+
+        let editedText = "short"
+        XCTAssertNil(manager.replaceCurrent(in: editedText))
+    }
+
+    func testReplaceAllSkipsStaleMatches() async {
+        let manager = FindReplaceManager()
+        manager.searchQuery = "a"
+        manager.replaceText = "X"
+
+        let text = "a b a c a"
+        manager.search(in: text)
+        await waitForSearch(manager)
+        XCTAssertEqual(manager.matches.count, 3)
+
+        // The last match (offset 8) no longer fits; the first two still
+        // resolve and verify, so they are replaced and the stale one skipped.
+        let editedText = "a b a c"
+        let result = manager.replaceAll(in: editedText)
+        XCTAssertEqual(result, "X b X c")
+    }
 }
