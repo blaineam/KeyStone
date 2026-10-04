@@ -85,7 +85,7 @@ public struct SymbolKeyboard: View {
             VStack(spacing: 2) {
                 Image(systemName: "arrow.right.to.line")
                     .font(.system(size: 14))
-                Text("Tab")
+                Text("Tab", bundle: .module)
                     .font(.system(size: 9))
             }
             .frame(minWidth: 44, minHeight: 38)
@@ -118,11 +118,11 @@ enum SymbolCategory: CaseIterable {
 
     var name: String {
         switch self {
-        case .brackets: return "Brackets"
-        case .operators: return "Operators"
-        case .punctuation: return "Punctuation"
-        case .special: return "Special"
-        case .numbers: return "Numbers"
+        case .brackets: return String(localized: "Brackets", bundle: .module)
+        case .operators: return String(localized: "Operators", bundle: .module)
+        case .punctuation: return String(localized: "Punctuation", bundle: .module)
+        case .special: return String(localized: "Special", bundle: .module)
+        case .numbers: return String(localized: "Numbers", bundle: .module)
         }
     }
 

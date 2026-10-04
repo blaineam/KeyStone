@@ -376,17 +376,17 @@ public struct KeystoneEditor: View {
 
     public var body: some View {
         editorContent
-            .alert("Go to Line", isPresented: showGoToLine) {
-                TextField("Line or Line:Column (e.g., 42 or 42:10)", text: $goToLineText)
+            .alert(String(localized: "Go to Line", bundle: .module), isPresented: showGoToLine) {
+                TextField(String(localized: "Line or Line:Column (e.g., 42 or 42:10)", bundle: .module), text: $goToLineText)
                     #if os(iOS)
                     .keyboardType(.numbersAndPunctuation)
                     #endif
-                Button("Cancel", role: .cancel) { }
-                Button("Go") {
+                Button(String(localized: "Cancel", bundle: .module), role: .cancel) { }
+                Button(String(localized: "Go", bundle: .module)) {
                     parseAndGoToLine(goToLineText)
                 }
             } message: {
-                Text("Enter line number, or line:column")
+                Text("Enter line number, or line:column", bundle: .module)
             }
             .sheet(isPresented: $showSettings) {
                 editorSettingsSheet
@@ -771,7 +771,7 @@ struct KeystoneFindReplaceBar: View {
                 HStack(spacing: 4) {
                     toggleButtonWithLabel(
                         text: "Aa",
-                        tooltip: "Match Case",
+                        tooltip: String(localized: "Match Case", bundle: .module),
                         isActive: manager.options.caseSensitive
                     ) {
                         manager.options.caseSensitive.toggle()
@@ -781,7 +781,7 @@ struct KeystoneFindReplaceBar: View {
 
                     toggleButtonWithLabel(
                         text: "W",
-                        tooltip: "Whole Word",
+                        tooltip: String(localized: "Whole Word", bundle: .module),
                         isActive: manager.options.wholeWord
                     ) {
                         manager.options.wholeWord.toggle()
@@ -790,7 +790,7 @@ struct KeystoneFindReplaceBar: View {
 
                     toggleButtonWithLabel(
                         text: ".*",
-                        tooltip: "Regex",
+                        tooltip: String(localized: "Regex", bundle: .module),
                         isActive: manager.options.useRegex
                     ) {
                         manager.options.useRegex.toggle()
@@ -850,7 +850,7 @@ struct KeystoneFindReplaceBar: View {
                 Image(systemName: "magnifyingglass")
                     .foregroundColor(.secondary)
                     .font(.system(size: iconSize))
-                TextField("Find", text: $manager.searchQuery)
+                TextField(String(localized: "Find", bundle: .module), text: $manager.searchQuery)
                     .textFieldStyle(.plain)
                     .font(.system(size: fontSize))
                     .focused($isSearchFocused)
@@ -891,7 +891,7 @@ struct KeystoneFindReplaceBar: View {
                         Image(systemName: "arrow.triangle.2.circlepath")
                             .foregroundColor(.secondary)
                             .font(.system(size: iconSize))
-                        TextField("Replace", text: $manager.replaceText)
+                        TextField(String(localized: "Replace", bundle: .module), text: $manager.replaceText)
                             .textFieldStyle(.plain)
                             .font(.system(size: fontSize))
                             #if os(iOS)
@@ -905,7 +905,7 @@ struct KeystoneFindReplaceBar: View {
                     .cornerRadius(8)
 
                     // Replace buttons
-                    Button("Replace") {
+                    Button(String(localized: "Replace", bundle: .module)) {
                         performReplaceCurrent()
                     }
                     .buttonStyle(.plain)
@@ -916,7 +916,7 @@ struct KeystoneFindReplaceBar: View {
                     .cornerRadius(6)
                     .disabled(manager.currentMatch == nil)
 
-                    Button("All") {
+                    Button(String(localized: "All", bundle: .module)) {
                         performReplaceAll()
                     }
                     .buttonStyle(.plain)
@@ -1058,7 +1058,7 @@ public struct KeystoneEditorToolbar: View {
             // Undo/Redo
             if let onUndo = onUndo {
                 Button(action: onUndo) {
-                    Label("Undo", systemImage: "arrow.uturn.backward")
+                    Label(String(localized: "Undo", bundle: .module), systemImage: "arrow.uturn.backward")
                 }
                 .disabled(!canUndo)
                 .keyboardShortcut("z", modifiers: .command)
@@ -1066,7 +1066,7 @@ public struct KeystoneEditorToolbar: View {
 
             if let onRedo = onRedo {
                 Button(action: onRedo) {
-                    Label("Redo", systemImage: "arrow.uturn.forward")
+                    Label(String(localized: "Redo", bundle: .module), systemImage: "arrow.uturn.forward")
                 }
                 .disabled(!canRedo)
                 .keyboardShortcut("z", modifiers: [.command, .shift])
@@ -1076,13 +1076,13 @@ public struct KeystoneEditorToolbar: View {
 
             // Find
             Button(action: { findReplaceManager.toggle() }) {
-                Label("Find", systemImage: "magnifyingglass")
+                Label(String(localized: "Find", bundle: .module), systemImage: "magnifyingglass")
             }
             .keyboardShortcut("f", modifiers: .command)
 
             // Go to Line
             Button(action: onShowGoToLine) {
-                Label("Go to Line", systemImage: "arrow.right.to.line")
+                Label(String(localized: "Go to Line", bundle: .module), systemImage: "arrow.right.to.line")
             }
             .keyboardShortcut("g", modifiers: .command)
 
@@ -1093,7 +1093,7 @@ public struct KeystoneEditorToolbar: View {
                 configuration.showLineNumbers.toggle()
                 configuration.saveToUserDefaults()
             }) {
-                Label("Line Numbers", systemImage: "list.number")
+                Label(String(localized: "Line Numbers", bundle: .module), systemImage: "list.number")
             }
 
             // Line Wrap
@@ -1101,13 +1101,13 @@ public struct KeystoneEditorToolbar: View {
                 configuration.lineWrapping.toggle()
                 configuration.saveToUserDefaults()
             }) {
-                Label("Line Wrap", systemImage: "text.justify.left")
+                Label(String(localized: "Line Wrap", bundle: .module), systemImage: "text.justify.left")
             }
 
             #if os(iOS)
             if let onToggleSymbolKeyboard = onToggleSymbolKeyboard {
                 Button(action: onToggleSymbolKeyboard) {
-                    Label("Symbols", systemImage: "keyboard")
+                    Label(String(localized: "Symbols", bundle: .module), systemImage: "keyboard")
                 }
             }
             #endif
@@ -1157,55 +1157,55 @@ struct KeystoneEditorToolbarBar: View {
     var body: some View {
         HStack(spacing: 8) {
             // Undo
-            toolbarButton(icon: "arrow.uturn.backward", tooltip: "Undo", enabled: undoController.canUndo) {
+            toolbarButton(icon: "arrow.uturn.backward", tooltip: String(localized: "Undo", bundle: .module), enabled: undoController.canUndo) {
                 undoController.undo()
             }
 
             // Redo
-            toolbarButton(icon: "arrow.uturn.forward", tooltip: "Redo", enabled: undoController.canRedo) {
+            toolbarButton(icon: "arrow.uturn.forward", tooltip: String(localized: "Redo", bundle: .module), enabled: undoController.canRedo) {
                 undoController.redo()
             }
 
             // Toggle Comment (only show if language supports comments)
             if language.supportsComments {
-                toolbarButton(icon: "text.bubble", tooltip: "Toggle Comment (⌘/)", enabled: true) {
+                toolbarButton(icon: "text.bubble", tooltip: String(localized: "Toggle Comment (⌘/)", bundle: .module), enabled: true) {
                     onToggleComment?()
                 }
             }
 
             // Toggle Base64 encode/decode
-            toolbarButton(icon: "arrow.triangle.2.circlepath", tooltip: "Toggle Base64 (⌘⇧B)", enabled: true) {
+            toolbarButton(icon: "arrow.triangle.2.circlepath", tooltip: String(localized: "Toggle Base64 (⌘⇧B)", bundle: .module), enabled: true) {
                 onToggleBase64?()
             }
 
             Divider().frame(height: 18)
 
             // Find
-            toolbarButton(icon: "magnifyingglass", tooltip: "Find", enabled: true, isActive: findReplaceManager.isVisible) {
+            toolbarButton(icon: "magnifyingglass", tooltip: String(localized: "Find", bundle: .module), enabled: true, isActive: findReplaceManager.isVisible) {
                 findReplaceManager.toggle()
             }
 
             // Go to Line
-            toolbarButton(icon: "arrow.right.to.line", tooltip: "Go to Line", enabled: true) {
+            toolbarButton(icon: "arrow.right.to.line", tooltip: String(localized: "Go to Line", bundle: .module), enabled: true) {
                 onGoToLine?()
             }
 
             Divider().frame(height: 18)
 
             // Line Numbers
-            toolbarButton(icon: "list.number", tooltip: "Line Numbers", enabled: true, isActive: configuration.showLineNumbers) {
+            toolbarButton(icon: "list.number", tooltip: String(localized: "Line Numbers", bundle: .module), enabled: true, isActive: configuration.showLineNumbers) {
                 configuration.showLineNumbers.toggle()
                 configuration.saveToUserDefaults()
             }
 
             // Line Wrap
-            toolbarButton(icon: "text.justify.left", tooltip: "Word Wrap", enabled: true, isActive: configuration.lineWrapping) {
+            toolbarButton(icon: "text.justify.left", tooltip: String(localized: "Word Wrap", bundle: .module), enabled: true, isActive: configuration.lineWrapping) {
                 configuration.lineWrapping.toggle()
                 configuration.saveToUserDefaults()
             }
 
             // Invisible Characters
-            toolbarButton(icon: "eye", tooltip: "Invisible Characters", enabled: true, isActive: configuration.showInvisibleCharacters) {
+            toolbarButton(icon: "eye", tooltip: String(localized: "Invisible Characters", bundle: .module), enabled: true, isActive: configuration.showInvisibleCharacters) {
                 configuration.showInvisibleCharacters.toggle()
                 configuration.saveToUserDefaults()
             }
@@ -1216,7 +1216,7 @@ struct KeystoneEditorToolbarBar: View {
 
                 toolbarButton(
                     icon: tailFollowActive ? "stop.circle" : "play.circle",
-                    tooltip: tailFollowActive ? "Stop Following" : "Follow File",
+                    tooltip: tailFollowActive ? String(localized: "Stop Following", bundle: .module) : String(localized: "Follow File", bundle: .module),
                     enabled: true,
                     isActive: tailFollowActive
                 ) {
@@ -1227,7 +1227,7 @@ struct KeystoneEditorToolbarBar: View {
             Spacer()
 
             // Settings (right aligned)
-            toolbarButton(icon: "gearshape", tooltip: "Editor Settings", enabled: true) {
+            toolbarButton(icon: "gearshape", tooltip: String(localized: "Editor Settings", bundle: .module), enabled: true) {
                 onShowSettings?()
             }
         }

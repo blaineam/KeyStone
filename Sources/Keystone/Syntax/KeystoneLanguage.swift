@@ -95,7 +95,7 @@ public enum KeystoneLanguage: String, CaseIterable, Identifiable, Sendable {
     /// Display name for the language.
     public var displayName: String {
         switch self {
-        case .plainText: return "Plain Text"
+        case .plainText: return String(localized: "Plain Text", bundle: .module)
         case .swift: return "Swift"
         case .javascript: return "JavaScript"
         case .typescript: return "TypeScript"

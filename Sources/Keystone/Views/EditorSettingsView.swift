@@ -39,21 +39,21 @@ public struct EditorSettingsView: View {
         NavigationStack {
             Form {
                 // Appearance Section
-                Section("Appearance") {
-                    Toggle("Show Line Numbers", isOn: $configuration.showLineNumbers)
-                    Toggle("Highlight Current Line", isOn: $configuration.highlightCurrentLine)
-                    Toggle("Show Invisible Characters", isOn: $configuration.showInvisibleCharacters)
-                    Toggle("Line Wrapping", isOn: $configuration.lineWrapping)
-                    Toggle("Code Folding", isOn: $configuration.showCodeFolding)
+                Section(String(localized: "Appearance", bundle: .module)) {
+                    Toggle(String(localized: "Show Line Numbers", bundle: .module), isOn: $configuration.showLineNumbers)
+                    Toggle(String(localized: "Highlight Current Line", bundle: .module), isOn: $configuration.highlightCurrentLine)
+                    Toggle(String(localized: "Show Invisible Characters", bundle: .module), isOn: $configuration.showInvisibleCharacters)
+                    Toggle(String(localized: "Line Wrapping", bundle: .module), isOn: $configuration.lineWrapping)
+                    Toggle(String(localized: "Code Folding", bundle: .module), isOn: $configuration.showCodeFolding)
 
                     HStack {
-                        Text("Font Size")
+                        Text("Font Size", bundle: .module)
                         Spacer()
-                        Stepper("\(Int(configuration.fontSize))pt", value: $configuration.fontSize, in: 8...32)
+                        Stepper(String(localized: "\(Int(configuration.fontSize))pt", bundle: .module), value: $configuration.fontSize, in: 8...32)
                     }
 
                     HStack {
-                        Text("Line Height")
+                        Text("Line Height", bundle: .module)
                         Spacer()
                         Slider(value: $configuration.lineHeightMultiplier, in: 1.0...2.0, step: 0.1)
                             .frame(width: 120)
@@ -63,34 +63,34 @@ public struct EditorSettingsView: View {
                 }
 
                 // Behavior Section
-                Section("Behavior") {
-                    Toggle("Auto-insert Pairs", isOn: $configuration.autoInsertPairs)
-                    Toggle("Highlight Matching Brackets", isOn: $configuration.highlightMatchingBrackets)
-                    Toggle("Tab Key Inserts Tab", isOn: $configuration.tabKeyInsertsTab)
+                Section(String(localized: "Behavior", bundle: .module)) {
+                    Toggle(String(localized: "Auto-insert Pairs", bundle: .module), isOn: $configuration.autoInsertPairs)
+                    Toggle(String(localized: "Highlight Matching Brackets", bundle: .module), isOn: $configuration.highlightMatchingBrackets)
+                    Toggle(String(localized: "Tab Key Inserts Tab", bundle: .module), isOn: $configuration.tabKeyInsertsTab)
                 }
 
                 // Indentation Section
-                Section("Indentation") {
-                    Picker("Type", selection: $configuration.indentation.type) {
+                Section(String(localized: "Indentation", bundle: .module)) {
+                    Picker(String(localized: "Type", bundle: .module), selection: $configuration.indentation.type) {
                         ForEach(IndentationType.allCases) { type in
-                            Text(type.rawValue).tag(type)
+                            Text(type.localizedName).tag(type)
                         }
                     }
 
                     if configuration.indentation.type == .spaces {
-                        Stepper("Width: \(configuration.indentation.width) spaces",
+                        Stepper(String(localized: "Width: \(configuration.indentation.width) spaces", bundle: .module),
                                value: $configuration.indentation.width, in: 1...8)
                     }
 
                     if let onConvert = onConvertIndentation {
-                        Menu("Convert Indentation To...") {
-                            Button("Tabs") {
+                        Menu(String(localized: "Convert Indentation To...", bundle: .module)) {
+                            Button(String(localized: "Tabs", bundle: .module)) {
                                 let newSettings = IndentationSettings(type: .tabs, width: configuration.indentation.width)
                                 configuration.indentation = newSettings
                                 onConvert(newSettings)
                             }
                             ForEach([2, 4, 8], id: \.self) { width in
-                                Button("\(width) Spaces") {
+                                Button(String(localized: "\(width) Spaces", bundle: .module)) {
                                     let newSettings = IndentationSettings(type: .spaces, width: width)
                                     configuration.indentation = newSettings
                                     onConvert(newSettings)
@@ -101,16 +101,16 @@ public struct EditorSettingsView: View {
                 }
 
                 // Line Endings Section
-                Section("Line Endings") {
+                Section(String(localized: "Line Endings", bundle: .module)) {
                     HStack {
-                        Text("Current")
+                        Text("Current", bundle: .module)
                         Spacer()
                         Text(configuration.lineEnding.displayName)
                             .foregroundColor(.secondary)
                     }
 
                     if let onConvert = onConvertLineEndings {
-                        Menu("Convert To...") {
+                        Menu(String(localized: "Convert To...", bundle: .module)) {
                             ForEach(LineEnding.allCases.filter { $0 != configuration.lineEnding }) { ending in
                                 Button(ending.displayName) {
                                     onConvert(ending)
@@ -121,7 +121,7 @@ public struct EditorSettingsView: View {
                 }
 
                 // Theme Section
-                Section("Theme") {
+                Section(String(localized: "Theme", bundle: .module)) {
                     themePicker
                 }
 
@@ -149,11 +149,11 @@ public struct EditorSettingsView: View {
                 }
                 */
             }
-            .navigationTitle("Editor Settings")
+            .navigationTitle(String(localized: "Editor Settings", bundle: .module))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") {
+                    Button(String(localized: "Done", bundle: .module)) {
                         isPresented = false
                     }
                 }
@@ -169,10 +169,10 @@ public struct EditorSettingsView: View {
         VStack(spacing: 0) {
             // Header
             HStack {
-                Text("Editor Settings")
+                Text("Editor Settings", bundle: .module)
                     .font(.headline)
                 Spacer()
-                Button("Done") {
+                Button(String(localized: "Done", bundle: .module)) {
                     isPresented = false
                 }
                 .keyboardShortcut(.defaultAction)
@@ -185,22 +185,22 @@ public struct EditorSettingsView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     // Appearance Section
-                    GroupBox("Appearance") {
+                    GroupBox(String(localized: "Appearance", bundle: .module)) {
                         VStack(alignment: .leading, spacing: 8) {
-                            Toggle("Show Line Numbers", isOn: $configuration.showLineNumbers)
-                            Toggle("Highlight Current Line", isOn: $configuration.highlightCurrentLine)
-                            Toggle("Show Invisible Characters", isOn: $configuration.showInvisibleCharacters)
-                            Toggle("Line Wrapping", isOn: $configuration.lineWrapping)
-                            Toggle("Code Folding", isOn: $configuration.showCodeFolding)
+                            Toggle(String(localized: "Show Line Numbers", bundle: .module), isOn: $configuration.showLineNumbers)
+                            Toggle(String(localized: "Highlight Current Line", bundle: .module), isOn: $configuration.highlightCurrentLine)
+                            Toggle(String(localized: "Show Invisible Characters", bundle: .module), isOn: $configuration.showInvisibleCharacters)
+                            Toggle(String(localized: "Line Wrapping", bundle: .module), isOn: $configuration.lineWrapping)
+                            Toggle(String(localized: "Code Folding", bundle: .module), isOn: $configuration.showCodeFolding)
 
                             HStack {
-                                Text("Font Size")
+                                Text("Font Size", bundle: .module)
                                 Spacer()
-                                Stepper("\(Int(configuration.fontSize))pt", value: $configuration.fontSize, in: 8...32)
+                                Stepper(String(localized: "\(Int(configuration.fontSize))pt", bundle: .module), value: $configuration.fontSize, in: 8...32)
                             }
 
                             HStack {
-                                Text("Line Height")
+                                Text("Line Height", bundle: .module)
                                 Spacer()
                                 Slider(value: $configuration.lineHeightMultiplier, in: 1.0...2.0, step: 0.1)
                                     .frame(width: 100)
@@ -213,40 +213,40 @@ public struct EditorSettingsView: View {
                     }
 
                     // Behavior Section
-                    GroupBox("Behavior") {
+                    GroupBox(String(localized: "Behavior", bundle: .module)) {
                         VStack(alignment: .leading, spacing: 8) {
-                            Toggle("Auto-insert Pairs", isOn: $configuration.autoInsertPairs)
-                            Toggle("Highlight Matching Brackets", isOn: $configuration.highlightMatchingBrackets)
-                            Toggle("Tab Key Inserts Tab", isOn: $configuration.tabKeyInsertsTab)
+                            Toggle(String(localized: "Auto-insert Pairs", bundle: .module), isOn: $configuration.autoInsertPairs)
+                            Toggle(String(localized: "Highlight Matching Brackets", bundle: .module), isOn: $configuration.highlightMatchingBrackets)
+                            Toggle(String(localized: "Tab Key Inserts Tab", bundle: .module), isOn: $configuration.tabKeyInsertsTab)
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.vertical, 4)
                     }
 
                     // Indentation Section
-                    GroupBox("Indentation") {
+                    GroupBox(String(localized: "Indentation", bundle: .module)) {
                         VStack(alignment: .leading, spacing: 8) {
-                            Picker("Type", selection: $configuration.indentation.type) {
+                            Picker(String(localized: "Type", bundle: .module), selection: $configuration.indentation.type) {
                                 ForEach(IndentationType.allCases) { type in
-                                    Text(type.rawValue).tag(type)
+                                    Text(type.localizedName).tag(type)
                                 }
                             }
                             .pickerStyle(.segmented)
 
                             if configuration.indentation.type == .spaces {
-                                Stepper("Width: \(configuration.indentation.width) spaces",
+                                Stepper(String(localized: "Width: \(configuration.indentation.width) spaces", bundle: .module),
                                        value: $configuration.indentation.width, in: 1...8)
                             }
 
                             if let onConvert = onConvertIndentation {
-                                Menu("Convert Indentation To...") {
-                                    Button("Tabs") {
+                                Menu(String(localized: "Convert Indentation To...", bundle: .module)) {
+                                    Button(String(localized: "Tabs", bundle: .module)) {
                                         let newSettings = IndentationSettings(type: .tabs, width: configuration.indentation.width)
                                         configuration.indentation = newSettings
                                         onConvert(newSettings)
                                     }
                                     ForEach([2, 4, 8], id: \.self) { width in
-                                        Button("\(width) Spaces") {
+                                        Button(String(localized: "\(width) Spaces", bundle: .module)) {
                                             let newSettings = IndentationSettings(type: .spaces, width: width)
                                             configuration.indentation = newSettings
                                             onConvert(newSettings)
@@ -260,17 +260,17 @@ public struct EditorSettingsView: View {
                     }
 
                     // Line Endings Section
-                    GroupBox("Line Endings") {
+                    GroupBox(String(localized: "Line Endings", bundle: .module)) {
                         VStack(alignment: .leading, spacing: 8) {
                             HStack {
-                                Text("Current")
+                                Text("Current", bundle: .module)
                                 Spacer()
                                 Text(configuration.lineEnding.displayName)
                                     .foregroundColor(.secondary)
                             }
 
                             if let onConvert = onConvertLineEndings {
-                                Menu("Convert To...") {
+                                Menu(String(localized: "Convert To...", bundle: .module)) {
                                     ForEach(LineEnding.allCases.filter { $0 != configuration.lineEnding }) { ending in
                                         Button(ending.displayName) {
                                             onConvert(ending)
@@ -284,7 +284,7 @@ public struct EditorSettingsView: View {
                     }
 
                     // Theme Section
-                    GroupBox("Theme") {
+                    GroupBox(String(localized: "Theme", bundle: .module)) {
                         VStack(alignment: .leading, spacing: 4) {
                             themePicker
                         }
@@ -359,7 +359,7 @@ public struct EditorSettingsView: View {
                 .background(theme.background)
                 .cornerRadius(4)
 
-                Text(name)
+                Text(name == "System" ? String(localized: "System", bundle: .module) : name)
                     .foregroundColor(.primary)
                 Spacer()
                 if configuration.theme == theme {

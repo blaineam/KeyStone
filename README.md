@@ -58,6 +58,12 @@ Keystone powers the code editing features in [**Enter Space**](https://wemiller.
 
 ---
 
+## 🌍 Localization
+
+The editor's own UI (toolbar, find & replace bar, status bar, Go to Line, symbol keyboard and Editor Settings) ships in English, German, Spanish, Finnish, French, Italian, Japanese, Korean, Brazilian Portuguese and Simplified Chinese. Strings live in `Sources/Keystone/Resources/<lang>.lproj/Localizable.strings` and are always looked up from KeyStone's own bundle (`bundle: .module`), so host apps don't need to carry them. `LocalizationTests` fails if any language is missing a key or changes a format specifier.
+
+---
+
 ## 📋 Requirements
 
 | Requirement | Version |

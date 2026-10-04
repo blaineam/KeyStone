@@ -138,16 +138,16 @@ public class FindReplaceManager: ObservableObject {
             return ""
         }
         if isSearching {
-            return "Searching..."
+            return String(localized: "Searching...", bundle: .module)
         }
         // Show hint if no search has been performed yet
         if matches.isEmpty && !hasSearched {
-            return "Press Return"
+            return String(localized: "Press Return", bundle: .module)
         }
         if matches.isEmpty {
-            return "No results"
+            return String(localized: "No results", bundle: .module)
         }
-        return "\(currentMatchIndex + 1) of \(matches.count)"
+        return String(localized: "\(currentMatchIndex + 1) of \(matches.count)", bundle: .module)
     }
 
     /// Whether a search has been performed for the current query
@@ -421,7 +421,7 @@ public struct FindReplaceBar: View {
                 HStack {
                     Image(systemName: "magnifyingglass")
                         .foregroundColor(.secondary)
-                    TextField("Find", text: $manager.searchQuery)
+                    TextField(String(localized: "Find", bundle: .module), text: $manager.searchQuery)
                         .textFieldStyle(.plain)
                         .onSubmit {
                             manager.search(in: text)
@@ -488,10 +488,10 @@ public struct FindReplaceBar: View {
 
                 // Options menu
                 Menu {
-                    Toggle("Case Sensitive", isOn: $manager.options.caseSensitive)
-                    Toggle("Whole Word", isOn: $manager.options.wholeWord)
-                    Toggle("Regular Expression", isOn: $manager.options.useRegex)
-                    Toggle("Wrap Around", isOn: $manager.options.wrapAround)
+                    Toggle(String(localized: "Case Sensitive", bundle: .module), isOn: $manager.options.caseSensitive)
+                    Toggle(String(localized: "Whole Word", bundle: .module), isOn: $manager.options.wholeWord)
+                    Toggle(String(localized: "Regular Expression", bundle: .module), isOn: $manager.options.useRegex)
+                    Toggle(String(localized: "Wrap Around", bundle: .module), isOn: $manager.options.wrapAround)
                 } label: {
                     Image(systemName: "ellipsis.circle")
                 }
@@ -519,7 +519,7 @@ public struct FindReplaceBar: View {
                     HStack {
                         Image(systemName: "arrow.right.arrow.left")
                             .foregroundColor(.secondary)
-                        TextField("Replace", text: $manager.replaceText)
+                        TextField(String(localized: "Replace", bundle: .module), text: $manager.replaceText)
                             .textFieldStyle(.plain)
                     }
                     .padding(6)
@@ -528,7 +528,7 @@ public struct FindReplaceBar: View {
 
                     // Replace buttons
                     #if os(iOS)
-                    Button("Replace") {
+                    Button(String(localized: "Replace", bundle: .module)) {
                         if let newText = manager.replaceCurrent(in: text) {
                             onReplace(newText)
                         }
@@ -536,7 +536,7 @@ public struct FindReplaceBar: View {
                     .buttonStyle(.bordered)
                     .disabled(manager.currentMatch == nil)
 
-                    Button("Replace All") {
+                    Button(String(localized: "Replace All", bundle: .module)) {
                         let newText = manager.replaceAll(in: text)
                         onReplace(newText)
                     }
@@ -549,7 +549,7 @@ public struct FindReplaceBar: View {
                             onReplace(newText)
                         }
                     }) {
-                        Text("Replace")
+                        Text("Replace", bundle: .module)
                             .padding(.horizontal, 10)
                             .padding(.vertical, 4)
                     }
@@ -560,7 +560,7 @@ public struct FindReplaceBar: View {
                         let newText = manager.replaceAll(in: text)
                         onReplace(newText)
                     }) {
-                        Text("Replace All")
+                        Text("Replace All", bundle: .module)
                             .padding(.horizontal, 10)
                             .padding(.vertical, 4)
                     }

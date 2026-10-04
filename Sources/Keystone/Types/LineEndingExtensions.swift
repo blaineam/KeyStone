@@ -13,9 +13,9 @@ public extension LineEnding {
     /// A human-readable description of the line ending type.
     var displayName: String {
         switch self {
-        case .lf: return "LF (Unix/macOS)"
-        case .crlf: return "CRLF (Windows)"
-        case .cr: return "CR (Classic Mac)"
+        case .lf: return String(localized: "LF (Unix/macOS)", bundle: .module)
+        case .crlf: return String(localized: "CRLF (Windows)", bundle: .module)
+        case .cr: return String(localized: "CR (Classic Mac)", bundle: .module)
         }
     }
 

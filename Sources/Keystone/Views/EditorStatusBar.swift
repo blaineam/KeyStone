@@ -40,18 +40,18 @@ public struct EditorStatusBar: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 12) {
                     // Line count
-                    Text("Lines: \(lineCount)")
+                    Text("Lines: \(lineCount)", bundle: .module)
                         .font(.caption)
                         .foregroundColor(.secondary)
 
                     // Cursor position
-                    Text("Ln \(cursorPosition.line), Col \(cursorPosition.column)")
+                    Text("Ln \(cursorPosition.line), Col \(cursorPosition.column)", bundle: .module)
                         .font(.caption)
                         .foregroundColor(.secondary)
 
                     // Selection length
                     if cursorPosition.selectionLength > 0 {
-                        Text("Sel: \(cursorPosition.selectionLength)")
+                        Text("Sel: \(cursorPosition.selectionLength)", bundle: .module)
                             .font(.caption)
                             .foregroundColor(.accentColor)
                     }
@@ -69,7 +69,7 @@ public struct EditorStatusBar: View {
                         .background(Color.secondary.opacity(0.1))
                         .cornerRadius(4)
                         .foregroundColor(.secondary)
-                        .help("Language selection disabled for large files")
+                        .help(String(localized: "Language selection disabled for large files", bundle: .module))
                     } else {
                         Menu {
                             ForEach(KeystoneLanguage.allCases, id: \.self) { lang in
@@ -115,7 +115,7 @@ public struct EditorStatusBar: View {
 
                     // Indentation indicator
                     Button(action: { onSettingsTap?() }) {
-                        Text(configuration.indentation.type == .tabs ? "Tab" : "\(configuration.indentation.width) Spaces")
+                        Text(configuration.indentation.type == .tabs ? "Tab" : "\(configuration.indentation.width) Spaces", bundle: .module)
                             .font(.caption)
                             .padding(.horizontal, 6)
                             .padding(.vertical, 2)
@@ -125,7 +125,7 @@ public struct EditorStatusBar: View {
                     .buttonStyle(.plain)
 
                     if hasUnsavedChanges {
-                        Text("Modified")
+                        Text("Modified", bundle: .module)
                             .font(.caption)
                             .foregroundColor(.orange)
                     }

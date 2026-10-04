@@ -14,6 +14,15 @@ public enum IndentationType: String, CaseIterable, Identifiable, Codable, Sendab
 
     public var id: String { rawValue }
 
+    /// The user-facing name, localized from KeyStone's bundle (`rawValue` is a
+    /// persisted identifier and stays English).
+    public var localizedName: String {
+        switch self {
+        case .tabs: return String(localized: "Tabs", bundle: .module)
+        case .spaces: return String(localized: "Spaces", bundle: .module)
+        }
+    }
+
     /// Detects the indentation type and width used in the given text.
     /// - Parameter text: The text to analyze.
     /// - Returns: A tuple containing the detected indentation type and width.

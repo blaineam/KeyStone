@@ -114,10 +114,10 @@ public extension TailFollowManager {
 
         public var displayName: String {
             switch self {
-            case .fast: return "Fast (0.5s)"
-            case .normal: return "Normal (1s)"
-            case .slow: return "Slow (2s)"
-            case .verySlow: return "Very Slow (5s)"
+            case .fast: return String(localized: "Fast (0.5s)", bundle: .module)
+            case .normal: return String(localized: "Normal (1s)", bundle: .module)
+            case .slow: return String(localized: "Slow (2s)", bundle: .module)
+            case .verySlow: return String(localized: "Very Slow (5s)", bundle: .module)
             }
         }
     }
