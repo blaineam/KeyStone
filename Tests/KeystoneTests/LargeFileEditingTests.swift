@@ -347,3 +347,51 @@ final class BackgroundParsingTests: XCTestCase {
     }
 }
 #endif
+
+#if canImport(AppKit)
+@MainActor
+final class DeepLongLineProfileTests: XCTestCase {
+    /// Typing deep inside a 1 MB line while looking at that spot: the line is
+    /// typeset from its start to the viewport on every keystroke.
+    func testProfileTypingDeepInsideLongLineWithViewportThere() {
+        let html = LargeFileFixtures.inlinedHTML()
+        let textView = TextView(frame: CGRect(x: 0, y: 0, width: 1000, height: 800))
+        textView.setState(TextViewState(text: html, theme: DefaultTheme(), language: KeystoneLanguage.html.treeSitterLanguage!, languageProvider: KeystoneLanguageProvider.shared))
+        textView.isLineWrappingEnabled = true
+        textView.layoutSubtreeIfNeeded()
+        let location = (html as NSString).range(of: "<script>").location + 900_000
+        // Put the caret there and scroll so it is on screen, like a user would be.
+        textView.selectedRange = NSRange(location: location, length: 0)
+        textView.scrollRangeToVisible(NSRange(location: location, length: 0), centerVertically: true)
+        textView.layoutSubtreeIfNeeded()
+        textView.displayIfNeeded()
+        var worst: TimeInterval = 0
+        var total: TimeInterval = 0
+        let iterations = ProcessInfo.processInfo.environment["KS_PROFILE_ITERATIONS"].flatMap(Int.init) ?? 5
+        for i in 0..<iterations {
+            let start = Date()
+            textView.replace(NSRange(location: location + i, length: 0), withText: "x")
+            textView.layoutSubtreeIfNeeded()
+            textView.displayIfNeeded()
+            let t = Date().timeIntervalSince(start)
+            worst = max(worst, t); total += t
+        }
+        print("DEEP-LONG-LINE wrap=on keystroke worst: \(String(format: "%.3f", worst))s avg: \(String(format: "%.3f", total / Double(iterations)))s")
+
+        textView.isLineWrappingEnabled = false
+        textView.layoutSubtreeIfNeeded()
+        textView.scrollRangeToVisible(NSRange(location: location, length: 0), centerVertically: true)
+        textView.layoutSubtreeIfNeeded()
+        worst = 0; total = 0
+        for i in 0..<5 {
+            let start = Date()
+            textView.replace(NSRange(location: location + 10 + i, length: 0), withText: "x")
+            textView.layoutSubtreeIfNeeded()
+            textView.displayIfNeeded()
+            let t = Date().timeIntervalSince(start)
+            worst = max(worst, t); total += t
+        }
+        print("DEEP-LONG-LINE wrap=off keystroke worst: \(String(format: "%.3f", worst))s avg: \(String(format: "%.3f", total / 5))s")
+    }
+}
+#endif

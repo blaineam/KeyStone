@@ -76,6 +76,33 @@ final class LineTypesetter {
         lineFragmentIndex = 0
     }
 
+    /// Like `reset()`, but keeps the first `count` already typeset fragments. An edit
+    /// deep inside a long line only changes fragments from the edit on; the ones
+    /// before it are reused and typesetting resumes after them.
+    func reset(keepingFragments count: Int) {
+        let kept = Array(lineFragments.prefix(count))
+        reset()
+        guard let last = kept.last else { return }
+        lineFragments = kept
+        for (index, fragment) in kept.enumerated() {
+            lineFragmentsMap[fragment.id] = index
+        }
+        maximumLineWidth = kept.map(\.scaledSize.width).max() ?? 0
+        startOffset = last.range.upperBound
+        nextYPosition = last.yPosition + last.scaledSize.height
+        lineFragmentIndex = kept.count
+    }
+
+    /// Number of leading fragments that stay valid when the text changes at `editOffset`:
+    /// those ending before it, minus one for the fragment whose break looked past it.
+    func reusableFragmentCount(forEditAt editOffset: Int) -> Int {
+        var count = 0
+        for fragment in lineFragments where fragment.range.upperBound <= editOffset {
+            count += 1
+        }
+        return max(0, count - 1)
+    }
+
     func prepareToTypeset(_ attributedString: NSAttributedString) {
         self.attributedString = attributedString
         stringLength = CFAttributedStringGetLength(attributedString)

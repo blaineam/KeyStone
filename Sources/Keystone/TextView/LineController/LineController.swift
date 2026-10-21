@@ -20,6 +20,8 @@ final class LineController {
     /// The attributed string from before the last edit, applied over the unchanged
     /// prefix and suffix of the new one until asynchronous highlighting replaces it.
     private var previousAttributedString: NSAttributedString?
+    /// Length of the unchanged prefix after the last edit; typesetting resumes there.
+    private var unchangedPrefixLength: Int?
 
     private enum TypesetAmount {
         case inRect(CGRect)
@@ -237,16 +239,20 @@ private extension LineController {
     private func updateStringIfNecessary() {
         if isStringInvalid {
             let range = NSRange(location: line.location, length: line.data.totalLength)
-            // Keep the old attributes around: when highlighting is asynchronous the new
-            // string shows them on the unchanged text until fresh captures land, instead
-            // of flashing to plain text on every keystroke.
-            if let old = attributedString, syntaxHighlighter?.canHighlight == true, line.data.totalLength <= LineController.maximumHighlightedLineLength {
-                previousAttributedString = old
-            } else {
-                previousAttributedString = nil
-            }
+            let old = attributedString
             if let string = stringView.substring(in: range) {
                 attributedString = NSMutableAttributedString(string: string)
+                if let old {
+                    unchangedPrefixLength = LineController.commonPrefixLength(old.string as NSString, string as NSString)
+                    // Keep the old attributes around: when highlighting is asynchronous the new
+                    // string shows them on the unchanged text until fresh captures land, instead
+                    // of flashing to plain text on every keystroke.
+                    let highlightable = syntaxHighlighter?.canHighlight == true && line.data.totalLength <= LineController.maximumHighlightedLineLength
+                    previousAttributedString = highlightable ? old : nil
+                } else {
+                    unchangedPrefixLength = nil
+                    previousAttributedString = nil
+                }
             } else {
                 attributedString = nil
             }
@@ -268,7 +274,7 @@ private extension LineController {
                 )
                 defaultStringAttributes.apply(to: input.attributedString)
                 if let previous = previousAttributedString {
-                    LineController.carryOverAttributes(from: previous, to: input.attributedString)
+                    LineController.carryOverAttributes(from: previous, to: input.attributedString, prefixLength: unchangedPrefixLength)
                 }
             }
             previousAttributedString = nil
@@ -280,8 +286,21 @@ private extension LineController {
 
     private func updateTypesetterIfNecessary() {
         if isTypesetterInvalid {
-            lineFragmentTree.reset(rootValue: 0, rootData: LineFragmentNodeData(lineFragment: nil))
-            typesetter.reset()
+            // After an edit, fragments before the edit are still right; keep them (and their
+            // tree nodes) and resume after them instead of typesetting a long line from its
+            // start on every keystroke.
+            let reusable = unchangedPrefixLength.map { typesetter.reusableFragmentCount(forEditAt: $0) } ?? 0
+            unchangedPrefixLength = nil
+            if reusable > 0 && reusable <= lineFragmentTree.nodeTotalCount {
+                while lineFragmentTree.nodeTotalCount > reusable {
+                    lineFragmentTree.remove(lineFragmentTree.node(atIndex: lineFragmentTree.nodeTotalCount - 1))
+                }
+                typesetter.reset(keepingFragments: reusable)
+                _lineHeight = nil
+            } else {
+                lineFragmentTree.reset(rootValue: 0, rootData: LineFragmentNodeData(lineFragment: nil))
+                typesetter.reset()
+            }
             if let attributedString = attributedString {
                 typesetter.prepareToTypeset(attributedString)
             }
@@ -523,17 +542,35 @@ extension LineController: LineFragmentControllerDelegate {
 extension LineController {
     /// Copies `previous`'s attribute runs onto `target` over their common prefix and
     /// suffix, so a single edit keeps the rest of the line's highlighting.
-    static func carryOverAttributes(from previous: NSAttributedString, to target: NSMutableAttributedString) {
+    /// Length of the common prefix of two strings, in UTF-16 units.
+    static func commonPrefixLength(_ a: NSString, _ b: NSString) -> Int {
+        let maxCommon = min(a.length, b.length)
+        guard maxCommon > 0 else { return 0 }
+        let chunk = 4096
+        var prefix = 0
+        var bufferA = [unichar](repeating: 0, count: chunk)
+        var bufferB = [unichar](repeating: 0, count: chunk)
+        while prefix < maxCommon {
+            let length = min(chunk, maxCommon - prefix)
+            let range = NSRange(location: prefix, length: length)
+            a.getCharacters(&bufferA, range: range)
+            b.getCharacters(&bufferB, range: range)
+            var i = 0
+            while i < length && bufferA[i] == bufferB[i] { i += 1 }
+            prefix += i
+            if i < length { break }
+        }
+        return prefix
+    }
+
+    static func carryOverAttributes(from previous: NSAttributedString, to target: NSMutableAttributedString, prefixLength: Int? = nil) {
         let old = previous.string as NSString
         let new = target.string as NSString
         let oldLength = old.length
         let newLength = new.length
         let maxCommon = min(oldLength, newLength)
         guard maxCommon > 0 else { return }
-        var prefix = 0
-        while prefix < maxCommon && old.character(at: prefix) == new.character(at: prefix) {
-            prefix += 1
-        }
+        let prefix = min(prefixLength ?? commonPrefixLength(old, new), maxCommon)
         var suffix = 0
         while suffix < maxCommon - prefix && old.character(at: oldLength - 1 - suffix) == new.character(at: newLength - 1 - suffix) {
             suffix += 1
