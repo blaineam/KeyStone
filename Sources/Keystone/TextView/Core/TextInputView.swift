@@ -179,8 +179,11 @@ final class TextInputView: UIView, UITextInput {
         set {
             layoutManager.codeFoldingManager = newValue
             layoutManager.setNeedsLayout()
+            deliverSyntaxFoldRegions()
         }
     }
+    /// Fold regions from the last parse, kept until a folding manager is attached.
+    private var latestSyntaxFoldRegions: [FoldableRegion]?
     var onFoldToggle: ((Int) -> Void)? {
         get { layoutManager.onFoldToggle }
         set { layoutManager.onFoldToggle = newValue }
@@ -594,7 +597,12 @@ final class TextInputView: UIView, UITextInput {
                 indentController.languageMode = languageMode
                 if let treeSitterLanguageMode = languageMode as? TreeSitterInternalLanguageMode {
                     treeSitterLanguageMode.delegate = self
+                    latestSyntaxFoldRegions = treeSitterLanguageMode.foldRegions()
+                } else {
+                    latestSyntaxFoldRegions = nil
+                    codeFoldingManager?.usesSyntaxTreeRegions = false
                 }
+                deliverSyntaxFoldRegions()
                 startDeferredParseIfNeeded()
             }
         }
@@ -1699,6 +1707,18 @@ extension TextInputView: TreeSitterLanguageModeDelegate {
         layoutManager.redisplayLines(withIDs: Set(lines.map(\.id)))
         layoutManager.setNeedsLayout()
         layoutManager.layoutIfNeeded()
+    }
+
+    func treeSitterLanguageMode(_ languageMode: TreeSitterInternalLanguageMode, didComputeFoldRegions regions: [FoldableRegion]) {
+        guard languageMode === self.languageMode as AnyObject else { return }
+        latestSyntaxFoldRegions = regions
+        deliverSyntaxFoldRegions()
+    }
+
+    private func deliverSyntaxFoldRegions() {
+        guard let regions = latestSyntaxFoldRegions, let manager = codeFoldingManager else { return }
+        manager.applySyntaxTreeRegions(regions)
+        layoutManager.setNeedsLayout()
     }
 
     /// Big documents skip the synchronous parse on load; run it in the background and

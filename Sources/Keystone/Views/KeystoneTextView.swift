@@ -122,12 +122,16 @@ public struct KeystoneTextView: UIViewRepresentable {
             textView?.forceLayoutRefresh()
         }
 
-        // Initial analysis of text (only for non-large files)
-        let initialText = document.text
-        if initialText.utf16.count > KeystoneConfiguration.defaultLargeFileThreshold {
-            foldingManager.analyzeTextInBackground(initialText)
-        } else {
-            foldingManager.analyzeText(initialText)
+        // Languages with a syntax tree get fold regions from the parser (delivered when
+        // the manager was attached above, or when a background parse lands). The text
+        // heuristics are only for plain text.
+        if language.treeSitterLanguage == nil {
+            let initialText = document.text
+            if initialText.utf16.count > KeystoneConfiguration.defaultLargeFileThreshold {
+                foldingManager.analyzeTextInBackground(initialText)
+            } else {
+                foldingManager.analyzeText(initialText)
+            }
         }
     }
 
@@ -445,9 +449,11 @@ public struct KeystoneTextView: UIViewRepresentable {
 
             parent.document.noteEdit(range: edit?.range, replacementLength: edit?.replacementLength)
 
-            // Debounced code folding analysis - refreshes 2.5s after typing pauses.
-            // The snapshot is taken when the work item fires, not on every keystroke.
+            // Debounced code folding analysis for plain text - refreshes 2.5s after typing
+            // pauses; the snapshot is taken when the work item fires, not per keystroke.
+            // Syntax-tree folds come from the parser instead.
             foldingAnalysisWorkItem?.cancel()
+            guard !codeFoldingManager.usesSyntaxTreeRegions else { return }
             let workItem = DispatchWorkItem { [weak self] in
                 guard let self = self, let textView = self.textView else { return }
                 if textView.backingString.length > KeystoneConfiguration.defaultLargeFileThreshold {
@@ -769,12 +775,16 @@ public struct KeystoneTextView: NSViewRepresentable {
             textView?.forceLayoutRefresh()
         }
 
-        // Initial analysis of text (only for non-large files)
-        let initialText = document.text
-        if initialText.utf16.count > KeystoneConfiguration.defaultLargeFileThreshold {
-            foldingManager.analyzeTextInBackground(initialText)
-        } else {
-            foldingManager.analyzeText(initialText)
+        // Languages with a syntax tree get fold regions from the parser (delivered when
+        // the manager was attached above, or when a background parse lands). The text
+        // heuristics are only for plain text.
+        if language.treeSitterLanguage == nil {
+            let initialText = document.text
+            if initialText.utf16.count > KeystoneConfiguration.defaultLargeFileThreshold {
+                foldingManager.analyzeTextInBackground(initialText)
+            } else {
+                foldingManager.analyzeText(initialText)
+            }
         }
     }
 
@@ -1077,9 +1087,11 @@ public struct KeystoneTextView: NSViewRepresentable {
 
             parent.document.noteEdit(range: edit?.range, replacementLength: edit?.replacementLength)
 
-            // Debounced code folding analysis - refreshes 2.5s after typing pauses.
-            // The snapshot is taken when the work item fires, not on every keystroke.
+            // Debounced code folding analysis for plain text - refreshes 2.5s after typing
+            // pauses; the snapshot is taken when the work item fires, not per keystroke.
+            // Syntax-tree folds come from the parser instead.
             foldingAnalysisWorkItem?.cancel()
+            guard !codeFoldingManager.usesSyntaxTreeRegions else { return }
             let workItem = DispatchWorkItem { [weak self] in
                 guard let self = self, let textView = self.textView else { return }
                 if textView.backingString.length > KeystoneConfiguration.defaultLargeFileThreshold {

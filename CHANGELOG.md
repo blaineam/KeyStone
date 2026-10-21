@@ -15,6 +15,10 @@ All notable changes to KeyStone are documented here. This project adheres to [Se
 - **Tree-sitter parsing runs in the background for documents of 200 KB and up** (`TreeSitterInternalLanguageMode.backgroundParseThreshold`). The incremental reparse and changed-range diff were synchronous on the main thread and O(top-level nodes): 410 ms per keystroke in a flat 60k-line Swift file. Now every tree edit, parse and highlight query runs on one serial queue against a text snapshot, so the main thread only enqueues; highlights lag by at most one parse. Typing in that file measures 1.6 ms, and typing inside a 1 MB minified line with wrapping, line numbers and invisibles on measures about 1 ms (was 240–380 ms). Opening a big file no longer blocks on the full parse either: it renders plain and highlights when the parse lands. The edited line keeps its previous highlighting over the unchanged text until new captures arrive, so nothing flashes to plain. The Return key never waits for a running parse (scope-based indent fallback).
 - Go to Line, find-match navigation, symbol insertion, comment toggle and Base64 toggle no longer scan or copy the whole document per operation.
 
+- **Code folding comes from the syntax tree.** Regions are derived from tree-sitter nodes (block-like constructs and anything that opens with a bracket across lines) for every tree-sitter language, including injected ones, computed in the same background parse. Single-line subtrees are never walked, so a minified megabyte line costs nothing. The text heuristics remain for plain text. Fold state survives reparses.
+- **Find searches as you type at any file size** (150 ms debounce; 400 ms from 500 KB). The search was already off the main thread; large files were just excluded.
+- Typing deep inside a very long wrapped line resumes typesetting after the edit instead of from the line start (115 ms → ~40 ms per keystroke in a 1 MB line).
+
 ### Tests
 
 - `KeystoneDocumentTests`, `BackgroundParsingTests` (edits during the initial parse and across reparses converge to a fresh parse, including breaking and restoring a `<script>` tag), and a per-keystroke budget on a flat 20k-line Swift file.

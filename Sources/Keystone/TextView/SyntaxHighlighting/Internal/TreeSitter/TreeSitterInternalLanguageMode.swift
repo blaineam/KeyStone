@@ -7,6 +7,8 @@ protocol TreeSitterLanguageModeDelegate: AnyObject {
     func treeSitterLanguageModeDidTimeout(_ languageMode: TreeSitterInternalLanguageMode)
     /// A background reparse finished; these lines need their highlighting refreshed.
     func treeSitterLanguageMode(_ languageMode: TreeSitterInternalLanguageMode, didReparseLines lines: Set<DocumentLineNode>)
+    /// Fold regions derived from the (re)parsed syntax tree.
+    func treeSitterLanguageMode(_ languageMode: TreeSitterInternalLanguageMode, didComputeFoldRegions regions: [FoldableRegion])
 }
 
 /// Tree-sitter parsing and querying for one text view.
@@ -46,6 +48,8 @@ final class TreeSitterInternalLanguageMode: InternalLanguageMode {
     private var hasEditsSinceSnapshot = false
     // Queue-confined: bytes edited since the last reparse, in current coordinates.
     private var pendingWindow: ByteRange?
+    /// Main-thread delivery blocks scheduled by queue operations and not yet run.
+    private let pendingDeliveries = PendingCounter()
 
     private var isBackgroundMode: Bool {
         stringView.string.length >= Self.backgroundParseThreshold
@@ -102,17 +106,21 @@ final class TreeSitterInternalLanguageMode: InternalLanguageMode {
                 DispatchQueue.main.async { completion(false) }
                 return
             }
-            self.treeLock.withLock {
+            let folds: [FoldableRegion] = self.treeLock.withLock {
                 self.textSource.snapshot = StringView(string: snapshot)
                 defer { self.textSource.snapshot = nil }
                 self.rootLanguageLayer.parse(snapshot)
+                return self.parser.didTimeout ? [] : self.rootLanguageLayer.foldRegions()
             }
             let didTimeout = self.parser.didTimeout
+            self.pendingDeliveries.increment()
             DispatchQueue.main.async {
+                defer { self.pendingDeliveries.decrement() }
                 if didTimeout {
                     self.delegate?.treeSitterLanguageModeDidTimeout(self)
                 } else if !operation.isCancelled {
                     self.hasTree = true
+                    self.delegate?.treeSitterLanguageMode(self, didComputeFoldRegions: folds)
                 }
                 completion(!operation.isCancelled && !didTimeout)
                 // Edits that arrived during the parse were queued behind it; parse them too.
@@ -134,8 +142,9 @@ final class TreeSitterInternalLanguageMode: InternalLanguageMode {
             newEndPoint: TreeSitterTextPoint(change.newEndLinePosition))
 
         guard isBackgroundMode else {
-            let changed = treeLock.withLock { rootLanguageLayer.apply(edit) }
+            let (changed, folds) = treeLock.withLock { (rootLanguageLayer.apply(edit), rootLanguageLayer.foldRegions()) }
             hasTree = hasTree || !parser.didTimeout
+            delegate?.treeSitterLanguageMode(self, didComputeFoldRegions: folds)
             return lineChangeSet(forChangedByteRanges: changed)
         }
 
@@ -165,13 +174,16 @@ final class TreeSitterInternalLanguageMode: InternalLanguageMode {
             guard let self = self else { return }
             let window = self.pendingWindow
             self.pendingWindow = nil
-            let changed: [ByteRange] = self.treeLock.withLock {
+            let (changed, folds): ([ByteRange], [FoldableRegion]) = self.treeLock.withLock {
                 self.textSource.snapshot = StringView(string: snapshot)
                 defer { self.textSource.snapshot = nil }
-                return self.rootLanguageLayer.reparse(parsing: [], window: window)
+                let changed = self.rootLanguageLayer.reparse(parsing: [], window: window)
+                return (changed, self.parser.didTimeout ? [] : self.rootLanguageLayer.foldRegions())
             }
             let didTimeout = self.parser.didTimeout
+            self.pendingDeliveries.increment()
             DispatchQueue.main.async {
+                defer { self.pendingDeliveries.decrement() }
                 self.isParseInFlight = false
                 if didTimeout {
                     self.delegate?.treeSitterLanguageModeDidTimeout(self)
@@ -179,6 +191,7 @@ final class TreeSitterInternalLanguageMode: InternalLanguageMode {
                 }
                 self.hasTree = true
                 self.delegate?.treeSitterLanguageMode(self, didReparseLines: self.lines(forChangedByteRanges: changed))
+                self.delegate?.treeSitterLanguageMode(self, didComputeFoldRegions: folds)
                 self.scheduleBackgroundParseIfNeeded()
             }
         }
@@ -262,6 +275,13 @@ final class TreeSitterInternalLanguageMode: InternalLanguageMode {
         return found ?? nil
     }
 
+    /// Fold regions from the current tree, or nil while a background parse holds it
+    /// (the delegate gets them when that parse lands).
+    func foldRegions() -> [FoldableRegion]? {
+        guard hasTree else { return nil }
+        return withTreeIfAvailable { rootLanguageLayer.foldRegions() }
+    }
+
     func detectIndentStrategy() -> DetectedIndentStrategy {
         let detected: DetectedIndentStrategy? = withTreeIfAvailable {
             if let tree = rootLanguageLayer.tree {
@@ -276,7 +296,7 @@ final class TreeSitterInternalLanguageMode: InternalLanguageMode {
     #if DEBUG
     /// True when no parse is queued, running, or pending. For tests.
     var debugIsParsingIdle: Bool {
-        operationQueue.operationCount == 0 && !isParseInFlight && !hasEditsSinceSnapshot && !needsDeferredParse
+        operationQueue.operationCount == 0 && !isParseInFlight && !hasEditsSinceSnapshot && !needsDeferredParse && pendingDeliveries.value == 0
     }
     #endif
 
@@ -315,4 +335,13 @@ extension TreeSitterInternalLanguageMode: TreeSitterParserDelegate {
             return nil
         }
     }
+}
+
+/// A lock-protected counter, touched from the parse queue and the main thread.
+final class PendingCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+    var value: Int { lock.withLock { count } }
+    func increment() { lock.withLock { count += 1 } }
+    func decrement() { lock.withLock { count -= 1 } }
 }

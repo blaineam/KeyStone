@@ -33,6 +33,8 @@ final class TreeSitterLanguageLayer {
     private let textSource: TreeSitterTextSource
     private var stringView: StringView { textSource.current }
     private var childLanguageLayerStore = TreeSitterLanguageLayerStore()
+    var childLanguageLayers: [TreeSitterLanguageLayer] { childLanguageLayerStore.allLayers }
+    var textSourceString: NSString { textSource.current.string }
     private weak var parentLanguageLayer: TreeSitterLanguageLayer?
     private let languageProvider: TreeSitterLanguageProvider?
     private var isEmpty: Bool {

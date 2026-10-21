@@ -162,9 +162,25 @@ public final class CodeFoldingManager: ObservableObject {
     /// Generation counter so a slow background analysis can't overwrite a newer one.
     private var analysisGeneration = 0
 
+    /// True once regions came from the syntax tree. The text heuristics in
+    /// `analyzeText` are then ignored; the tree is more accurate and already paid for.
+    public internal(set) var usesSyntaxTreeRegions = false
+
+    /// Regions computed from the tree-sitter tree (by the language mode after each parse).
+    func applySyntaxTreeRegions(_ detected: [FoldableRegion]) {
+        usesSyntaxTreeRegions = true
+        analysisGeneration += 1
+        guard isEnabled else {
+            applyDisabledState()
+            return
+        }
+        apply(detectedRegions: detected)
+    }
+
     /// Analyze text to find foldable regions.
     /// This is a simplified version - full implementation would use TreeSitter AST.
     public func analyzeText(_ text: String) {
+        guard !usesSyntaxTreeRegions else { return }
         analysisGeneration += 1
         guard isEnabled else {
             applyDisabledState()
@@ -176,6 +192,7 @@ public final class CodeFoldingManager: ObservableObject {
     /// Same as `analyzeText(_:)` but does the scan off the main thread and applies
     /// the result back on it. Superseded results are dropped. Use for big buffers.
     public func analyzeTextInBackground(_ text: String) {
+        guard !usesSyntaxTreeRegions else { return }
         analysisGeneration += 1
         let generation = analysisGeneration
         guard isEnabled else {

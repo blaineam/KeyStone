@@ -48,6 +48,9 @@ final class TreeSitterNode {
     var childCount: Int {
         Int(ts_node_child_count(rawValue))
     }
+    var isNamed: Bool {
+        ts_node_is_named(rawValue)
+    }
 
     init(node: TSNode) {
         self.rawValue = node

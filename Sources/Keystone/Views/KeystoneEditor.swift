@@ -37,6 +37,8 @@ public struct KeystoneEditor: View {
     /// The last value pushed into `legacyText`, so SwiftUI echoing it back is not taken for a host change.
     @State private var lastPushedLegacyText: String?
     @State private var legacyPushWorkItem: DispatchWorkItem?
+    /// Coalesces re-running the current search after edits.
+    @State private var researchWorkItem: DispatchWorkItem?
     /// UTF-16 length above which the legacy binding is written only once typing pauses.
     private static let legacyPushDebounceThreshold = 1_500_000
 
@@ -555,8 +557,15 @@ public struct KeystoneEditor: View {
     // MARK: - Private Methods
 
     private func handleDocumentChange(_ change: KeystoneDocument.Change) {
-        if findReplaceManager.isVisible && !findReplaceManager.searchQuery.isEmpty && !configuration.isLargeFileMode {
-            findReplaceManager.search(in: document.text)
+        if findReplaceManager.isVisible && !findReplaceManager.searchQuery.isEmpty {
+            // The search runs off the main thread; only the snapshot is taken here,
+            // so coalesce it to once per typing pause.
+            researchWorkItem?.cancel()
+            let manager = findReplaceManager
+            let document = self.document
+            let work = DispatchWorkItem { manager.search(in: document.text) }
+            researchWorkItem = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: work)
         }
         onChange?(change)
         if legacyText != nil {
@@ -778,10 +787,11 @@ struct KeystoneFindReplaceBar: View {
     var onNavigateToMatch: ((SearchMatch) -> Void)?
     @FocusState private var isSearchFocused: Bool
 
-    /// Debounce task for auto-search (small files only)
+    /// Debounce task for search-as-you-type
     @State private var searchDebounceTask: DispatchWorkItem?
-    /// Auto-search delay for small files (2 seconds)
-    private static let autoSearchDelay: TimeInterval = 2.0
+    /// Search-as-you-type delay. The search itself runs off the main thread; only the
+    /// text snapshot is taken on it, so big files get a slightly longer pause.
+    private var autoSearchDelay: TimeInterval { isLargeFile ? 0.4 : 0.15 }
 
     #if os(iOS)
     private let buttonSize: CGFloat = 44
@@ -817,7 +827,7 @@ struct KeystoneFindReplaceBar: View {
                     ) {
                         manager.options.caseSensitive.toggle()
                         // Only auto-search for small files
-                        if !isLargeFile { manager.search(in: document.text) }
+                        manager.search(in: document.text)
                     }
 
                     toggleButtonWithLabel(
@@ -826,7 +836,7 @@ struct KeystoneFindReplaceBar: View {
                         isActive: manager.options.wholeWord
                     ) {
                         manager.options.wholeWord.toggle()
-                        if !isLargeFile { manager.search(in: document.text) }
+                        manager.search(in: document.text)
                     }
 
                     toggleButtonWithLabel(
@@ -835,7 +845,7 @@ struct KeystoneFindReplaceBar: View {
                         isActive: manager.options.useRegex
                     ) {
                         manager.options.useRegex.toggle()
-                        if !isLargeFile { manager.search(in: document.text) }
+                        manager.search(in: document.text)
                     }
                 }
 
@@ -984,14 +994,13 @@ struct KeystoneFindReplaceBar: View {
             searchDebounceTask?.cancel()
             searchDebounceTask = nil
 
-            // For large files: NO auto-search, only on Enter key
-            // For small files: auto-search with 2s debounce after 3+ characters
-            if !isLargeFile && newValue.count >= FindReplaceManager.minimumSearchLength {
+            // Search as you type (after 3+ characters); the work is off the main thread.
+            if newValue.count >= FindReplaceManager.minimumSearchLength {
                 let task = DispatchWorkItem { [manager, document] in
                     manager.search(in: document.text)
                 }
                 searchDebounceTask = task
-                DispatchQueue.main.asyncAfter(deadline: .now() + Self.autoSearchDelay, execute: task)
+                DispatchQueue.main.asyncAfter(deadline: .now() + autoSearchDelay, execute: task)
             }
         }
         #if os(iOS)
