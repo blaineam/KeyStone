@@ -1567,6 +1567,77 @@ extension TextInputViewMac: IndentControllerDelegate {
 }
 
 
+// MARK: - Accessibility
+
+/// VoiceOver and UI testing see the editor as one text area, like NSTextView.
+extension TextInputViewMac {
+    override func isAccessibilityElement() -> Bool { true }
+
+    override func accessibilityRole() -> NSAccessibility.Role? { .textArea }
+
+    override func accessibilityRoleDescription() -> String? {
+        NSAccessibility.Role.textArea.description(with: nil)
+    }
+
+    override func accessibilityIdentifier() -> String { "keystone-editor" }
+
+    override func accessibilityLabel() -> String? { String(localized: "Code", bundle: .module) }
+
+    override func accessibilityValue() -> Any? { stringView.string as String }
+
+    override func accessibilityNumberOfCharacters() -> Int { stringView.string.length }
+
+    override func accessibilitySelectedText() -> String? {
+        guard let range = selection, range.length > 0, range.upperBound <= stringView.string.length else { return "" }
+        return stringView.string.substring(with: range)
+    }
+
+    override func accessibilitySelectedTextRange() -> NSRange {
+        selection ?? NSRange(location: 0, length: 0)
+    }
+
+    override func setAccessibilitySelectedTextRange(_ range: NSRange) {
+        selection = safeSelectionRange(from: range)
+    }
+
+    override func accessibilityVisibleCharacterRange() -> NSRange {
+        NSRange(location: 0, length: stringView.string.length)
+    }
+
+    override func accessibilityInsertionPointLineNumber() -> Int {
+        guard let location = selection?.location else { return 0 }
+        return lineManager.linePosition(at: location)?.row ?? 0
+    }
+
+    override func accessibilityString(for range: NSRange) -> String? {
+        let safe = safeSelectionRange(from: range)
+        return stringView.string.substring(with: safe)
+    }
+
+    override func accessibilityLine(for index: Int) -> Int {
+        lineManager.linePosition(at: min(index, stringView.string.length))?.row ?? 0
+    }
+
+    override func accessibilityRange(forLine line: Int) -> NSRange {
+        guard line >= 0 && line < lineManager.lineCount else { return NSRange(location: 0, length: 0) }
+        let node = lineManager.line(atRow: line)
+        return NSRange(location: node.location, length: node.data.totalLength)
+    }
+
+    override func accessibilityRange(for point: NSPoint) -> NSRange {
+        guard let window = window else { return NSRange(location: 0, length: 0) }
+        let local = convert(window.convertPoint(fromScreen: point), from: nil)
+        let index = layoutManager.closestIndex(to: local) ?? 0
+        return NSRange(location: index, length: 0)
+    }
+
+    override func accessibilityFrame(for range: NSRange) -> NSRect {
+        let caret = caretRectService.caretRect(at: min(range.location, stringView.string.length), allowMovingCaretToNextLineFragment: true)
+        guard let window = window else { return caret }
+        return window.convertToScreen(convert(caret, to: nil))
+    }
+}
+
 // MARK: - Multiple selections & keyboard navigation
 
 extension TextInputViewMac {

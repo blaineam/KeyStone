@@ -2,6 +2,12 @@
 
 All notable changes to KeyStone are documented here. This project adheres to [Semantic Versioning](https://semver.org/). Releases before 2.6.0 are described by their tags and commit history.
 
+## [2.8.1] - 2026-10-21
+
+### Fixed
+
+- **The macOS editor is an accessibility text area.** `TextInputViewMac` exposed no AX role, so VoiceOver read only the line numbers and XCUITest's `textViews` found nothing. It now reports `AXTextArea` with value, selected text/range (settable), insertion-point line, line ranges, and frames, identifier `keystone-editor`.
+
 ## [2.8.0] - 2026-10-21
 
 ### Added

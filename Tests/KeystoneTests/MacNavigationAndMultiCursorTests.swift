@@ -211,3 +211,29 @@ final class MultiCursorTests: XCTestCase {
 }
 #endif
 
+
+#if canImport(AppKit)
+@MainActor
+final class MacAccessibilityTests: XCTestCase {
+    func testEditorIsAnAccessibilityTextArea() {
+        let tv = TextView(frame: CGRect(x: 0, y: 0, width: 600, height: 400))
+        tv.setState(TextViewState(text: "one\ntwo", theme: DefaultTheme()))
+        tv.layoutSubtreeIfNeeded()
+        func find(_ view: NSView) -> NSView? {
+            if view.isAccessibilityElement(), view.accessibilityRole() == .textArea { return view }
+            for sub in view.subviews { if let found = find(sub) { return found } }
+            return nil
+        }
+        guard let area = find(tv) else { return XCTFail("no AXTextArea in the editor hierarchy") }
+        XCTAssertEqual(area.accessibilityValue() as? String, "one\ntwo")
+        XCTAssertEqual(area.accessibilityNumberOfCharacters(), 7)
+        XCTAssertEqual(area.accessibilityIdentifier(), "keystone-editor")
+        tv.selectedRange = NSRange(location: 4, length: 3)
+        XCTAssertEqual(area.accessibilitySelectedText(), "two")
+        XCTAssertEqual(area.accessibilityInsertionPointLineNumber(), 1)
+        XCTAssertEqual(area.accessibilityRange(forLine: 0), NSRange(location: 0, length: 4))
+        area.setAccessibilitySelectedTextRange(NSRange(location: 0, length: 3))
+        XCTAssertEqual(tv.selectedRange, NSRange(location: 0, length: 3))
+    }
+}
+#endif
