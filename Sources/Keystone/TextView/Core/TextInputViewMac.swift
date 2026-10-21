@@ -35,6 +35,14 @@ final class TextInputViewMac: NSView, NSTextInputClient {
     // MARK: - NSTextInputClient State
 
     private var _selectedRange: NSRange?
+    /// Cursors beyond the primary (`selection`). Kept only by this view's own commands;
+    /// setting `selection` from outside collapses back to one. See the navigation extension.
+    fileprivate var secondaryCarets: [CaretSelection] = []
+    /// Where the primary selection started, for shift-extension. Nil: its lower bound.
+    fileprivate var primaryAnchor: Int?
+    fileprivate var isUpdatingSelections = false
+    /// ⌥/⇧-click started this drag, so the other carets stay.
+    fileprivate var keepSecondariesDuringDrag = false
     private var _markedRange: NSRange?
     private var _markedText: NSAttributedString?
 
@@ -81,6 +89,16 @@ final class TextInputViewMac: NSView, NSTextInputClient {
     var selection: NSRange? {
         get { _selectedRange }
         set {
+            let hadSecondaries = !secondaryCarets.isEmpty
+            if !isUpdatingSelections {
+                secondaryCarets = []
+                primaryAnchor = nil
+            }
+            if newValue == _selectedRange && hadSecondaries && secondaryCarets.isEmpty {
+                layoutManager.setNeedsDisplayOnLines()
+                needsDisplay = true
+                delegate?.textInputViewDidChangeSelection(self)
+            }
             if newValue != _selectedRange {
                 _selectedRange = newValue
                 layoutManager.selectedRange = _selectedRange
@@ -592,26 +610,22 @@ final class TextInputViewMac: NSView, NSTextInputClient {
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
 
-        guard let sel = selection else { return }
-
-        if sel.length > 0 {
-            // Draw selection highlight
-            // Draw all selection rects without filtering by dirtyRect
-            // to ensure complete selection highlighting for wrapped lines
-            let rects = selectionRectService.selectionRects(in: sel)
-            selectionHighlightColor.setFill()
-            for rect in rects {
-                let selRect = rect.rect
-                let path = NSBezierPath(rect: selRect)
-                path.fill()
-            }
-        } else if isEditing && isCaretVisible {
-            // Draw caret (insertion point)
-            let caretRect = caretRectService.caretRect(at: sel.location, allowMovingCaretToNextLineFragment: true)
-            if caretRect.intersects(dirtyRect) {
-                insertionPointColor.setFill()
-                let path = NSBezierPath(rect: caretRect)
-                path.fill()
+        for caret in allCarets {
+            let sel = caret.range
+            if sel.length > 0 {
+                // Draw all selection rects without filtering by dirtyRect
+                // to ensure complete selection highlighting for wrapped lines
+                let rects = selectionRectService.selectionRects(in: sel)
+                selectionHighlightColor.setFill()
+                for rect in rects {
+                    NSBezierPath(rect: rect.rect).fill()
+                }
+            } else if isEditing && isCaretVisible {
+                let caretRect = caretRectService.caretRect(at: sel.location, allowMovingCaretToNextLineFragment: true)
+                if caretRect.intersects(dirtyRect) {
+                    insertionPointColor.setFill()
+                    NSBezierPath(rect: caretRect).fill()
+                }
             }
         }
     }
@@ -633,30 +647,35 @@ final class TextInputViewMac: NSView, NSTextInputClient {
         _markedText = nil
 
         let preparedText = prepareTextForInsertion(text)
-        let range = replacementRange.location == NSNotFound ? (selection ?? NSRange(location: stringView.string.length, length: 0)) : replacementRange
-
-        guard delegate?.textInputView(self, shouldChangeTextIn: range, replacementText: preparedText) ?? true else {
-            return
-        }
-
-        if LineEnding(symbol: text) != nil {
-            indentController.insertLineBreak(in: range, using: lineEndings)
-        } else {
-            // Check for character pair auto-insertion
-            if let characterPair = characterPairs.first(where: { $0.leading == preparedText }) {
-                // Insert both leading and trailing, position cursor between
-                let pairedText = preparedText + characterPair.trailing
-                replaceText(in: range, with: pairedText)
-                // Move cursor to between the pair
-                let cursorPosition = range.location + preparedText.utf16.count
-                selection = NSRange(location: cursorPosition, length: 0)
-            } else {
-                replaceText(in: range, with: preparedText)
+        if replacementRange.location == NSNotFound && hasMultipleSelections {
+            editAllCarets { range in
+                self.insert(preparedText, originalText: text, in: range)
             }
+        } else {
+            let range = replacementRange.location == NSNotFound ? (selection ?? NSRange(location: stringView.string.length, length: 0)) : replacementRange
+            insert(preparedText, originalText: text, in: range)
         }
 
         layoutSubtreeIfNeeded()
         delegate?.textInputViewDidChangeSelection(self)
+    }
+
+    /// Inserts typed text at one caret, with line-break indentation and character pairs.
+    private func insert(_ preparedText: String, originalText text: String, in range: NSRange) {
+        guard delegate?.textInputView(self, shouldChangeTextIn: range, replacementText: preparedText) ?? true else {
+            return
+        }
+        if LineEnding(symbol: text) != nil {
+            indentController.insertLineBreak(in: range, using: lineEndings)
+        } else if let characterPair = characterPairs.first(where: { $0.leading == preparedText }) {
+            // Insert both leading and trailing, position cursor between
+            let pairedText = preparedText + characterPair.trailing
+            replaceText(in: range, with: pairedText)
+            let cursorPosition = range.location + preparedText.utf16.count
+            setPrimaryRangeDirectly(NSRange(location: cursorPosition, length: 0))
+        } else {
+            replaceText(in: range, with: preparedText)
+        }
     }
 
     func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) {
@@ -751,125 +770,111 @@ final class TextInputViewMac: NSView, NSTextInputClient {
     }
 
     override func doCommand(by selector: Selector) {
-        if selector == #selector(deleteBackward(_:)) {
-            deleteBackward(nil)
-        } else if selector == #selector(deleteForward(_:)) {
-            deleteForward(nil)
-        } else if selector == #selector(moveLeft(_:)) {
-            moveLeft(nil)
-        } else if selector == #selector(moveRight(_:)) {
-            moveRight(nil)
-        } else if selector == #selector(moveUp(_:)) {
-            moveUp(nil)
-        } else if selector == #selector(moveDown(_:)) {
-            moveDown(nil)
-        } else if selector == #selector(insertNewline(_:)) {
-            insertText("\n", replacementRange: NSRange(location: NSNotFound, length: 0))
-        } else if selector == #selector(insertTab(_:)) {
-            insertText("\t", replacementRange: NSRange(location: NSNotFound, length: 0))
-        } else if selector == #selector(selectAll(_:)) {
-            selectAll(nil)
-        } else {
+        if !handleStandardKeyBinding(selector) {
             super.doCommand(by: selector)
         }
+    }
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if window?.firstResponder === self, handleEditorKeyEquivalent(event) {
+            return true
+        }
+        return super.performKeyEquivalent(with: event)
     }
 
     // MARK: - Standard Actions
 
     @objc override func deleteBackward(_ sender: Any?) {
-        guard var range = _markedRange ?? _selectedRange, range.location > 0 || range.length > 0 else {
-            return
-        }
-
-        if range.length == 0 {
-            range = NSRange(location: range.location - 1, length: 1)
-        }
-
-        let deleteRange = rangeForDeletingText(in: range)
-
-        if deleteRange == _markedRange {
-            _markedRange = nil
-            _markedText = nil
-        }
-
-        guard delegate?.textInputView(self, shouldChangeTextIn: deleteRange, replacementText: "") ?? true else {
-            return
-        }
-
-        replaceText(in: deleteRange, with: "")
+        editAllCarets { range in self.deleteBackward(in: range) }
         delegate?.textInputViewDidChangeSelection(self)
     }
 
     @objc override func deleteForward(_ sender: Any?) {
-        guard var range = _selectedRange, range.upperBound < string.length else {
-            return
-        }
-
-        if range.length == 0 {
-            range = NSRange(location: range.location, length: 1)
-        }
-
-        guard delegate?.textInputView(self, shouldChangeTextIn: range, replacementText: "") ?? true else {
-            return
-        }
-
-        replaceText(in: range, with: "")
+        editAllCarets { range in self.deleteForward(in: range) }
         delegate?.textInputViewDidChangeSelection(self)
     }
 
-    @objc override func moveLeft(_ sender: Any?) {
-        guard let range = _selectedRange else { return }
-        let newLocation = max(0, range.location - 1)
-        selection = NSRange(location: newLocation, length: 0)
-    }
-
-    @objc override func moveRight(_ sender: Any?) {
-        guard let range = _selectedRange else { return }
-        let newLocation = min(string.length, range.upperBound + 1)
-        selection = NSRange(location: newLocation, length: 0)
-    }
-
-    @objc override func moveUp(_ sender: Any?) {
-        guard let range = _selectedRange else { return }
-        if let newLocation = lineMovementController.location(from: range.location, in: .up, offset: 1) {
-            selection = NSRange(location: newLocation, length: 0)
+    private func deleteBackward(in selected: NSRange) {
+        var range = _markedRange ?? selected
+        guard range.location > 0 || range.length > 0 else { return }
+        if range.length == 0 {
+            range = NSRange(location: range.location - 1, length: 1)
         }
+        let deleteRange = rangeForDeletingText(in: range)
+        if deleteRange == _markedRange {
+            _markedRange = nil
+            _markedText = nil
+        }
+        guard delegate?.textInputView(self, shouldChangeTextIn: deleteRange, replacementText: "") ?? true else { return }
+        replaceText(in: deleteRange, with: "")
     }
 
-    @objc override func moveDown(_ sender: Any?) {
-        guard let range = _selectedRange else { return }
-        if let newLocation = lineMovementController.location(from: range.location, in: .down, offset: 1) {
-            selection = NSRange(location: newLocation, length: 0)
+    private func deleteForward(in selected: NSRange) {
+        var range = selected
+        guard range.upperBound < string.length || range.length > 0 else { return }
+        if range.length == 0 {
+            range = string.rangeOfComposedCharacterSequence(at: range.location)
         }
+        guard delegate?.textInputView(self, shouldChangeTextIn: range, replacementText: "") ?? true else { return }
+        replaceText(in: range, with: "")
     }
+
+    @objc override func moveLeft(_ sender: Any?) { move(.left, extending: false) }
+    @objc override func moveRight(_ sender: Any?) { move(.right, extending: false) }
+    @objc override func moveUp(_ sender: Any?) { move(.up, extending: false) }
+    @objc override func moveDown(_ sender: Any?) { move(.down, extending: false) }
 
     @objc override func selectAll(_ sender: Any?) {
         selection = NSRange(location: 0, length: string.length)
     }
 
     @objc func copy(_ sender: Any?) {
-        guard let selectedRange = selection, selectedRange.length > 0 else { return }
-        let selectedText = stringView.string.substring(with: selectedRange)
+        guard let text = copyableText() else { return }
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
-        pasteboard.setString(selectedText, forType: .string)
+        pasteboard.setString(text, forType: .string)
     }
 
     @objc func cut(_ sender: Any?) {
-        guard let selectedRange = selection, selectedRange.length > 0 else { return }
-        let selectedText = stringView.string.substring(with: selectedRange)
+        guard let text = copyableText() else { return }
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
-        pasteboard.setString(selectedText, forType: .string)
-        // Delete the selected text
-        replaceText(in: selectedRange, with: "")
+        pasteboard.setString(text, forType: .string)
+        editAllCarets { range in
+            if range.length > 0 { self.replaceText(in: range, with: "") }
+        }
+        delegate?.textInputViewDidChangeSelection(self)
     }
 
     @objc func paste(_ sender: Any?) {
         let pasteboard = NSPasteboard.general
         guard let pasteString = pasteboard.string(forType: .string) else { return }
-        let range = selection ?? NSRange(location: stringView.string.length, length: 0)
-        replaceText(in: range, with: pasteString)
+        paste(pasteString)
+    }
+
+    /// Pastes `text` at every caret. With as many lines as carets, each caret gets its line.
+    func paste(_ text: String) {
+        guard hasMultipleSelections else {
+            let range = selection ?? NSRange(location: stringView.string.length, length: 0)
+            replaceText(in: range, with: text)
+            return
+        }
+        let lines = TextNavigation.lines(forDistributing: text)
+        let carets = allCarets
+        let distribute = lines.count == carets.count
+        var index = carets.count - 1
+        editAllCarets { range in
+            let piece = distribute ? lines[max(0, index)] : text
+            index -= 1
+            self.replaceText(in: range, with: piece)
+        }
+        delegate?.textInputViewDidChangeSelection(self)
+    }
+
+    /// Selected text; several selections are joined with line breaks, as in Zed and VS Code.
+    func copyableText() -> String? {
+        let pieces = allCarets.map(\.range).filter { $0.length > 0 }.map { stringView.string.substring(with: $0) }
+        return pieces.isEmpty ? nil : pieces.joined(separator: lineEndings.symbol)
     }
 
     // MARK: - Mouse Events
@@ -893,6 +898,24 @@ final class TextInputViewMac: NSView, NSTextInputClient {
         lineSelectionMode = false
         originalWordRange = nil
         originalLineRange = nil
+
+        let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        keepSecondariesDuringDrag = false
+        if event.clickCount == 1 && modifiers.contains(.option) {
+            // ⌥-click adds a caret (or removes the one already there)
+            toggleCaret(at: index)
+            selectionAnchor = index
+            keepSecondariesDuringDrag = true
+            return
+        }
+        if event.clickCount == 1 && modifiers.contains(.shift) {
+            // ⇧-click extends the primary selection from its anchor
+            let anchor = primaryCaret?.anchor ?? index
+            setCarets(secondaryCarets + [CaretSelection(anchor: anchor, head: index)], primary: secondaryCarets.count)
+            selectionAnchor = anchor
+            keepSecondariesDuringDrag = true
+            return
+        }
 
         switch event.clickCount {
         case 1:
@@ -938,15 +961,17 @@ final class TextInputViewMac: NSView, NSTextInputClient {
             let start = min(originalRange.location, currentWordRange.location)
             let end = max(originalRange.upperBound, currentWordRange.upperBound)
             selection = NSRange(location: start, length: end - start)
+        } else if keepSecondariesDuringDrag {
+            // Extending a caret added with ⌥/⇧-click; the others stay put
+            setCarets(secondaryCarets + [CaretSelection(anchor: anchor, head: index)], primary: secondaryCarets.count)
         } else {
-            // Normal character-by-character selection
-            let start = min(anchor, index)
-            let end = max(anchor, index)
-            selection = NSRange(location: start, length: end - start)
+            // Normal character-by-character selection, remembering the direction
+            setCarets([CaretSelection(anchor: anchor, head: index)], primary: 0)
         }
     }
 
     override func mouseUp(with event: NSEvent) {
+        keepSecondariesDuringDrag = false
         selectionAnchor = nil
         wordSelectionMode = false
         lineSelectionMode = false
@@ -956,34 +981,7 @@ final class TextInputViewMac: NSView, NSTextInputClient {
 
     /// Returns the range of the word at the given index
     private func wordRange(at index: Int) -> NSRange {
-        let nsString = stringView.string
-        let length = nsString.length
-        guard index >= 0 && index <= length else {
-            return NSRange(location: index, length: 0)
-        }
-
-        // Find word boundaries using character sets
-        let wordCharacters = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "_"))
-
-        var start = index
-        var end = index
-
-        // Expand backwards to find word start
-        while start > 0 {
-            let charIndex = start - 1
-            let char = nsString.character(at: charIndex)
-            guard let scalar = Unicode.Scalar(char), wordCharacters.contains(scalar) else { break }
-            start -= 1
-        }
-
-        // Expand forwards to find word end
-        while end < length {
-            let char = nsString.character(at: end)
-            guard let scalar = Unicode.Scalar(char), wordCharacters.contains(scalar) else { break }
-            end += 1
-        }
-
-        return NSRange(location: start, length: end - start)
+        TextNavigation.wordRange(at: index, in: stringView.string)
     }
 
     /// Returns the range of the line at the given index
@@ -1510,6 +1508,428 @@ extension TextInputViewMac: IndentControllerDelegate {
 
     func indentControllerDidUpdateTabWidth(_ controller: IndentController) {
         invalidateLines()
+    }
+}
+
+
+// MARK: - Multiple selections & keyboard navigation
+
+extension TextInputViewMac {
+    /// Every selection, primary included, sorted by location.
+    var allCarets: [CaretSelection] {
+        caretsWithPrimary().carets
+    }
+
+    var selectedRanges: [NSRange] {
+        allCarets.map(\.range)
+    }
+
+    var hasMultipleSelections: Bool {
+        !secondaryCarets.isEmpty
+    }
+
+    fileprivate var primaryCaret: CaretSelection? {
+        guard let range = _selectedRange else { return nil }
+        if let anchor = primaryAnchor, anchor == range.location || anchor == range.upperBound {
+            return CaretSelection(anchor: anchor, head: anchor == range.location ? range.upperBound : range.location)
+        }
+        return CaretSelection(range: range)
+    }
+
+    fileprivate func caretsWithPrimary() -> (carets: [CaretSelection], primary: Int) {
+        guard let primary = primaryCaret else { return ([], 0) }
+        return CaretSelection.normalized(secondaryCarets + [primary], primary: secondaryCarets.count)
+    }
+
+    /// Replaces every selection. `carets[primaryIndex]` becomes the primary.
+    func setCarets(_ carets: [CaretSelection], primary primaryIndex: Int) {
+        let (normalized, primary) = CaretSelection.normalized(carets.map(clamp), primary: primaryIndex)
+        guard !normalized.isEmpty else {
+            selection = nil
+            return
+        }
+        let primaryCaret = normalized[primary]
+        var others = normalized
+        others.remove(at: primary)
+        let previousPrimaryRange = _selectedRange
+        let secondariesChanged = others != secondaryCarets
+        isUpdatingSelections = true
+        secondaryCarets = others
+        primaryAnchor = primaryCaret.anchor
+        selection = primaryCaret.range
+        isUpdatingSelections = false
+        if secondariesChanged {
+            layoutManager.setNeedsDisplayOnLines()
+            needsDisplay = true
+            if previousPrimaryRange == _selectedRange {
+                delegate?.textInputViewDidChangeSelection(self)
+            }
+        }
+    }
+
+    /// Sets the primary range without touching the other carets (used mid-edit).
+    fileprivate func setPrimaryRangeDirectly(_ range: NSRange) {
+        isUpdatingSelections = true
+        selection = range
+        isUpdatingSelections = false
+    }
+
+    private func clamp(_ caret: CaretSelection) -> CaretSelection {
+        let length = stringView.string.length
+        return CaretSelection(anchor: max(0, min(caret.anchor, length)), head: max(0, min(caret.head, length)))
+    }
+
+    /// Adds a caret at `location`, or removes the one already there. The result is primary.
+    func toggleCaret(at location: Int) {
+        var carets = allCarets
+        if carets.count > 1, let index = carets.firstIndex(where: { $0.isCaret && $0.head == location }) {
+            carets.remove(at: index)
+            setCarets(carets, primary: carets.count - 1)
+        } else {
+            carets.append(CaretSelection(caretAt: location))
+            setCarets(carets, primary: carets.count - 1)
+        }
+    }
+
+    /// Esc: back to one cursor.
+    func collapseToPrimarySelection() {
+        guard hasMultipleSelections, let primary = primaryCaret else { return }
+        setCarets([primary], primary: 0)
+    }
+
+    /// ⌘D: select the word at the caret, then each further occurrence of the selection.
+    func selectNextOccurrence() {
+        let string = stringView.string
+        let (carets, primaryIndex) = caretsWithPrimary()
+        guard carets.indices.contains(primaryIndex) else { return }
+        let primary = carets[primaryIndex]
+        if primary.isCaret {
+            let word = TextNavigation.wordRange(at: primary.head, in: string)
+            guard word.length > 0 else { return }
+            var updated = carets
+            updated[primaryIndex] = CaretSelection(range: word)
+            setCarets(updated, primary: primaryIndex)
+            return
+        }
+        let needle = string.substring(with: primary.range)
+        let taken = Set(carets.map { $0.range.location })
+        var searchFrom = primary.range.upperBound
+        for _ in 0..<2 {
+            var from = searchFrom
+            while from <= string.length {
+                let found = string.range(of: needle, options: [], range: NSRange(location: from, length: string.length - from))
+                guard found.location != NSNotFound else { break }
+                if !taken.contains(found.location) {
+                    setCarets(carets + [CaretSelection(range: found)], primary: carets.count)
+                    return
+                }
+                from = found.location + max(1, found.length)
+            }
+            searchFrom = 0 // wrap around once
+        }
+        NSSound.beep()
+    }
+
+    /// ⌘⇧L: one selection per occurrence of the selected text (or the word at the caret).
+    func selectAllOccurrences() {
+        let string = stringView.string
+        let (carets, primaryIndex) = caretsWithPrimary()
+        guard carets.indices.contains(primaryIndex) else { return }
+        var primary = carets[primaryIndex]
+        if primary.isCaret {
+            primary = CaretSelection(range: TextNavigation.wordRange(at: primary.head, in: string))
+        }
+        guard primary.range.length > 0 else { return }
+        let needle = string.substring(with: primary.range)
+        var found: [CaretSelection] = []
+        var from = 0
+        while from <= string.length, found.count < 10_000 {
+            let range = string.range(of: needle, options: [], range: NSRange(location: from, length: string.length - from))
+            guard range.location != NSNotFound else { break }
+            found.append(CaretSelection(range: range))
+            from = range.location + max(1, range.length)
+        }
+        let primaryInFound = found.firstIndex { $0.range == primary.range } ?? found.count - 1
+        setCarets(found, primary: primaryInFound)
+    }
+
+    /// ⌘⌥↑/↓ and ⌃⇧↑/↓: a caret on the line above the top-most / below the bottom-most one.
+    func addCaret(_ direction: RSTextLayoutDirection) {
+        let carets = allCarets
+        guard let edge = direction == .up ? carets.first : carets.last else { return }
+        guard let location = lineMovementController.location(from: edge.head, in: direction, offset: 1), location != edge.head else {
+            NSSound.beep()
+            return
+        }
+        setCarets(carets + [CaretSelection(caretAt: location)], primary: carets.count)
+    }
+
+    // MARK: Movement
+
+    enum Motion {
+        case left, right, wordLeft, wordRight
+        case lineStart, lineEnd, lineStartHard, lineEndHard
+        case paragraphBackward, paragraphForward
+        case documentStart, documentEnd
+        case up, down, pageUp, pageDown
+    }
+
+    fileprivate var linesPerPage: Int {
+        max(1, Int(layoutManager.viewport.height / max(estimatedLineHeight, 1)) - 1)
+    }
+
+    /// Content range (no line break) of the line containing `location`.
+    fileprivate func lineContentRange(containing location: Int) -> NSRange {
+        let length = stringView.string.length
+        let line = lineManager.line(containingCharacterAt: min(location, length)) ?? lineManager.line(atRow: lineManager.lineCount - 1)
+        return NSRange(location: line.location, length: line.data.length)
+    }
+
+    fileprivate func destination(for motion: Motion, from caret: CaretSelection, extending: Bool) -> Int {
+        let string = stringView.string
+        let length = string.length
+        let head = caret.head
+        switch motion {
+        case .left:
+            if !extending && !caret.isCaret { return caret.range.location }
+            guard head > 0 else { return 0 }
+            return string.rangeOfComposedCharacterSequence(at: head - 1).location
+        case .right:
+            if !extending && !caret.isCaret { return caret.range.upperBound }
+            guard head < length else { return length }
+            return string.rangeOfComposedCharacterSequence(at: head).upperBound
+        case .wordLeft:
+            return TextNavigation.wordStart(before: head, in: string)
+        case .wordRight:
+            return TextNavigation.wordEnd(after: head, in: string)
+        case .lineStart:
+            // Smart home: first non-blank column, then the real start
+            let content = lineContentRange(containing: head)
+            let smart = TextNavigation.firstNonWhitespace(in: content, of: string)
+            return head == smart ? content.location : smart
+        case .lineStartHard:
+            return lineContentRange(containing: head).location
+        case .lineEnd, .lineEndHard:
+            return lineContentRange(containing: head).upperBound
+        case .paragraphBackward:
+            let content = lineContentRange(containing: head)
+            if head > content.location { return content.location }
+            return content.location > 0 ? lineContentRange(containing: content.location - 1).location : 0
+        case .paragraphForward:
+            let content = lineContentRange(containing: head)
+            if head < content.upperBound { return content.upperBound }
+            let line = lineManager.line(containingCharacterAt: min(head, length))
+            if let line, line.index + 1 < lineManager.lineCount {
+                let next = lineManager.line(atRow: line.index + 1)
+                return next.location + next.data.length
+            }
+            return length
+        case .documentStart:
+            return 0
+        case .documentEnd:
+            return length
+        case .up:
+            return lineMovementController.location(from: head, in: .up, offset: 1) ?? 0
+        case .down:
+            return lineMovementController.location(from: head, in: .down, offset: 1) ?? length
+        case .pageUp:
+            return lineMovementController.location(from: head, in: .up, offset: linesPerPage) ?? 0
+        case .pageDown:
+            return lineMovementController.location(from: head, in: .down, offset: linesPerPage) ?? length
+        }
+    }
+
+    /// Moves every caret; with `extending`, the anchors stay and only the heads move.
+    func move(_ motion: Motion, extending: Bool) {
+        let (carets, primaryIndex) = caretsWithPrimary()
+        guard !carets.isEmpty else { return }
+        let moved = carets.map { caret -> CaretSelection in
+            let target = destination(for: motion, from: caret, extending: extending)
+            return extending ? CaretSelection(anchor: caret.anchor, head: target) : CaretSelection(caretAt: target)
+        }
+        setCarets(moved, primary: primaryIndex)
+    }
+
+    // MARK: Multi-caret editing
+
+    /// Runs `edit` for every selection from last to first, so earlier offsets stay valid,
+    /// then puts each caret where its edit left the primary range, shifted by the
+    /// length changes of the edits before it. Single selection: just runs `edit`.
+    func editAllCarets(_ edit: (NSRange) -> Void) {
+        let (carets, primaryIndex) = caretsWithPrimary()
+        guard carets.count > 1 else {
+            if let only = carets.first { edit(only.range) }
+            return
+        }
+        isUpdatingSelections = true
+        var afterEdit: [(range: NSRange, delta: Int)] = Array(repeating: (NSRange(location: 0, length: 0), 0), count: carets.count)
+        for (index, caret) in carets.enumerated().reversed() {
+            _selectedRange = caret.range
+            let before = stringView.string.length
+            edit(caret.range)
+            afterEdit[index] = (_selectedRange ?? caret.range, stringView.string.length - before)
+        }
+        isUpdatingSelections = false
+        var shift = 0
+        var finals: [CaretSelection] = []
+        for item in afterEdit {
+            finals.append(CaretSelection(range: NSRange(location: item.range.location + shift, length: item.range.length)))
+            shift += item.delta
+        }
+        setCarets(finals, primary: primaryIndex)
+    }
+
+    fileprivate func deleteRange(for caret: CaretSelection, motion: Motion) -> NSRange? {
+        if !caret.isCaret { return caret.range }
+        let target = destination(for: motion, from: caret, extending: true)
+        guard target != caret.head else {
+            // Already at the boundary: ⌘⌫ at a line start joins with the previous line, ⌃K at a line end joins the next
+            switch motion {
+            case .lineStartHard, .lineStart, .wordLeft:
+                return caret.head > 0 ? NSRange(location: caret.head - 1, length: 1) : nil
+            case .lineEndHard, .lineEnd, .wordRight:
+                return caret.head < stringView.string.length ? NSRange(location: caret.head, length: 1) : nil
+            default:
+                return nil
+            }
+        }
+        return NSRange(location: min(target, caret.head), length: abs(target - caret.head))
+    }
+
+    fileprivate func delete(_ motion: Motion) {
+        editAllCarets { range in
+            let caret = CaretSelection(range: range)
+            guard let deleteRange = self.deleteRange(for: caret, motion: motion), deleteRange.length > 0 else { return }
+            guard self.delegate?.textInputView(self, shouldChangeTextIn: deleteRange, replacementText: "") ?? true else { return }
+            self.replaceText(in: deleteRange, with: "")
+        }
+        delegate?.textInputViewDidChangeSelection(self)
+    }
+
+    fileprivate func insertTabOrIndent() {
+        let spansLines = allCarets.contains { caret in
+            caret.range.length > 0 && lineManager.lines(in: caret.range).count > 1
+        }
+        if spansLines {
+            editAllCarets { range in
+                if range.length > 0 { self.indentController.shiftRight(in: range) }
+            }
+        } else {
+            insertText("\t", replacementRange: NSRange(location: NSNotFound, length: 0))
+        }
+    }
+
+    fileprivate func outdent() {
+        editAllCarets { range in
+            self.indentController.shiftLeft(in: range)
+        }
+    }
+
+    // MARK: Key bindings
+
+    /// The standard macOS editing selectors (NSStandardKeyBindingResponding). Returns false when unhandled.
+    func handleStandardKeyBinding(_ selector: Selector) -> Bool {
+        let moves: [Selector: (Motion, Bool)] = [
+            #selector(NSResponder.moveLeft(_:)): (.left, false),
+            #selector(NSResponder.moveRight(_:)): (.right, false),
+            #selector(NSResponder.moveUp(_:)): (.up, false),
+            #selector(NSResponder.moveDown(_:)): (.down, false),
+            #selector(NSResponder.moveBackward(_:)): (.left, false),
+            #selector(NSResponder.moveForward(_:)): (.right, false),
+            #selector(NSResponder.moveWordLeft(_:)): (.wordLeft, false),
+            #selector(NSResponder.moveWordRight(_:)): (.wordRight, false),
+            #selector(NSResponder.moveWordBackward(_:)): (.wordLeft, false),
+            #selector(NSResponder.moveWordForward(_:)): (.wordRight, false),
+            #selector(NSResponder.moveToBeginningOfLine(_:)): (.lineStart, false),
+            #selector(NSResponder.moveToLeftEndOfLine(_:)): (.lineStart, false),
+            #selector(NSResponder.moveToEndOfLine(_:)): (.lineEnd, false),
+            #selector(NSResponder.moveToRightEndOfLine(_:)): (.lineEnd, false),
+            #selector(NSResponder.moveToBeginningOfParagraph(_:)): (.lineStartHard, false),
+            #selector(NSResponder.moveToEndOfParagraph(_:)): (.lineEndHard, false),
+            #selector(NSResponder.moveToBeginningOfDocument(_:)): (.documentStart, false),
+            #selector(NSResponder.moveToEndOfDocument(_:)): (.documentEnd, false),
+            #selector(NSResponder.pageUp(_:)): (.pageUp, false),
+            #selector(NSResponder.pageDown(_:)): (.pageDown, false),
+            #selector(NSResponder.moveLeftAndModifySelection(_:)): (.left, true),
+            #selector(NSResponder.moveRightAndModifySelection(_:)): (.right, true),
+            #selector(NSResponder.moveUpAndModifySelection(_:)): (.up, true),
+            #selector(NSResponder.moveDownAndModifySelection(_:)): (.down, true),
+            #selector(NSResponder.moveBackwardAndModifySelection(_:)): (.left, true),
+            #selector(NSResponder.moveForwardAndModifySelection(_:)): (.right, true),
+            #selector(NSResponder.moveWordLeftAndModifySelection(_:)): (.wordLeft, true),
+            #selector(NSResponder.moveWordRightAndModifySelection(_:)): (.wordRight, true),
+            #selector(NSResponder.moveWordBackwardAndModifySelection(_:)): (.wordLeft, true),
+            #selector(NSResponder.moveWordForwardAndModifySelection(_:)): (.wordRight, true),
+            #selector(NSResponder.moveToBeginningOfLineAndModifySelection(_:)): (.lineStartHard, true),
+            #selector(NSResponder.moveToLeftEndOfLineAndModifySelection(_:)): (.lineStartHard, true),
+            #selector(NSResponder.moveToEndOfLineAndModifySelection(_:)): (.lineEnd, true),
+            #selector(NSResponder.moveToRightEndOfLineAndModifySelection(_:)): (.lineEnd, true),
+            #selector(NSResponder.moveToBeginningOfParagraphAndModifySelection(_:)): (.lineStartHard, true),
+            #selector(NSResponder.moveToEndOfParagraphAndModifySelection(_:)): (.lineEndHard, true),
+            #selector(NSResponder.moveParagraphBackwardAndModifySelection(_:)): (.paragraphBackward, true),
+            #selector(NSResponder.moveParagraphForwardAndModifySelection(_:)): (.paragraphForward, true),
+            #selector(NSResponder.moveToBeginningOfDocumentAndModifySelection(_:)): (.documentStart, true),
+            #selector(NSResponder.moveToEndOfDocumentAndModifySelection(_:)): (.documentEnd, true),
+            #selector(NSResponder.pageUpAndModifySelection(_:)): (.pageUp, true),
+            #selector(NSResponder.pageDownAndModifySelection(_:)): (.pageDown, true),
+        ]
+        if let (motion, extending) = moves[selector] {
+            move(motion, extending: extending)
+            return true
+        }
+        switch selector {
+        case #selector(NSResponder.deleteBackward(_:)):
+            deleteBackward(nil)
+        case #selector(NSResponder.deleteForward(_:)):
+            deleteForward(nil)
+        case #selector(NSResponder.deleteWordBackward(_:)):
+            delete(.wordLeft)
+        case #selector(NSResponder.deleteWordForward(_:)):
+            delete(.wordRight)
+        case #selector(NSResponder.deleteToBeginningOfLine(_:)), #selector(NSResponder.deleteToBeginningOfParagraph(_:)):
+            delete(.lineStartHard)
+        case #selector(NSResponder.deleteToEndOfLine(_:)), #selector(NSResponder.deleteToEndOfParagraph(_:)):
+            delete(.lineEndHard)
+        case #selector(NSResponder.insertNewline(_:)), #selector(NSResponder.insertLineBreak(_:)), #selector(NSResponder.insertNewlineIgnoringFieldEditor(_:)):
+            insertText("\n", replacementRange: NSRange(location: NSNotFound, length: 0))
+        case #selector(NSResponder.insertTab(_:)), #selector(NSResponder.insertTabIgnoringFieldEditor(_:)):
+            insertTabOrIndent()
+        case #selector(NSResponder.insertBacktab(_:)):
+            outdent()
+        case #selector(NSResponder.selectAll(_:)):
+            selectAll(nil)
+        case #selector(NSResponder.selectWord(_:)):
+            let (carets, primary) = caretsWithPrimary()
+            setCarets(carets.map { CaretSelection(range: TextNavigation.wordRange(at: $0.head, in: stringView.string)) }, primary: primary)
+        case #selector(NSResponder.selectLine(_:)), #selector(NSResponder.selectParagraph(_:)):
+            let (carets, primary) = caretsWithPrimary()
+            setCarets(carets.map { CaretSelection(range: lineContentRange(containing: $0.head)) }, primary: primary)
+        case #selector(NSResponder.cancelOperation(_:)):
+            guard hasMultipleSelections else { return false }
+            collapseToPrimarySelection()
+        default:
+            return false
+        }
+        return true
+    }
+
+    /// Editor shortcuts that are not standard key bindings. Returns false when unhandled.
+    func handleEditorKeyEquivalent(_ event: NSEvent) -> Bool {
+        let flags = event.modifierFlags.intersection([.command, .shift, .option, .control])
+        let key = event.charactersIgnoringModifiers?.lowercased() ?? ""
+        switch (flags, key, event.specialKey) {
+        case ([.command], "d", _):
+            selectNextOccurrence()
+        case ([.command, .shift], "l", _):
+            selectAllOccurrences()
+        case ([.command, .option], _, .upArrow?), ([.control, .shift], _, .upArrow?):
+            addCaret(.up)
+        case ([.command, .option], _, .downArrow?), ([.control, .shift], _, .downArrow?):
+            addCaret(.down)
+        default:
+            return false
+        }
+        return true
     }
 }
 

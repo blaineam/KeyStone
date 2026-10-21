@@ -19,6 +19,9 @@ All notable changes to KeyStone are documented here. This project adheres to [Se
 - **Find searches as you type at any file size** (150 ms debounce; 400 ms from 500 KB). The search was already off the main thread; large files were just excluded.
 - Typing deep inside a very long wrapped line resumes typesetting after the edit instead of from the line start (115 ms → ~40 ms per keystroke in a 1 MB line).
 
+- **macOS keyboard parity.** The Mac view handled only arrows and Delete. It now implements the standard key bindings: word movement (⌥←/→), smart Home/End, paragraph and document movement, Page Up/Down, every ⇧-extending variant, ⌥⌫/⌥⌦, ⌘⌫, ⌃K, ⇧Tab outdent and Tab indent of multi-line selections, Select Word/Line, and ⇧-click to extend.
+- **Multiple cursors on macOS.** ⌥-click adds or removes a caret, ⌘D selects the word then each next occurrence, ⌘⇧L selects every occurrence, ⌘⌥↑/↓ (or ⌃⇧↑/↓) add a caret above/below, Esc collapses. Typing, deleting, Tab, paste (one line per caret when the counts match), copy (joined) and undo all work across carets. `TextView.selectedRanges`, `selectNextOccurrence()`, `selectAllOccurrences()`, `addCaretAbove()/Below()`, `toggleCaret(at:)`, `collapseSelections()`.
+
 ### Tests
 
 - `KeystoneDocumentTests`, `BackgroundParsingTests` (edits during the initial parse and across reparses converge to a fresh parse, including breaking and restoring a `<script>` tag), and a per-keystroke budget on a flat 20k-line Swift file.

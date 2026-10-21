@@ -1710,6 +1710,50 @@ open class TextView: NSScrollView {
         }
     }
 
+    /// Every selection, including the primary, sorted by location. Setting more than one
+    /// range creates multiple cursors; the last one is primary.
+    public var selectedRanges: [NSRange] {
+        get { textInputView.selectedRanges }
+        set { textInputView.setCarets(newValue.map { CaretSelection(range: $0) }, primary: max(0, newValue.count - 1)) }
+    }
+
+    /// Adds a cursor at `location` (or removes the one already there). ⌥-click does this.
+    public func toggleCaret(at location: Int) {
+        textInputView.toggleCaret(at: location)
+    }
+
+    /// Selects the word at the caret, then each further occurrence of the selection (⌘D).
+    public func selectNextOccurrence() {
+        textInputView.selectNextOccurrence()
+    }
+
+    /// One selection per occurrence of the selected text (⌘⇧L).
+    public func selectAllOccurrences() {
+        textInputView.selectAllOccurrences()
+    }
+
+    /// Adds a cursor on the line above the top-most one.
+    public func addCaretAbove() {
+        textInputView.addCaret(.up)
+    }
+
+    /// Adds a cursor on the line below the bottom-most one.
+    public func addCaretBelow() {
+        textInputView.addCaret(.down)
+    }
+
+    /// Back to a single cursor (Esc).
+    public func collapseSelections() {
+        textInputView.collapseToPrimarySelection()
+    }
+
+    #if DEBUG
+    func debugDoCommand(_ selector: Selector) { textInputView.doCommand(by: selector) }
+    func debugInsertText(_ text: String) { textInputView.insertText(text, replacementRange: NSRange(location: NSNotFound, length: 0)) }
+    func debugCopyableText() -> String? { textInputView.copyableText() }
+    func debugPaste(_ text: String) { textInputView.paste(text) }
+    #endif
+
     /// Character pairs for automatic insertion.
     public var characterPairs: [CharacterPair] {
         get { textInputView.characterPairs }

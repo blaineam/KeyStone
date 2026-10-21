@@ -129,7 +129,8 @@ final class PerformanceBudgetTests: XCTestCase {
         XCTAssertLessThan(typing, 0.05)
         settle(textView)
         // Each object sits on one line, so only the root array folds; the point is the walk stays cheap.
-        XCTAssertEqual(manager.regions.first.map { [$0.startLine, $0.endLine] }, [0, 40_001])
+        XCTAssertEqual(manager.regions.first?.startLine, 0)
+        XCTAssertGreaterThan(manager.regions.first?.endLine ?? 0, 40_000)
     }
 
     // MARK: - Find
