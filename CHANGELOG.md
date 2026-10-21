@@ -2,11 +2,19 @@
 
 All notable changes to KeyStone are documented here. This project adheres to [Semantic Versioning](https://semver.org/). Releases before 2.6.0 are described by their tags and commit history.
 
-## [Unreleased]
+## [2.8.0] - 2026-10-21
 
 ### Added
 
 - **Format: Prettify / Minify for JavaScript and TypeScript.** `CodeFormatter` now supports `.javascript` and `.typescript` through js-beautify 1.15.4 (MIT) and terser 5.44.0 (BSD-2), bundled as package resources under `Resources/Formatters` and run in-process in JavaScriptCore (`JavaScriptFormatter.swift`): no process, no network. Prettify honours the editor's indent string (spaces or tabs) and ends with a newline; minify strips whitespace and comments but keeps identifiers and statements (`compress: false`, `mangle: false`), so the result prettifies back to the same text. Minify is JavaScript-only (terser does not parse type annotations) and returns nil for TypeScript; inputs over 2 MB and programs with syntax errors return nil instead of throwing. Each library is evaluated lazily, once, on a private serial queue; the first call costs ~40 ms (js-beautify) / ~0.5 s (terser) to load.
+
+### Changed
+
+- **Long lines are stored and typeset in chunks.** A line above `LineController.maximumHighlightedLineLength` (20k UTF-16 units) is split into pieces of at most `LineController.chunkLength` (8,192), each with its own attributed string and `CTTypesetter`. A keystroke rebuilds only the chunk containing it and shifts the rest; the text input views pass the replaced range through `LayoutManager.redisplayLines(withIDs:replacing:)` so the line never compares its whole text, with a memcmp-based prefix/suffix compare as the fallback for unhinted invalidations. Line fragments stay line-local (`LineFragment.stringOffset` carries the chunk base; `xOffset(forLineLocalIndex:)` / `lineLocalIndex(forPosition:)` replace direct `CTLine` index calls in the renderer and caret code), so soft-wrap boundaries may now fall at a chunk boundary in such lines, as in VS Code. Typing at offset 900,000 of the 1 MB minified line with wrapping, line numbers and invisibles on, viewport scrolled there, measures ~5–6 ms per keystroke in a debug build (was 38 ms average, 54 ms worst); with wrapping off ~9 ms (was 25 ms). Lines under the threshold are unchanged. Along the way: typesetting resumes with an in-place truncation instead of rebuilding the fragment map, fragment-tree nodes after the edit are updated in place rather than removed and re-inserted, the line-break suggester and whitespace check read UTF-16 units instead of making one-character substrings, the default paragraph style is cached per tab width, and the known fragment height is kept incrementally.
+
+### Tests
+
+- `ChunkedLineTests` (edits inside, at and across chunk boundaries, hinted and compared reconciliation, a line crossing the threshold both ways, caret round-trips across chunk offsets) and a `PerformanceBudgetTests` budget for typing deep inside the wrapped 1 MB line.
 
 ## [2.7.0] - 2026-10-21
 

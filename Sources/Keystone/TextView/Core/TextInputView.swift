@@ -1471,7 +1471,7 @@ extension TextInputView {
         let lineChangeSet = textEditResult.lineChangeSet
         let languageModeLineChangeSet = languageMode.textDidChange(textChange)
         lineChangeSet.union(with: languageModeLineChangeSet)
-        applyLineChangesToLayoutManager(lineChangeSet)
+        applyLineChangesToLayoutManager(lineChangeSet, replacing: textEditResult.textChange.replacement)
         let updatedTextEditResult = TextEditResult(textChange: textChange, lineChangeSet: lineChangeSet)
         delegate?.textInputView(self, didReplaceTextIn: range, replacementLength: nsNewString.length)
         delegate?.textInputViewDidChange(self)
@@ -1480,7 +1480,7 @@ extension TextInputView {
         }
     }
 
-    private func applyLineChangesToLayoutManager(_ lineChangeSet: LineChangeSet) {
+    private func applyLineChangesToLayoutManager(_ lineChangeSet: LineChangeSet, replacing replacement: TextReplacement? = nil) {
         let didAddOrRemoveLines = !lineChangeSet.insertedLines.isEmpty || !lineChangeSet.removedLines.isEmpty
         if didAddOrRemoveLines {
             contentSizeService.invalidateContentSize()
@@ -1490,7 +1490,7 @@ extension TextInputView {
             }
         }
         let editedLineIDs = Set(lineChangeSet.editedLines.map(\.id))
-        layoutManager.redisplayLines(withIDs: editedLineIDs)
+        layoutManager.redisplayLines(withIDs: editedLineIDs, replacing: replacement)
         if didAddOrRemoveLines {
             gutterWidthService.invalidateLineNumberWidth()
         }

@@ -34,6 +34,8 @@ final class LineTypesetter {
     var lineFragmentHeightMultiplier: CGFloat = 1
     private(set) var lineFragments: [LineFragment] = []
     private(set) var maximumLineWidth: CGFloat = 0
+    /// Sum of the scaled heights of `lineFragments`, kept incrementally.
+    private(set) var typesetHeight: CGFloat = 0
     var bestGuessNumberOfLineFragments: Int {
         if startOffset >= stringLength {
             return lineFragments.count
@@ -53,9 +55,10 @@ final class LineTypesetter {
 
     private let lineID: String
     private var stringLength = 0
-    private var attributedString: NSAttributedString?
-    private var typesetter: CTTypesetter?
+    /// The line's text in pieces, each with its own typesetter. Fragments never cross a chunk.
+    private var chunks: [LineChunk] = []
     private var lineFragmentsMap: [LineFragmentID: Int] = [:]
+    /// Line-local offset where the next fragment starts.
     private var startOffset = 0
     private var nextYPosition: CGFloat = 0
     private var lineFragmentIndex = 0
@@ -67,9 +70,9 @@ final class LineTypesetter {
     func reset() {
         lineFragments = []
         maximumLineWidth = 0
+        typesetHeight = 0
         stringLength = 0
-        attributedString = nil
-        typesetter = nil
+        chunks = []
         lineFragmentsMap = [:]
         startOffset = 0
         nextYPosition = 0
@@ -80,52 +83,60 @@ final class LineTypesetter {
     /// deep inside a long line only changes fragments from the edit on; the ones
     /// before it are reused and typesetting resumes after them.
     func reset(keepingFragments count: Int) {
-        let kept = Array(lineFragments.prefix(count))
-        reset()
-        guard let last = kept.last else { return }
-        lineFragments = kept
-        for (index, fragment) in kept.enumerated() {
-            lineFragmentsMap[fragment.id] = index
+        guard count > 0, count <= lineFragments.count else {
+            reset()
+            return
         }
-        maximumLineWidth = kept.map(\.scaledSize.width).max() ?? 0
+        // Truncate in place: thousands of fragments may be kept, so rebuilding the map
+        // on every keystroke would cost more than the typesetting it saves.
+        for fragment in lineFragments[count...] {
+            lineFragmentsMap[fragment.id] = nil
+            typesetHeight -= fragment.scaledSize.height
+        }
+        lineFragments.removeSubrange(count...)
+        let last = lineFragments[count - 1]
+        chunks = []
+        stringLength = 0
+        maximumLineWidth = lineFragments.reduce(0) { max($0, $1.scaledSize.width) }
         startOffset = last.range.upperBound
         nextYPosition = last.yPosition + last.scaledSize.height
-        lineFragmentIndex = kept.count
+        lineFragmentIndex = count
     }
 
     /// Number of leading fragments that stay valid when the text changes at `editOffset`:
     /// those ending before it, minus one for the fragment whose break looked past it.
     func reusableFragmentCount(forEditAt editOffset: Int) -> Int {
-        var count = 0
-        for fragment in lineFragments where fragment.range.upperBound <= editOffset {
-            count += 1
+        // Fragments are in order, so find the first one ending after the edit by bisection.
+        var low = 0
+        var high = lineFragments.count
+        while low < high {
+            let mid = (low + high) / 2
+            if lineFragments[mid].range.upperBound <= editOffset {
+                low = mid + 1
+            } else {
+                high = mid
+            }
         }
-        return max(0, count - 1)
+        return max(0, low - 1)
     }
 
-    func prepareToTypeset(_ attributedString: NSAttributedString) {
-        self.attributedString = attributedString
-        stringLength = CFAttributedStringGetLength(attributedString)
-        typesetter = CTTypesetterCreateWithAttributedString(attributedString)
+    /// Typeset `chunks`, which together hold the line's text in order; `stringLength` is their total length.
+    func prepareToTypeset(chunks: [LineChunk], stringLength: Int) {
+        self.chunks = chunks
+        self.stringLength = stringLength
     }
 
     @discardableResult
     func typesetLineFragments(in rect: CGRect) -> [LineFragment] {
         let lineFragments = typesetLineFragments(until: .yPosition(rect.maxY))
-        if isFinishedTypesetting {
-            attributedString = nil
-            typesetter = nil
-        }
+        releaseChunksIfFinished()
         return lineFragments
     }
 
     @discardableResult
     func typesetLineFragments(toLocation location: Int, additionalLineFragmentCount: Int = 0) -> [LineFragment] {
         let lineFragments = typesetLineFragments(until: .characterIndex(location), additionalLineFragmentCount: additionalLineFragmentCount)
-        if isFinishedTypesetting {
-            attributedString = nil
-            typesetter = nil
-        }
+        releaseChunksIfFinished()
         return lineFragments
     }
 
@@ -139,36 +150,49 @@ final class LineTypesetter {
 }
 
 private extension LineTypesetter {
+    private func releaseChunksIfFinished() {
+        // Once the whole line is typeset the typesetters are not needed until the next
+        // invalidation; the chunks themselves stay with the line controller.
+        if isFinishedTypesetting {
+            for chunk in chunks {
+                chunk.invalidateTypesetter()
+            }
+            chunks = []
+        }
+    }
+
     private func updateState(from typesetResult: TypesetResult) {
         lineFragments.append(contentsOf: typesetResult.lineFragments)
+        for fragment in typesetResult.lineFragments {
+            typesetHeight += fragment.scaledSize.height
+        }
         for (id, index) in typesetResult.lineFragmentsMap {
             lineFragmentsMap[id] = index
         }
         maximumLineWidth = max(maximumLineWidth, typesetResult.maximumLineWidth)
     }
 
-    private func typesetLineFragments(until condition: TypesetEndCondition, additionalLineFragmentCount: Int = 0) -> [LineFragment] {
-        guard let typesetter = typesetter else {
-            return []
+    /// The chunk containing the line-local `offset` (binary search).
+    private func chunk(containing offset: Int) -> LineChunk? {
+        var low = 0
+        var high = chunks.count - 1
+        while low <= high {
+            let mid = (low + high) / 2
+            let chunk = chunks[mid]
+            if offset < chunk.location {
+                high = mid - 1
+            } else if offset >= chunk.location + chunk.length {
+                low = mid + 1
+            } else {
+                return chunk
+            }
         }
-        let typesetResult = typesetLineFragments(
-            until: condition,
-            additionalLineFragmentCount: additionalLineFragmentCount,
-            using: typesetter,
-            stringLength: stringLength
-        )
-        updateState(from: typesetResult)
-        return typesetResult.lineFragments
+        return nil
     }
 
-    private func typesetLineFragments(
-        until condition: TypesetEndCondition,
-        additionalLineFragmentCount: Int = 0,
-        using typesetter: CTTypesetter,
-        stringLength: Int
-    ) -> TypesetResult {
-        guard constrainingWidth > 0 else {
-            return TypesetResult(lineFragments: [], lineFragmentsMap: [:], maximumLineWidth: 0)
+    private func typesetLineFragments(until condition: TypesetEndCondition, additionalLineFragmentCount: Int = 0) -> [LineFragment] {
+        guard !chunks.isEmpty, constrainingWidth > 0 else {
+            return []
         }
         var maximumLineWidth: CGFloat = 0
         var lineFragments: [LineFragment] = []
@@ -176,7 +200,7 @@ private extension LineTypesetter {
         var remainingAdditionalLineFragmentCount = additionalLineFragmentCount
         let conditionAllowsKeepTypesetting = condition.shouldKeepTypesetting(currentYPosition: nextYPosition, currentCharacterIndex: startOffset)
         var shouldKeepTypesetting = conditionAllowsKeepTypesetting || remainingAdditionalLineFragmentCount > 0
-        while startOffset < stringLength && shouldKeepTypesetting, let lineFragment = makeNextLineFragment(using: typesetter) {
+        while startOffset < stringLength && shouldKeepTypesetting, let chunk = chunk(containing: startOffset), let lineFragment = makeNextLineFragment(in: chunk) {
             lineFragments.append(lineFragment)
             nextYPosition += lineFragment.scaledSize.height
             startOffset += lineFragment.range.length
@@ -194,49 +218,51 @@ private extension LineTypesetter {
                 shouldKeepTypesetting = false
             }
         }
-        return TypesetResult(lineFragments: lineFragments, lineFragmentsMap: lineFragmentsMap, maximumLineWidth: maximumLineWidth)
+        let typesetResult = TypesetResult(lineFragments: lineFragments, lineFragmentsMap: lineFragmentsMap, maximumLineWidth: maximumLineWidth)
+        updateState(from: typesetResult)
+        return typesetResult.lineFragments
     }
 
-    private func makeNextLineFragment(using typesetter: CTTypesetter) -> LineFragment? {
-        // suggestNextLineBreak(using:) uses CTTypesetterSuggestLineBreak but it may return lines that are longer than our constraining width.
+    private func makeNextLineFragment(in chunk: LineChunk) -> LineFragment? {
+        let typesetter = chunk.typesetter
+        let chunkLocalStart = startOffset - chunk.location
+        // suggestNextLineBreak(in:) uses CTTypesetterSuggestLineBreak but it may return lines that are longer than our constraining width.
         // In that case we keep removeing characters from the line until we're below the constraining width.
-        var length = suggestNextLineBreak(using: typesetter)
+        var length = suggestNextLineBreak(in: chunk, startingAt: chunkLocalStart)
         var lineFragment: LineFragment?
         while lineFragment == nil || lineFragment!.scaledSize.width > constrainingWidth {
-            let visibleRange = CFRangeMake(startOffset, length)
-            lineFragment = makeLineFragment(for: visibleRange, in: typesetter, lineFragmentIndex: lineFragmentIndex, yPosition: nextYPosition)
+            let visibleRange = CFRangeMake(chunkLocalStart, length)
+            lineFragment = makeLineFragment(for: visibleRange, in: typesetter, stringOffset: chunk.location, lineFragmentIndex: lineFragmentIndex, yPosition: nextYPosition)
             length -= 1
         }
         guard let lineFragment else {
             return nil
         }
-        let whitespaceLength = lengthOfWhitespace(after: startOffset + length)
+        let whitespaceLength = lengthOfWhitespace(after: chunkLocalStart + length, in: chunk.string)
         guard whitespaceLength > 0 else {
             return lineFragment
         }
         return lineFragment.withHiddenLength(whitespaceLength)
     }
 
-    private func suggestNextLineBreak(using typesetter: CTTypesetter) -> Int {
-        guard let attributedString else {
-            return stringLength
-        }
+    private func suggestNextLineBreak(in chunk: LineChunk, startingAt chunkLocalStart: Int) -> Int {
         let lineBreakSuggester = LineBreakSuggester(
             lineBreakMode: lineBreakMode,
-            typesetter: typesetter,
-            attributedString: attributedString,
+            typesetter: chunk.typesetter,
+            attributedString: chunk.attributedString,
             constrainingWidth: constrainingWidth
         )
-        return lineBreakSuggester.suggestLineBreak(startingAt: startOffset)
+        return lineBreakSuggester.suggestLineBreak(startingAt: chunkLocalStart)
     }
 
-    private func lengthOfWhitespace(after location: Int) -> Int {
-        guard let attributedString, location < attributedString.length - 1 else {
+    private func lengthOfWhitespace(after location: Int, in string: NSString) -> Int {
+        let stringLength = string.length
+        guard location < stringLength - 1 else {
             return 0
         }
         var nextCharacter = location + 1
         var length = 0
-        while attributedString.isWhitespaceCharacter(at: nextCharacter) {
+        while nextCharacter < stringLength && string.isWhitespaceCharacter(at: nextCharacter) {
             nextCharacter += 1
             length += 1
         }
@@ -246,6 +272,7 @@ private extension LineTypesetter {
     private func makeLineFragment(
         for visibleRange: CFRange,
         in typesetter: CTTypesetter,
+        stringOffset: Int,
         lineFragmentIndex: Int,
         yPosition: CGFloat
     ) -> LineFragment {
@@ -258,12 +285,13 @@ private extension LineTypesetter {
         let baseSize = CGSize(width: width, height: height)
         let scaledSize = CGSize(width: width, height: height * lineFragmentHeightMultiplier)
         let id = LineFragmentID(lineId: lineID, lineFragmentIndex: lineFragmentIndex)
-        let visibleRange = NSRange(location: visibleRange.location, length: visibleRange.length)
+        let visibleRange = NSRange(location: visibleRange.location + stringOffset, length: visibleRange.length)
         return LineFragment(
             id: id,
             index: lineFragmentIndex,
             visibleRange: visibleRange,
             line: line,
+            stringOffset: stringOffset,
             descent: descent,
             baseSize: baseSize,
             scaledSize: scaledSize,

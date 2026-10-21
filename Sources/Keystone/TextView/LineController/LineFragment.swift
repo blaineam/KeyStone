@@ -29,7 +29,14 @@ final class LineFragment {
     /// Hidden characters are whitespace characters that would be placed at the beginning of the next line fragment if they were rendered. We hide these to align with the behavior of UITextView and NSTextView.
     let hiddenLength: Int
     /// The underlying line.
+    ///
+    /// Its string indices are relative to ``stringOffset``, not to the start of the document line: a
+    /// fragment of a chunked long line is typeset from that chunk's attributed string. Use
+    /// ``xOffset(forLineLocalIndex:)`` and ``lineLocalIndex(forPosition:)`` instead of calling CoreText
+    /// with line-local indices directly.
     let line: CTLine
+    /// Line-local location of index 0 of ``line``'s string. Zero unless the line is chunked.
+    let stringOffset: Int
     /// The lenth of the descent.
     let descent: CGFloat
     /// The non-scaled height of the line fragment.
@@ -54,6 +61,7 @@ final class LineFragment {
         index: Int,
         visibleRange: NSRange,
         line: CTLine,
+        stringOffset: Int = 0,
         descent: CGFloat,
         baseSize: CGSize,
         scaledSize: CGSize,
@@ -65,6 +73,7 @@ final class LineFragment {
             visibleRange: visibleRange,
             hiddenLength: 0,
             line: line,
+            stringOffset: stringOffset,
             descent: descent,
             baseSize: baseSize,
             scaledSize: scaledSize,
@@ -78,6 +87,7 @@ final class LineFragment {
         visibleRange: NSRange,
         hiddenLength: Int,
         line: CTLine,
+        stringOffset: Int,
         descent: CGFloat,
         baseSize: CGSize,
         scaledSize: CGSize,
@@ -88,6 +98,7 @@ final class LineFragment {
         self.visibleRange = visibleRange
         self.hiddenLength = hiddenLength
         self.line = line
+        self.stringOffset = stringOffset
         self.descent = descent
         self.baseSize = baseSize
         self.scaledSize = scaledSize
@@ -101,11 +112,23 @@ final class LineFragment {
             visibleRange: visibleRange,
             hiddenLength: hiddenLength,
             line: line,
+            stringOffset: stringOffset,
             descent: descent,
             baseSize: baseSize,
             scaledSize: scaledSize,
             yPosition: yPosition
         )
+    }
+
+    /// Horizontal position of a line-local character index within the fragment.
+    func xOffset(forLineLocalIndex lineLocalIndex: Int) -> CGFloat {
+        CTLineGetOffsetForStringIndex(line, lineLocalIndex - stringOffset, nil)
+    }
+
+    /// Line-local character index closest to a point in the fragment, or `kCFNotFound`.
+    func lineLocalIndex(forPosition position: CGPoint) -> Int {
+        let index = CTLineGetStringIndexForPosition(line, position)
+        return index == kCFNotFound ? index : index + stringOffset
     }
 
     func caretLocation(forLineLocalLocation lineLocalLocation: Int) -> Int? {

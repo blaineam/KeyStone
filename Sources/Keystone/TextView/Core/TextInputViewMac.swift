@@ -1244,7 +1244,7 @@ final class TextInputViewMac: NSView, NSTextInputClient {
         let lineChangeSet = textEditResult.lineChangeSet
         let languageModeLineChangeSet = languageMode.textDidChange(textEditResult.textChange)
         lineChangeSet.union(with: languageModeLineChangeSet)
-        applyLineChangesToLayoutManager(lineChangeSet)
+        applyLineChangesToLayoutManager(lineChangeSet, replacing: textEditResult.textChange.replacement)
 
         // Clamp selection to valid bounds - critical when text length changes dramatically
         // (e.g., base64 decode can shrink text from 4M to 2K chars)
@@ -1280,7 +1280,7 @@ final class TextInputViewMac: NSView, NSTextInputClient {
         let lineChangeSet = textEditResult.lineChangeSet
         let languageModeLineChangeSet = languageMode.textDidChange(textEditResult.textChange)
         lineChangeSet.union(with: languageModeLineChangeSet)
-        applyLineChangesToLayoutManager(lineChangeSet)
+        applyLineChangesToLayoutManager(lineChangeSet, replacing: textEditResult.textChange.replacement)
 
         // Clamp restored selection to valid bounds - critical when text length changes dramatically
         let newTextLength = stringView.string.length
@@ -1326,7 +1326,7 @@ final class TextInputViewMac: NSView, NSTextInputClient {
         let lineChangeSet = textEditResult.lineChangeSet
         let languageModeLineChangeSet = languageMode.textDidChange(textChange)
         lineChangeSet.union(with: languageModeLineChangeSet)
-        applyLineChangesToLayoutManager(lineChangeSet)
+        applyLineChangesToLayoutManager(lineChangeSet, replacing: textEditResult.textChange.replacement)
 
         delegate?.textInputView(self, didReplaceTextIn: range, replacementLength: nsNewString.length)
         delegate?.textInputViewDidChange(self)
@@ -1335,7 +1335,7 @@ final class TextInputViewMac: NSView, NSTextInputClient {
         }
     }
 
-    private func applyLineChangesToLayoutManager(_ lineChangeSet: LineChangeSet) {
+    private func applyLineChangesToLayoutManager(_ lineChangeSet: LineChangeSet, replacing replacement: TextReplacement? = nil) {
         let didAddOrRemoveLines = !lineChangeSet.insertedLines.isEmpty || !lineChangeSet.removedLines.isEmpty
         if didAddOrRemoveLines {
             contentSizeService.invalidateContentSize()
@@ -1345,7 +1345,7 @@ final class TextInputViewMac: NSView, NSTextInputClient {
             }
         }
         let editedLineIDs = Set(lineChangeSet.editedLines.map(\.id))
-        layoutManager.redisplayLines(withIDs: editedLineIDs)
+        layoutManager.redisplayLines(withIDs: editedLineIDs, replacing: replacement)
         if didAddOrRemoveLines {
             gutterWidthService.invalidateLineNumberWidth()
         }
@@ -1999,6 +1999,12 @@ extension TextInputViewMac {
 
     var debugIsParsingIdle: Bool {
         (languageMode as? TreeSitterInternalLanguageMode)?.debugIsParsingIdle ?? true
+    }
+
+    /// The line controller for the line containing `location`, for tests of long-line chunking.
+    func debugLineController(containing location: Int) -> LineController? {
+        guard let line = lineManager.line(containingCharacterAt: location) else { return nil }
+        return lineControllerStorage.getOrCreateLineController(for: line)
     }
 
     func debugCaptureSignature() -> [String] {

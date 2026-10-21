@@ -59,12 +59,12 @@ private extension LineFragmentRenderer {
         }
         context.saveGState()
         for highlightedRange in highlightedRangeFragments {
-            let startX = CTLineGetOffsetForStringIndex(lineFragment.line, highlightedRange.range.lowerBound, nil)
+            let startX = lineFragment.xOffset(forLineLocalIndex: highlightedRange.range.lowerBound)
             let endX: CGFloat
             if shouldHighlightLineEnding(for: highlightedRange) {
                 endX = canvasSize.width
             } else {
-                endX = CTLineGetOffsetForStringIndex(lineFragment.line, highlightedRange.range.upperBound, nil)
+                endX = lineFragment.xOffset(forLineLocalIndex: highlightedRange.range.upperBound)
             }
             let rect = CGRect(x: startX, y: 0, width: endX - startX, height: lineFragment.scaledSize.height)
             context.setFillColor(highlightedRange.color.cgColor)
@@ -108,8 +108,8 @@ private extension LineFragmentRenderer {
     private func drawMarkedRange(to context: CGContext) {
         if let markedRange = markedRange {
             context.saveGState()
-            let startX = CTLineGetOffsetForStringIndex(lineFragment.line, markedRange.lowerBound, nil)
-            let endX = CTLineGetOffsetForStringIndex(lineFragment.line, markedRange.upperBound, nil)
+            let startX = lineFragment.xOffset(forLineLocalIndex: markedRange.lowerBound)
+            let endX = lineFragment.xOffset(forLineLocalIndex: markedRange.upperBound)
             let rect = CGRect(x: startX, y: 0, width: endX - startX, height: lineFragment.scaledSize.height)
             context.setFillColor(markedTextBackgroundColor.cgColor)
             if markedTextBackgroundCornerRadius > 0 {
@@ -175,7 +175,7 @@ private extension LineFragmentRenderer {
     private func xPosition(for horizontalPosition: HorizontalPosition) -> CGFloat {
         switch horizontalPosition {
         case .character(let index):
-            return CTLineGetOffsetForStringIndex(lineFragment.line, index, nil)
+            return lineFragment.xOffset(forLineLocalIndex: index)
         case .endOfLine:
             return CGFloat(CTLineGetTypographicBounds(lineFragment.line, nil, nil, nil))
         }
