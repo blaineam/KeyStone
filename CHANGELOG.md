@@ -26,6 +26,9 @@ All notable changes to KeyStone are documented here. This project adheres to [Se
 
 - **Gutter change markers, indent guides, bracket-pair colours, and a visible matching bracket.** `KeystoneDocument.changeMarkers` diffs the buffer against the saved text (Myers over line hashes, off the main thread, ~0.4 s after edits pause, reset by `markSaved()`); the gutter shows added (green), modified (blue) and deleted (red) lines. Indent guides follow the indent strategy and run through blank lines inside a block. Brackets are coloured by nesting depth from the syntax tree (`KeystoneTheme.bracketPairColors`). The matching bracket, which was computed but never drawn, is now highlighted. All three have settings toggles and palette commands.
 
+- **Format: Prettify / Minify** for JSON (JSONC comments kept when prettifying), CSS and HTML/XML, in the command palette. Token-based, so only whitespace (and, when minifying, comments) changes; raw `<script>`/`<style>`/`<pre>` content is re-indented, not reflowed; inline HTML elements stay in their text run. JavaScript/TypeScript are not handled (they need a real parser).
+- **Inline Assist (⌘I).** The host supplies the model call with `KeystoneEditor.inlineAssist { request in … }`; Keystone owns the flow: describe the change, the proposal replaces the selection (or the caret's line) as one undo step, highlighted until you Accept (⌘⏎), Reject (⎋) or Try Again. Without a handler the command and button are hidden.
+
 ### Tests
 
 - `KeystoneDocumentTests`, `BackgroundParsingTests` (edits during the initial parse and across reparses converge to a fresh parse, including breaking and restoring a `<script>` tag), and a per-keystroke budget on a flat 20k-line Swift file.

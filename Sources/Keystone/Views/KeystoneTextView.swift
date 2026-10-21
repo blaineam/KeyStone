@@ -26,6 +26,8 @@ public struct KeystoneTextView: UIViewRepresentable {
     var currentMatchIndex: Int
     var undoController: UndoController?
     var actions: EditorActions?
+    /// A pending inline-assist proposal, highlighted until accepted or rejected.
+    var proposedRange: NSRange?
     var onParsingTimeout: (() -> Void)?
 
     public init(
@@ -40,6 +42,7 @@ public struct KeystoneTextView: UIViewRepresentable {
         currentMatchIndex: Int = 0,
         undoController: UndoController? = nil,
         actions: EditorActions? = nil,
+        proposedRange: NSRange? = nil,
         onParsingTimeout: (() -> Void)? = nil
     ) {
         self.document = document
@@ -53,6 +56,7 @@ public struct KeystoneTextView: UIViewRepresentable {
         self.currentMatchIndex = currentMatchIndex
         self.undoController = undoController
         self.actions = actions
+        self.proposedRange = proposedRange
         self.onParsingTimeout = onParsingTimeout
     }
 
@@ -230,6 +234,7 @@ public struct KeystoneTextView: UIViewRepresentable {
 
         // Update search match highlighting
         coordinator.updateSearchHighlights(textView: textView, searchMatches: searchMatches, currentMatchIndex: currentMatchIndex)
+        coordinator.updateProposalHighlight(textView: textView, range: proposedRange)
 
         // Defer bracket matching update to avoid state modification during view update
         DispatchQueue.main.async {
@@ -356,6 +361,7 @@ public struct KeystoneTextView: UIViewRepresentable {
         var lastSyncedBracketColors = true
         /// Matching-bracket highlights, merged with the search highlights.
         private var bracketHighlights: [HighlightedRange] = []
+        private var proposalHighlights: [HighlightedRange] = []
         private var changeMarkersCancellable: AnyCancellable?
         private var highlightedRanges: [HighlightedRange] = []
         let codeFoldingManager = CodeFoldingManager()
@@ -470,9 +476,17 @@ public struct KeystoneTextView: UIViewRepresentable {
             }
         }
 
-        /// Search highlights plus the matching-bracket pair.
+        /// Search highlights plus the matching-bracket pair and any pending proposal.
         private func applyHighlights(to textView: TextView) {
-            textView.highlightedRanges = highlightedRanges + bracketHighlights
+            textView.highlightedRanges = highlightedRanges + bracketHighlights + proposalHighlights
+        }
+
+        func updateProposalHighlight(textView: TextView, range: NSRange?) {
+            let newHighlights = range.map { [HighlightedRange(id: "proposal", range: $0, color: HighlightColor.systemGreen.withAlphaComponent(0.22), cornerRadius: 3)] } ?? []
+            if newHighlights.map(\.range) != proposalHighlights.map(\.range) {
+                proposalHighlights = newHighlights
+                applyHighlights(to: textView)
+            }
         }
 
         /// Keeps the gutter's change markers in step with the document's diff.
@@ -743,6 +757,8 @@ public struct KeystoneTextView: NSViewRepresentable {
     var currentMatchIndex: Int
     var undoController: UndoController?
     var actions: EditorActions?
+    /// A pending inline-assist proposal, highlighted until accepted or rejected.
+    var proposedRange: NSRange?
     /// Called when TreeSitter parsing times out (default 30 seconds).
     var onParsingTimeout: (() -> Void)?
 
@@ -758,6 +774,7 @@ public struct KeystoneTextView: NSViewRepresentable {
         currentMatchIndex: Int = 0,
         undoController: UndoController? = nil,
         actions: EditorActions? = nil,
+        proposedRange: NSRange? = nil,
         onParsingTimeout: (() -> Void)? = nil
     ) {
         self.document = document
@@ -771,6 +788,7 @@ public struct KeystoneTextView: NSViewRepresentable {
         self.currentMatchIndex = currentMatchIndex
         self.undoController = undoController
         self.actions = actions
+        self.proposedRange = proposedRange
         self.onParsingTimeout = onParsingTimeout
     }
 
@@ -947,6 +965,7 @@ public struct KeystoneTextView: NSViewRepresentable {
 
         // Update search match highlighting
         coordinator.updateSearchHighlights(textView: textView, searchMatches: searchMatches, currentMatchIndex: currentMatchIndex)
+        coordinator.updateProposalHighlight(textView: textView, range: proposedRange)
 
         // Defer bracket matching update
         DispatchQueue.main.async {
@@ -1066,6 +1085,7 @@ public struct KeystoneTextView: NSViewRepresentable {
         var lastSyncedBracketColors = true
         /// Matching-bracket highlights, merged with the search highlights.
         private var bracketHighlights: [HighlightedRange] = []
+        private var proposalHighlights: [HighlightedRange] = []
         private var changeMarkersCancellable: AnyCancellable?
         private var highlightedRanges: [HighlightedRange] = []
         let codeFoldingManager = CodeFoldingManager()
@@ -1171,9 +1191,17 @@ public struct KeystoneTextView: NSViewRepresentable {
             }
         }
 
-        /// Search highlights plus the matching-bracket pair.
+        /// Search highlights plus the matching-bracket pair and any pending proposal.
         private func applyHighlights(to textView: TextView) {
-            textView.highlightedRanges = highlightedRanges + bracketHighlights
+            textView.highlightedRanges = highlightedRanges + bracketHighlights + proposalHighlights
+        }
+
+        func updateProposalHighlight(textView: TextView, range: NSRange?) {
+            let newHighlights = range.map { [HighlightedRange(id: "proposal", range: $0, color: HighlightColor.systemGreen.withAlphaComponent(0.22), cornerRadius: 3)] } ?? []
+            if newHighlights.map(\.range) != proposalHighlights.map(\.range) {
+                proposalHighlights = newHighlights
+                applyHighlights(to: textView)
+            }
         }
 
         /// Keeps the gutter's change markers in step with the document's diff.

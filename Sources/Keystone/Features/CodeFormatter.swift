@@ -1,0 +1,572 @@
+//
+//  CodeFormatter.swift
+//  Keystone
+//
+//  Prettify and minify for JSON, CSS and HTML/XML. Token-based: only whitespace
+//  (and, when minifying, comments) changes, so output is semantically the input.
+//  JavaScript/TypeScript need a real parser and are not handled here.
+//
+
+import Foundation
+
+public enum CodeFormatter {
+    public enum Operation { case prettify, minify }
+
+    /// Whether `language` can be formatted.
+    public static func supports(_ language: KeystoneLanguage) -> Bool {
+        formatterKind(for: language) != nil
+    }
+
+    /// The formatted text, or nil when the language is unsupported.
+    public static func format(_ text: String, language: KeystoneLanguage, operation: Operation, indent: String = "  ") -> String? {
+        switch formatterKind(for: language) {
+        case .json: return operation == .prettify ? JSONReformatter.prettify(text, indent: indent) : JSONReformatter.minify(text)
+        case .css: return operation == .prettify ? CSSReformatter.prettify(text, indent: indent) : CSSReformatter.minify(text)
+        case .markup(let isHTML): return operation == .prettify ? MarkupReformatter.prettify(text, indent: indent, isHTML: isHTML) : MarkupReformatter.minify(text, isHTML: isHTML)
+        case nil: return nil
+        }
+    }
+
+    enum Kind { case json, css, markup(isHTML: Bool) }
+
+    static func formatterKind(for language: KeystoneLanguage) -> Kind? {
+        switch language.rawValue.lowercased() {
+        case "json", "json5", "jsonc": return .json
+        case "css", "scss", "less": return .css
+        case "html", "htm", "svelte", "vue", "astro": return .markup(isHTML: true)
+        case "xml", "svg", "plist", "xaml": return .markup(isHTML: false)
+        default: return nil
+        }
+    }
+}
+
+// MARK: - JSON
+
+enum JSONReformatter {
+    enum Token { case open(unichar), close(unichar), comma, colon, literal(String), comment(String) }
+
+    static func tokenize(_ text: String) -> [Token] {
+        let s = text as NSString
+        let n = s.length
+        var tokens: [Token] = []
+        var i = 0
+        func isSpace(_ c: unichar) -> Bool { c == 0x20 || c == 0x09 || c == 0x0A || c == 0x0D }
+        while i < n {
+            let c = s.character(at: i)
+            if isSpace(c) { i += 1; continue }
+            switch c {
+            case 0x7B, 0x5B: tokens.append(.open(c)); i += 1
+            case 0x7D, 0x5D: tokens.append(.close(c)); i += 1
+            case 0x2C: tokens.append(.comma); i += 1
+            case 0x3A: tokens.append(.colon); i += 1
+            case 0x22: // string
+                var j = i + 1
+                while j < n {
+                    let d = s.character(at: j)
+                    if d == 0x5C { j += 2; continue }
+                    if d == 0x22 { break }
+                    j += 1
+                }
+                let end = min(j + 1, n)
+                tokens.append(.literal(s.substring(with: NSRange(location: i, length: end - i))))
+                i = end
+            case 0x2F where i + 1 < n && s.character(at: i + 1) == 0x2F: // line comment (JSONC)
+                var j = i
+                while j < n, s.character(at: j) != 0x0A { j += 1 }
+                tokens.append(.comment(s.substring(with: NSRange(location: i, length: j - i)).trimmingCharacters(in: .whitespaces)))
+                i = j
+            case 0x2F where i + 1 < n && s.character(at: i + 1) == 0x2A: // block comment
+                let close = s.range(of: "*/", options: [], range: NSRange(location: i + 2, length: n - i - 2))
+                let end = close.location == NSNotFound ? n : close.upperBound
+                tokens.append(.comment(s.substring(with: NSRange(location: i, length: end - i))))
+                i = end
+            default: // number, true, false, null, or anything else up to a delimiter
+                var j = i
+                while j < n {
+                    let d = s.character(at: j)
+                    if isSpace(d) || d == 0x2C || d == 0x3A || d == 0x7D || d == 0x5D || d == 0x7B || d == 0x5B { break }
+                    j += 1
+                }
+                if j == i { j = i + 1 }
+                tokens.append(.literal(s.substring(with: NSRange(location: i, length: j - i))))
+                i = j
+            }
+        }
+        return tokens
+    }
+
+    static func prettify(_ text: String, indent: String) -> String {
+        let tokens = tokenize(text)
+        var out = ""
+        var depth = 0
+        var atLineStart = true
+        func newline() {
+            out.append("\n")
+            out.append(String(repeating: indent, count: depth))
+            atLineStart = true
+        }
+        var index = 0
+        while index < tokens.count {
+            let token = tokens[index]
+            switch token {
+            case .open(let c):
+                let next = index + 1 < tokens.count ? tokens[index + 1] : nil
+                if case .close? = next {
+                    out.append(c == 0x7B ? "{}" : "[]")
+                    index += 1
+                } else {
+                    out.append(c == 0x7B ? "{" : "[")
+                    depth += 1
+                    newline()
+                }
+            case .close(let c):
+                depth = max(0, depth - 1)
+                newline()
+                out.append(c == 0x7D ? "}" : "]")
+            case .comma:
+                out.append(",")
+                newline()
+            case .colon:
+                out.append(": ")
+            case .literal(let value):
+                out.append(value)
+            case .comment(let value):
+                if !atLineStart { out.append(" ") }
+                out.append(value)
+                // A comment ends the line unless a closing bracket follows (which starts its own line).
+                let next = index + 1 < tokens.count ? tokens[index + 1] : nil
+                if case .close? = next {} else { newline() }
+            }
+            if case .comment = token {} else { atLineStart = false }
+            index += 1
+        }
+        // Collapse the blank line a comma-then-comment or trailing newline may have left.
+        while out.hasSuffix("\n") || out.hasSuffix(" ") { out.removeLast() }
+        return out + "\n"
+    }
+
+    static func minify(_ text: String) -> String {
+        var out = ""
+        for token in tokenize(text) {
+            switch token {
+            case .open(let c): out.append(c == 0x7B ? "{" : "[")
+            case .close(let c): out.append(c == 0x7D ? "}" : "]")
+            case .comma: out.append(",")
+            case .colon: out.append(":")
+            case .literal(let value): out.append(value)
+            case .comment: break
+            }
+        }
+        return out
+    }
+}
+
+// MARK: - CSS
+
+enum CSSReformatter {
+    enum Token { case open, close, semicolon, text(String), comment(String) }
+
+    static func tokenize(_ text: String) -> [Token] {
+        let s = text as NSString
+        let n = s.length
+        var tokens: [Token] = []
+        var buffer = ""
+        func flush() {
+            let trimmed = collapseWhitespace(buffer)
+            if !trimmed.isEmpty { tokens.append(.text(trimmed)) }
+            buffer = ""
+        }
+        var i = 0
+        while i < n {
+            let c = s.character(at: i)
+            if c == 0x2F, i + 1 < n, s.character(at: i + 1) == 0x2A {
+                flush()
+                let close = s.range(of: "*/", options: [], range: NSRange(location: i + 2, length: n - i - 2))
+                let end = close.location == NSNotFound ? n : close.upperBound
+                tokens.append(.comment(s.substring(with: NSRange(location: i, length: end - i))))
+                i = end
+                continue
+            }
+            if c == 0x22 || c == 0x27 { // string: copy verbatim
+                var j = i + 1
+                while j < n {
+                    let d = s.character(at: j)
+                    if d == 0x5C { j += 2; continue }
+                    if d == c { break }
+                    j += 1
+                }
+                let end = min(j + 1, n)
+                buffer += s.substring(with: NSRange(location: i, length: end - i))
+                i = end
+                continue
+            }
+            if c == 0x28 { // url(...) and friends: verbatim up to the matching paren
+                let close = s.range(of: ")", options: [], range: NSRange(location: i, length: n - i))
+                let end = close.location == NSNotFound ? n : close.upperBound
+                buffer += s.substring(with: NSRange(location: i, length: end - i))
+                i = end
+                continue
+            }
+            switch c {
+            case 0x7B: flush(); tokens.append(.open)
+            case 0x7D: flush(); tokens.append(.close)
+            case 0x3B: flush(); tokens.append(.semicolon)
+            default: buffer.append(Character(UnicodeScalar(c) ?? " "))
+            }
+            i += 1
+        }
+        flush()
+        return tokens
+    }
+
+    static func collapseWhitespace(_ text: String) -> String {
+        text.split(whereSeparator: { $0 == " " || $0 == "\t" || $0 == "\n" || $0 == "\r" }).joined(separator: " ")
+    }
+
+    static func prettify(_ text: String, indent: String) -> String {
+        let tokens = tokenize(text)
+        var out = ""
+        var depth = 0
+        func pad() { out.append(String(repeating: indent, count: depth)) }
+        var index = 0
+        while index < tokens.count {
+            switch tokens[index] {
+            case .text(let value):
+                let next = index + 1 < tokens.count ? tokens[index + 1] : nil
+                pad()
+                if case .open? = next {
+                    // Selector or at-rule prelude: one selector per line after top-level commas.
+                    let separator = ",\n" + String(repeating: indent, count: depth)
+                    out.append(value.hasPrefix("@") ? value : splitSelectors(value).joined(separator: separator))
+                    out.append(" {\n")
+                    depth += 1
+                    index += 1
+                } else {
+                    // Declaration: normalise "prop:value" to "prop: value".
+                    out.append(normalizeDeclaration(value))
+                    if case .semicolon? = next { out.append(";"); index += 1 }
+                    else if case .close? = next { out.append(";") }
+                    out.append("\n")
+                }
+            case .open:
+                pad(); out.append("{\n"); depth += 1
+            case .close:
+                depth = max(0, depth - 1)
+                pad(); out.append("}\n")
+                if depth == 0 { out.append("\n") }
+            case .semicolon:
+                break
+            case .comment(let value):
+                pad(); out.append(value); out.append("\n")
+            }
+            index += 1
+        }
+        while out.hasSuffix("\n\n") { out.removeLast() }
+        return out.isEmpty ? out : (out.hasSuffix("\n") ? out : out + "\n")
+    }
+
+    /// Splits a selector list on commas that are not inside parentheses, trimming each part.
+    static func splitSelectors(_ value: String) -> [String] {
+        var parts: [String] = []
+        var current = ""
+        var depth = 0
+        for character in value {
+            switch character {
+            case "(": depth += 1; current.append(character)
+            case ")": depth = max(0, depth - 1); current.append(character)
+            case "," where depth == 0:
+                parts.append(current.trimmingCharacters(in: .whitespaces))
+                current = ""
+            default: current.append(character)
+            }
+        }
+        parts.append(current.trimmingCharacters(in: .whitespaces))
+        return parts.filter { !$0.isEmpty }
+    }
+
+    private static func normalizeDeclaration(_ declaration: String) -> String {
+        guard let colon = declaration.firstIndex(of: ":"), !declaration.hasPrefix("@") else { return declaration }
+        let name = declaration[..<colon].trimmingCharacters(in: .whitespaces)
+        let value = declaration[declaration.index(after: colon)...].trimmingCharacters(in: .whitespaces)
+        return "\(name): \(value)"
+    }
+
+    static func minify(_ text: String) -> String {
+        var out = ""
+        let tokens = tokenize(text)
+        var index = 0
+        while index < tokens.count {
+            switch tokens[index] {
+            case .text(let value):
+                var piece = value
+                for separator in [": ", " :", ", ", " ,", " >", "> ", " +", "+ ", " ~", "~ "] where !piece.hasPrefix("@") {
+                    piece = piece.replacingOccurrences(of: separator, with: String(separator.trimmingCharacters(in: .whitespaces)))
+                }
+                out.append(piece)
+            case .open: out.append("{")
+            case .close:
+                if out.hasSuffix(";") { out.removeLast() }
+                out.append("}")
+            case .semicolon:
+                let next = index + 1 < tokens.count ? tokens[index + 1] : nil
+                if case .close? = next {} else { out.append(";") }
+            case .comment: break
+            }
+            index += 1
+        }
+        return out
+    }
+}
+
+// MARK: - HTML / XML
+
+enum MarkupReformatter {
+    enum Node {
+        case text(String)
+        case comment(String)
+        case declaration(String)       // <!DOCTYPE …>, <?xml …?>, <![CDATA[…]]>
+        case open(name: String, raw: String, selfClosing: Bool)
+        case close(name: String)
+    }
+
+    static let voidElements: Set<String> = ["area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"]
+    static let rawTextElements: Set<String> = ["script", "style", "textarea", "pre"]
+    static let inlineElements: Set<String> = ["a", "abbr", "b", "bdi", "bdo", "cite", "code", "data", "dfn", "em", "i", "kbd", "mark", "q", "s", "samp", "small", "span", "strong", "sub", "sup", "time", "u", "var", "img", "br", "wbr", "label", "button", "input", "select", "textarea"]
+
+    static func tokenize(_ text: String, isHTML: Bool) -> [Node] {
+        let s = text as NSString
+        let n = s.length
+        var nodes: [Node] = []
+        var i = 0
+        var rawUntil: String?
+        while i < n {
+            if let raw = rawUntil {
+                let closeTag = s.range(of: "</\(raw)", options: [.caseInsensitive], range: NSRange(location: i, length: n - i))
+                let end = closeTag.location == NSNotFound ? n : closeTag.location
+                if end > i { nodes.append(.text(s.substring(with: NSRange(location: i, length: end - i)))) }
+                i = end
+                rawUntil = nil
+                continue
+            }
+            if s.character(at: i) == 0x3C { // <
+                let rest = NSRange(location: i, length: n - i)
+                if s.substring(with: NSRange(location: i, length: min(4, n - i))) == "<!--" {
+                    let close = s.range(of: "-->", options: [], range: NSRange(location: i + 4, length: n - i - 4))
+                    let end = close.location == NSNotFound ? n : close.upperBound
+                    nodes.append(.comment(s.substring(with: NSRange(location: i, length: end - i))))
+                    i = end
+                    continue
+                }
+                if s.substring(with: NSRange(location: i, length: min(9, n - i))) == "<![CDATA[" {
+                    let close = s.range(of: "]]>", options: [], range: NSRange(location: i + 9, length: n - i - 9))
+                    let end = close.location == NSNotFound ? n : close.upperBound
+                    nodes.append(.declaration(s.substring(with: NSRange(location: i, length: end - i))))
+                    i = end
+                    continue
+                }
+                if i + 1 < n, s.character(at: i + 1) == 0x21 || s.character(at: i + 1) == 0x3F { // <! or <?
+                    let close = s.range(of: ">", options: [], range: rest)
+                    let end = close.location == NSNotFound ? n : close.upperBound
+                    nodes.append(.declaration(s.substring(with: NSRange(location: i, length: end - i))))
+                    i = end
+                    continue
+                }
+                // A tag: find the closing '>' outside quotes.
+                var j = i + 1
+                var quote: unichar = 0
+                while j < n {
+                    let c = s.character(at: j)
+                    if quote != 0 { if c == quote { quote = 0 } }
+                    else if c == 0x22 || c == 0x27 { quote = c }
+                    else if c == 0x3E { break }
+                    j += 1
+                }
+                let end = min(j + 1, n)
+                let raw = s.substring(with: NSRange(location: i, length: end - i))
+                let inner = raw.dropFirst().dropLast()
+                if inner.hasPrefix("/") {
+                    nodes.append(.close(name: tagName(String(inner.dropFirst()))))
+                } else {
+                    let name = tagName(String(inner))
+                    let selfClosing = inner.hasSuffix("/") || (isHTML && voidElements.contains(name))
+                    nodes.append(.open(name: name, raw: raw, selfClosing: selfClosing))
+                    if isHTML && rawTextElements.contains(name) && !selfClosing { rawUntil = name }
+                }
+                i = end
+            } else {
+                var j = i
+                while j < n, s.character(at: j) != 0x3C { j += 1 }
+                nodes.append(.text(s.substring(with: NSRange(location: i, length: j - i))))
+                i = j
+            }
+        }
+        return nodes
+    }
+
+    private static func tagName(_ inner: String) -> String {
+        String(inner.prefix { !$0.isWhitespace && $0 != "/" && $0 != ">" }).lowercased()
+    }
+
+    private static func collapse(_ text: String) -> String {
+        text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+    }
+
+    static func prettify(_ text: String, indent: String, isHTML: Bool) -> String {
+        let nodes = tokenize(text, isHTML: isHTML)
+        var lines: [String] = []
+        var depth = 0
+        var flow = ""          // current inline run (text + inline elements)
+        var flowDepth = 0
+        func flushFlow() {
+            let trimmed = flow.trimmingCharacters(in: .whitespaces)
+            if !trimmed.isEmpty { lines.append(String(repeating: indent, count: flowDepth) + trimmed) }
+            flow = ""
+        }
+        var index = 0
+        var rawElement: String?
+        while index < nodes.count {
+            let node = nodes[index]
+            switch node {
+            case .text(let value):
+                if rawElement != nil {
+                    // Raw content (script/style/pre): lines kept as they are, re-indented to the element.
+                    flushFlow()
+                    lines.append(contentsOf: reindent(value, to: String(repeating: indent, count: depth)))
+                } else {
+                    let collapsed = collapse(value)
+                    if !collapsed.isEmpty {
+                        if flow.isEmpty { flowDepth = depth }
+                        let needsSpace = !flow.isEmpty && !flow.hasSuffix(" ") && (value.first?.isWhitespace ?? false)
+                        flow += (needsSpace ? " " : "") + collapsed + ((value.last?.isWhitespace ?? false) ? " " : "")
+                    }
+                }
+            case .comment(let value), .declaration(let value):
+                flushFlow()
+                lines.append(String(repeating: indent, count: depth) + value)
+            case .open(let name, let raw, let selfClosing):
+                let isInline = isHTML && inlineElements.contains(name)
+                // "<p>short text <b>with</b> inline tags</p>" stays on one line.
+                if !selfClosing, !isInline, !(isHTML && rawTextElements.contains(name)),
+                   let (content, endIndex) = inlineContent(of: name, startingAfter: index, in: nodes, isHTML: isHTML),
+                   content.count + raw.count < 100 {
+                    flushFlow()
+                    lines.append(String(repeating: indent, count: depth) + raw + content + "</\(name)>")
+                    index = endIndex + 1
+                    continue
+                }
+                if isInline {
+                    if flow.isEmpty { flowDepth = depth }
+                    flow += raw
+                } else {
+                    flushFlow()
+                    lines.append(String(repeating: indent, count: depth) + raw)
+                    if !selfClosing {
+                        depth += 1
+                        if isHTML && rawTextElements.contains(name) { rawElement = name }
+                    }
+                }
+            case .close(let name):
+                let isInline = isHTML && inlineElements.contains(name)
+                if isInline && rawElement == nil {
+                    flow += "</\(name)>"
+                } else {
+                    flushFlow()
+                    depth = max(0, depth - 1)
+                    lines.append(String(repeating: indent, count: depth) + "</\(name)>")
+                    if rawElement == name { rawElement = nil }
+                }
+            }
+            index += 1
+        }
+        flushFlow()
+        return lines.joined(separator: "\n") + "\n"
+    }
+
+    /// The collapsed content of an element when it holds only text and inline elements,
+    /// with the index of its closing tag; nil otherwise.
+    private static func inlineContent(of name: String, startingAfter openIndex: Int, in nodes: [Node], isHTML: Bool) -> (String, Int)? {
+        var content = ""
+        var index = openIndex + 1
+        var nesting = 0
+        while index < nodes.count {
+            switch nodes[index] {
+            case .text(let value):
+                let collapsed = collapse(value)
+                if !collapsed.isEmpty {
+                    if (value.first?.isWhitespace ?? false) && !content.isEmpty && !content.hasSuffix(" ") { content += " " }
+                    content += collapsed
+                    if value.last?.isWhitespace ?? false { content += " " }
+                }
+            case .open(let childName, let raw, let selfClosing):
+                guard isHTML && inlineElements.contains(childName) else { return nil }
+                content += raw
+                if !selfClosing { nesting += 1 }
+            case .close(let closeName):
+                if closeName == name && nesting == 0 {
+                    return (content.trimmingCharacters(in: .whitespaces), index)
+                }
+                guard isHTML && inlineElements.contains(closeName), nesting > 0 else { return nil }
+                nesting -= 1
+                content += "</\(closeName)>"
+            case .comment, .declaration:
+                return nil
+            }
+            index += 1
+        }
+        return nil
+    }
+
+    /// Strips blank edge lines and the common leading indentation, then indents every line by `prefix`.
+    private static func reindent(_ raw: String, to prefix: String) -> [String] {
+        var lines = raw.replacingOccurrences(of: "\r\n", with: "\n").components(separatedBy: "\n")
+        while let first = lines.first, first.trimmingCharacters(in: .whitespaces).isEmpty { lines.removeFirst() }
+        while let last = lines.last, last.trimmingCharacters(in: .whitespaces).isEmpty { lines.removeLast() }
+        let common = lines.filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+            .map { $0.prefix { $0 == " " || $0 == "\t" }.count }
+            .min() ?? 0
+        return lines.map { line in
+            line.trimmingCharacters(in: .whitespaces).isEmpty ? "" : prefix + String(line.dropFirst(common))
+        }
+    }
+
+    static func minify(_ text: String, isHTML: Bool) -> String {
+        let nodes = tokenize(text, isHTML: isHTML)
+        var out = ""
+        var rawElement: String?
+        var lastWasBlockBoundary = true
+        for (index, node) in nodes.enumerated() {
+            switch node {
+            case .text(let value):
+                if rawElement != nil {
+                    out.append(value.trimmingCharacters(in: .whitespacesAndNewlines))
+                } else {
+                    var collapsed = collapse(value)
+                    if collapsed.isEmpty {
+                        // Whitespace-only text between inline elements keeps one space.
+                        if !lastWasBlockBoundary, index + 1 < nodes.count, case .open(let name, _, _) = nodes[index + 1], isHTML && inlineElements.contains(name) { out.append(" ") }
+                        continue
+                    }
+                    if (value.first?.isWhitespace ?? false) && !lastWasBlockBoundary { collapsed = " " + collapsed }
+                    if (value.last?.isWhitespace ?? false), index + 1 < nodes.count, case .open(let name, _, _) = nodes[index + 1], isHTML && inlineElements.contains(name) { collapsed += " " }
+                    out.append(collapsed)
+                    lastWasBlockBoundary = false
+                }
+            case .comment(let value):
+                if value.hasPrefix("<!--[if") || value.hasPrefix("<!--<![") { out.append(value) }   // conditional comments
+            case .declaration(let value):
+                out.append(value)
+                lastWasBlockBoundary = true
+            case .open(let name, let raw, let selfClosing):
+                out.append(collapse(raw))
+                let isInline = isHTML && inlineElements.contains(name)
+                lastWasBlockBoundary = !isInline
+                if !selfClosing && isHTML && rawTextElements.contains(name) { rawElement = name }
+            case .close(let name):
+                out.append("</\(name)>")
+                lastWasBlockBoundary = !(isHTML && inlineElements.contains(name))
+                if rawElement == name { rawElement = nil }
+            }
+        }
+        return out
+    }
+}

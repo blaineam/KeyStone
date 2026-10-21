@@ -129,6 +129,12 @@ public struct KeystoneEditor: View {
     @State private var editorActions = EditorActions()
     /// Commands the host adds to the palette (``commands(_:)``).
     private var additionalCommands: [EditorCommand] = []
+    /// Host-provided model call for inline assist (``inlineAssist(_:)``).
+    private var inlineAssistHandler: InlineAssistHandler?
+    @State private var assistPhase: InlineAssistPhase = .idle
+    @State private var assistInstruction = ""
+    @State private var assistTask: Task<Void, Never>?
+    @State private var proposedRange: NSRange?
 
     #if os(iOS)
     /// Tracks whether the find/replace search field is focused (for symbol keyboard insertion)
@@ -329,6 +335,7 @@ public struct KeystoneEditor: View {
             onGoToLine: { showGoToLine.wrappedValue = true },
             onShowOutline: { showOutline = true },
             onShowCommandPalette: { showCommandPalette = true },
+            onInlineAssist: inlineAssistHandler == nil ? nil : { startInlineAssist() },
             onShowSettings: { showSettings = true },
             onToggleTailFollow: onToggleTailFollow,
             onToggleComment: toggleComment,
@@ -344,6 +351,7 @@ public struct KeystoneEditor: View {
             onGoToLine: { showGoToLine.wrappedValue = true },
             onShowOutline: { showOutline = true },
             onShowCommandPalette: { showCommandPalette = true },
+            onInlineAssist: inlineAssistHandler == nil ? nil : { startInlineAssist() },
             onShowSettings: { showSettings = true },
             onToggleTailFollow: onToggleTailFollow,
             onToggleComment: toggleComment,
@@ -390,6 +398,7 @@ public struct KeystoneEditor: View {
             currentMatchIndex: findReplaceManager.currentMatchIndex,
             undoController: undoController,
             actions: editorActions,
+            proposedRange: proposedRange,
             onParsingTimeout: {
                 if internalLanguage != .plainText {
                     internalLanguage = .plainText
@@ -450,6 +459,17 @@ public struct KeystoneEditor: View {
         VStack(spacing: 0) {
             editorToolbar
             findReplaceBarView
+            if assistPhase != .idle {
+                InlineAssistBar(
+                    phase: assistPhase,
+                    instruction: $assistInstruction,
+                    onSubmit: submitInlineAssist,
+                    onCancel: cancelInlineAssist,
+                    onAccept: acceptProposal,
+                    onReject: rejectProposal,
+                    onRetry: { rejectProposalKeepingInstruction(); assistPhase = .prompting }
+                )
+            }
             mainEditorView
             symbolKeyboardView
             statusBarView
@@ -586,6 +606,13 @@ public struct KeystoneEditor: View {
             commands.append(EditorCommand(id: "comment", title: String(localized: "Toggle Comment", bundle: .module), systemImage: "text.bubble", shortcut: "⌘/") { toggleComment() })
         }
         commands.append(EditorCommand(id: "base64", title: String(localized: "Toggle Base64", bundle: .module), systemImage: "arrow.triangle.2.circlepath", shortcut: "⌘⇧B") { toggleBase64() })
+        if CodeFormatter.supports(internalLanguage) {
+            commands.append(EditorCommand(id: "prettify", title: String(localized: "Format: Prettify", bundle: .module), systemImage: "text.alignleft") { formatDocument(.prettify) })
+            commands.append(EditorCommand(id: "minify", title: String(localized: "Format: Minify", bundle: .module), systemImage: "arrow.down.right.and.arrow.up.left.rectangle") { formatDocument(.minify) })
+        }
+        if inlineAssistHandler != nil {
+            commands.insert(EditorCommand(id: "inlineAssist", title: String(localized: "Inline Assist…", bundle: .module), subtitle: String(localized: "Describe a change to the selection", bundle: .module), systemImage: "sparkles", shortcut: "⌘I") { startInlineAssist() }, at: 0)
+        }
         #if os(macOS)
         commands += [
             EditorCommand(id: "selectNext", title: String(localized: "Select Next Occurrence", bundle: .module), systemImage: "text.cursor", shortcut: "⌘D") { editorActions.selectNextOccurrence?() },
@@ -622,7 +649,126 @@ public struct KeystoneEditor: View {
         return additionalCommands + commands
     }
 
+    // MARK: - Format
+
+    private func formatDocument(_ operation: CodeFormatter.Operation) {
+        let current = document.text
+        guard let formatted = CodeFormatter.format(current, language: internalLanguage, operation: operation, indent: configuration.indentation.indentString),
+              formatted != current else { return }
+        let caretOffset = cursorPosition.wrappedValue.offset
+        document.replaceAll(with: formatted, preservingUndo: true)
+        cursorPosition.wrappedValue = document.position(atOffset: min(caretOffset, document.utf16Length))
+    }
+
+    // MARK: - Inline assist
+
+    private func startInlineAssist() {
+        guard inlineAssistHandler != nil else { return }
+        if case .reviewing = assistPhase { return }
+        assistPhase = .prompting
+    }
+
+    private func submitInlineAssist() {
+        guard let handler = inlineAssistHandler else { return }
+        let instruction = assistInstruction.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !instruction.isEmpty else { return }
+        let cursor = cursorPosition.wrappedValue
+        var range = NSRange(location: cursor.offset, length: cursor.selectionLength)
+        if range.length == 0, let lineStart = document.offset(line: cursor.line), let nextLineStart = document.offset(line: cursor.line + 1) ?? Optional(document.utf16Length) {
+            // Nothing selected: rewrite the caret's line.
+            var end = nextLineStart
+            let backing = document.backingString
+            while end > lineStart, end - 1 < backing.length, backing.character(at: end - 1) == 0x0A || backing.character(at: end - 1) == 0x0D { end -= 1 }
+            range = NSRange(location: lineStart, length: max(0, end - lineStart))
+        }
+        let backing = document.backingString
+        guard range.location + range.length <= backing.length else { return }
+        let before = NSRange(location: max(0, range.location - 2_000), length: min(2_000, range.location))
+        let afterStart = range.upperBound
+        let after = NSRange(location: afterStart, length: min(2_000, backing.length - afterStart))
+        let request = InlineAssistRequest(
+            instruction: instruction,
+            selectedText: backing.substring(with: range),
+            selectionRange: range,
+            language: internalLanguage,
+            contextBefore: backing.substring(with: before),
+            contextAfter: backing.substring(with: after),
+            documentLength: backing.length
+        )
+        assistPhase = .running
+        let original = request.selectedText
+        assistTask = Task { @MainActor in
+            do {
+                let replacement = try await handler(request)
+                guard !Task.isCancelled else { return }
+                applyProposal(replacement, replacing: range, original: original)
+            } catch is CancellationError {
+                assistPhase = .idle
+            } catch {
+                assistPhase = .failed(error.localizedDescription)
+            }
+        }
+    }
+
+    private func applyProposal(_ replacement: String, replacing range: NSRange, original: String) {
+        guard document.backingString.length >= range.upperBound, document.backingString.substring(with: range) == original else {
+            assistPhase = .failed(String(localized: "The text changed while the model was working.", bundle: .module))
+            return
+        }
+        undoController.beginUndoGrouping()
+        let applied = undoController.replaceText(in: range, with: replacement)
+        undoController.endUndoGrouping()
+        guard applied else {
+            assistPhase = .failed(String(localized: "Could not apply the change.", bundle: .module))
+            return
+        }
+        let newRange = NSRange(location: range.location, length: (replacement as NSString).length)
+        proposedRange = newRange
+        assistPhase = .reviewing(ProposedEdit(range: newRange, originalText: original, replacementText: replacement))
+        cursorPosition.wrappedValue = document.position(atOffset: newRange.upperBound)
+        scrollToCursor.wrappedValue = true
+    }
+
+    private func acceptProposal() {
+        proposedRange = nil
+        assistPhase = .idle
+        assistInstruction = ""
+        isEditorFocused = true
+    }
+
+    private func rejectProposalKeepingInstruction() {
+        if case .reviewing(let proposal) = assistPhase {
+            undoController.beginUndoGrouping()
+            undoController.replaceText(in: proposal.range, with: proposal.originalText)
+            undoController.endUndoGrouping()
+            cursorPosition.wrappedValue = document.position(atOffset: proposal.range.location, selectionLength: (proposal.originalText as NSString).length)
+        }
+        proposedRange = nil
+    }
+
+    private func rejectProposal() {
+        rejectProposalKeepingInstruction()
+        assistPhase = .idle
+        assistInstruction = ""
+        isEditorFocused = true
+    }
+
+    private func cancelInlineAssist() {
+        assistTask?.cancel()
+        assistTask = nil
+        if case .reviewing = assistPhase { rejectProposalKeepingInstruction() }
+        assistPhase = .idle
+        isEditorFocused = true
+    }
+
     // MARK: - Public Methods
+
+    /// Provides the model call behind Inline Assist (⌘I). Without it the command is hidden.
+    public func inlineAssist(_ handler: @escaping InlineAssistHandler) -> KeystoneEditor {
+        var copy = self
+        copy.inlineAssistHandler = handler
+        return copy
+    }
 
     /// Adds host commands to the command palette, listed first.
     public func commands(_ extra: [EditorCommand]) -> KeystoneEditor {
@@ -1320,6 +1466,7 @@ struct KeystoneEditorToolbarBar: View {
     var onGoToLine: (() -> Void)?
     var onShowOutline: (() -> Void)?
     var onShowCommandPalette: (() -> Void)?
+    var onInlineAssist: (() -> Void)?
     var onShowSettings: (() -> Void)?
     var onToggleTailFollow: (() -> Void)?
     var onToggleComment: (() -> Void)?
@@ -1372,6 +1519,13 @@ struct KeystoneEditorToolbarBar: View {
             // Commands
             toolbarButton(icon: "command", tooltip: String(localized: "Commands (⌘⇧P)", bundle: .module), enabled: true) {
                 onShowCommandPalette?()
+            }
+
+            // Inline assist (only when the host provides a model)
+            if let onInlineAssist {
+                toolbarButton(icon: "sparkles", tooltip: String(localized: "Inline Assist (⌘I)", bundle: .module), enabled: true) {
+                    onInlineAssist()
+                }
             }
 
             Divider().frame(height: 18)
@@ -1455,6 +1609,11 @@ struct KeystoneEditorToolbarBar: View {
                 // Cmd+Shift+P: Command palette
                 Button("", action: { onShowCommandPalette?() })
                     .keyboardShortcut("p", modifiers: [.command, .shift])
+                // Cmd+I: Inline assist
+                if let onInlineAssist {
+                    Button("", action: { onInlineAssist() })
+                        .keyboardShortcut("i", modifiers: .command)
+                }
                 // Cmd+/: Toggle Comment (only if language supports comments)
                 if language.supportsComments, let onToggleComment = onToggleComment {
                     Button("", action: { onToggleComment() })
@@ -1506,6 +1665,7 @@ struct KeystoneEditorToolbarBar: View {
     var onGoToLine: (() -> Void)?
     var onShowOutline: (() -> Void)?
     var onShowCommandPalette: (() -> Void)?
+    var onInlineAssist: (() -> Void)?
     var onShowSettings: (() -> Void)?
     var onToggleTailFollow: (() -> Void)?
     var onToggleComment: (() -> Void)?
@@ -1559,6 +1719,12 @@ struct KeystoneEditorToolbarBar: View {
                 // Commands
                 toolbarButton(icon: "command", enabled: true) {
                     onShowCommandPalette?()
+                }
+
+                if let onInlineAssist {
+                    toolbarButton(icon: "sparkles", enabled: true) {
+                        onInlineAssist()
+                    }
                 }
 
                 Divider().frame(height: 24)
