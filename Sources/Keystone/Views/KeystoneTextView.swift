@@ -121,6 +121,11 @@ public struct KeystoneTextView: UIViewRepresentable {
             foldingManager?.unfoldAll()
             textView?.forceLayoutRefresh()
         }
+        actions.selectNextOccurrence = { [weak textView] in textView?.selectNextOccurrence() }
+        actions.selectAllOccurrences = { [weak textView] in textView?.selectAllOccurrences() }
+        actions.addCaretAbove = { [weak textView] in textView?.addCaretAbove() }
+        actions.addCaretBelow = { [weak textView] in textView?.addCaretBelow() }
+        actions.collapseSelections = { [weak textView] in textView?.collapseSelections() }
     }
 
     private func setupCodeFolding(textView: TextView, context: Context) {

@@ -551,6 +551,12 @@ final class TextInputView: UIView, UITextInput {
             _selectedRange
         }
         set {
+            // A single range set by the host or by navigation is back to one cursor;
+            // multi-caret code goes through setCarets/_selectedRange instead.
+            if !isUpdatingSelections && !secondaryCarets.isEmpty {
+                secondaryCarets = []
+                primaryAnchor = nil
+            }
             if newValue != _selectedRange {
                 _selectedRange = newValue
                 delegate?.textInputViewDidChangeSelection(self)
@@ -566,6 +572,19 @@ final class TextInputView: UIView, UITextInput {
             }
         }
     }
+    /// Cursors beyond the primary. UIKit's `UITextInput` only knows the primary; these are
+    /// drawn by `multiCaretOverlay` and edited by this view's own fan-out (see the
+    /// "Multiple selections" extension). Hardware keyboards drive them; the on-screen
+    /// keyboard still types into every caret.
+    fileprivate var secondaryCarets: [CaretSelection] = [] {
+        didSet {
+            if secondaryCarets != oldValue { setNeedsLayout() }
+        }
+    }
+    fileprivate var primaryAnchor: Int?
+    fileprivate var isUpdatingSelections = false
+    fileprivate let multiCaretOverlay = MultiCaretOverlayView()
+
     override var canBecomeFirstResponder: Bool {
         true
     }
@@ -792,6 +811,7 @@ final class TextInputView: UIView, UITextInput {
         layoutManager.layoutIfNeeded()
         layoutManager.layoutLineSelectionIfNeeded()
         layoutPageGuideIfNeeded()
+        layoutMultiCaretOverlay()
         // We notify the input delegate about selection changes in layoutSubviews so we have a chance of disabling notifying the input delegate during an editing operation.
         // We will sometimes disable notifying the input delegate when the user enters Korean text.
         // This workaround is inspired by a dialog with Alexander Blach (@lextar), developer of Textastic.
@@ -810,13 +830,20 @@ final class TextInputView: UIView, UITextInput {
     }
 
     override func copy(_ sender: Any?) {
-        if let selectedTextRange = selectedTextRange, let text = text(in: selectedTextRange) {
+        if hasMultipleSelections {
+            if let text = copyableText() { UIPasteboard.general.string = text }
+        } else if let selectedTextRange = selectedTextRange, let text = text(in: selectedTextRange) {
             UIPasteboard.general.string = text
         }
     }
 
     override func paste(_ sender: Any?) {
-        if let selectedTextRange = selectedTextRange, let string = UIPasteboard.general.string {
+        guard let string = UIPasteboard.general.string else { return }
+        if hasMultipleSelections {
+            pasteText(prepareTextForInsertion(string))
+            return
+        }
+        if let selectedTextRange = selectedTextRange {
             inputDelegate?.selectionWillChange(self)
             let preparedText = prepareTextForInsertion(string)
             replace(selectedTextRange, withText: preparedText)
@@ -825,7 +852,14 @@ final class TextInputView: UIView, UITextInput {
     }
 
     override func cut(_ sender: Any?) {
-        if let selectedTextRange = selectedTextRange, let text = text(in: selectedTextRange) {
+        if hasMultipleSelections {
+            guard let text = copyableText() else { return }
+            UIPasteboard.general.string = text
+            editAllCarets { range in
+                if range.length > 0 { self.replaceText(in: range, with: "") }
+            }
+            delegate?.textInputViewDidChangeSelection(self)
+        } else if let selectedTextRange = selectedTextRange, let text = text(in: selectedTextRange) {
             UIPasteboard.general.string = text
             replace(selectedTextRange, withText: "")
         }
@@ -833,7 +867,35 @@ final class TextInputView: UIView, UITextInput {
 
     override func selectAll(_ sender: Any?) {
         notifyInputDelegateAboutSelectionChangeInLayoutSubviews = true
+        secondaryCarets = []
+        primaryAnchor = nil
         selectedRange = NSRange(location: 0, length: string.length)
+    }
+
+    // MARK: - Hardware keyboard
+
+    override var keyCommands: [UIKeyCommand]? {
+        let commands = [
+            UIKeyCommand(title: String(localized: "Select Next Occurrence", bundle: .module), action: #selector(selectNextOccurrenceCommand), input: "d", modifierFlags: .command),
+            UIKeyCommand(title: String(localized: "Select All Occurrences", bundle: .module), action: #selector(selectAllOccurrencesCommand), input: "l", modifierFlags: [.command, .shift]),
+            UIKeyCommand(title: String(localized: "Add Cursor Above", bundle: .module), action: #selector(addCaretAboveCommand), input: UIKeyCommand.inputUpArrow, modifierFlags: [.command, .alternate]),
+            UIKeyCommand(title: String(localized: "Add Cursor Below", bundle: .module), action: #selector(addCaretBelowCommand), input: UIKeyCommand.inputDownArrow, modifierFlags: [.command, .alternate]),
+        ]
+        for command in commands { command.wantsPriorityOverSystemBehavior = true }
+        return commands + (super.keyCommands ?? [])
+    }
+
+    @objc private func selectNextOccurrenceCommand() { selectNextOccurrence() }
+    @objc private func selectAllOccurrencesCommand() { selectAllOccurrences() }
+    @objc private func addCaretAboveCommand() { addCaret(.up) }
+    @objc private func addCaretBelowCommand() { addCaret(.down) }
+
+    override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        // With several carets, arrows and Escape are ours; UIKit would move only the primary.
+        if hasMultipleSelections, presses.count == 1, let key = presses.first?.key, handleMultiCaretKey(key) {
+            return
+        }
+        super.pressesBegan(presses, with: event)
     }
 
     /// When autocorrection is enabled and the user tap on a misspelled word, UITextInteraction will present
@@ -924,8 +986,15 @@ final class TextInputView: UIView, UITextInput {
 
     func moveCaret(to point: CGPoint) {
         if let index = layoutManager.closestIndex(to: point) {
+            // A plain tap is back to one cursor.
+            secondaryCarets = []
+            primaryAnchor = nil
             selectedRange = NSRange(location: index, length: 0)
         }
+    }
+
+    func location(closestTo point: CGPoint) -> Int? {
+        layoutManager.closestIndex(to: point)
     }
 
     func setLanguageMode(_ languageMode: LanguageMode, completion: ((Bool) -> Void)? = nil) {
@@ -1215,6 +1284,10 @@ extension TextInputView {
 extension TextInputView {
     func insertText(_ text: String) {
         let preparedText = prepareTextForInsertion(text)
+        if hasMultipleSelections, markedRange == nil {
+            insertAtAllCarets(preparedText, originalText: text)
+            return
+        }
         isRestoringPreviouslyDeletedText = hasDeletedTextWithPendingLayoutSubviews
         hasDeletedTextWithPendingLayoutSubviews = false
         defer {
@@ -1244,6 +1317,10 @@ extension TextInputView {
 
     func deleteBackward() {
         didCallDeleteBackward = true
+        if hasMultipleSelections, markedRange == nil {
+            deleteBackwardAtAllCarets()
+            return
+        }
         guard let selectedRange = markedRange ?? selectedRange, selectedRange.length > 0 else {
             return
         }
@@ -1861,6 +1938,350 @@ extension TextInputView: EditMenuControllerDelegate {
 
     func selectedRange(for controller: EditMenuController) -> NSRange? {
         selectedRange
+    }
+}
+
+
+// MARK: - Multiple selections (hardware keyboard / pointer)
+
+extension TextInputView {
+    var allCarets: [CaretSelection] { caretsWithPrimary().carets }
+    var selectedRanges: [NSRange] { allCarets.map(\.range) }
+    var hasMultipleSelections: Bool { !secondaryCarets.isEmpty }
+
+    fileprivate var primaryCaret: CaretSelection? {
+        guard let range = _selectedRange else { return nil }
+        if let anchor = primaryAnchor, anchor == range.location || anchor == range.upperBound {
+            return CaretSelection(anchor: anchor, head: anchor == range.location ? range.upperBound : range.location)
+        }
+        return CaretSelection(range: range)
+    }
+
+    fileprivate func caretsWithPrimary() -> (carets: [CaretSelection], primary: Int) {
+        guard let primary = primaryCaret else { return ([], 0) }
+        return CaretSelection.normalized(secondaryCarets + [primary], primary: secondaryCarets.count)
+    }
+
+    /// Replaces every selection. `carets[primaryIndex]` becomes the primary (UIKit's selection).
+    func setCarets(_ carets: [CaretSelection], primary primaryIndex: Int) {
+        let length = stringView.string.length
+        let clamped = carets.map { CaretSelection(anchor: max(0, min($0.anchor, length)), head: max(0, min($0.head, length))) }
+        let (normalized, primary) = CaretSelection.normalized(clamped, primary: primaryIndex)
+        guard !normalized.isEmpty else { return }
+        let primaryCaret = normalized[primary]
+        var others = normalized
+        others.remove(at: primary)
+        isUpdatingSelections = true
+        secondaryCarets = others
+        primaryAnchor = primaryCaret.anchor
+        if _selectedRange != primaryCaret.range {
+            inputDelegate?.selectionWillChange(self)
+            _selectedRange = primaryCaret.range
+            inputDelegate?.selectionDidChange(self)
+        }
+        isUpdatingSelections = false
+        setNeedsLayout()
+        delegate?.textInputViewDidChangeSelection(self)
+    }
+
+    func toggleCaret(at location: Int) {
+        var carets = allCarets
+        if carets.count > 1, let index = carets.firstIndex(where: { $0.isCaret && $0.head == location }) {
+            carets.remove(at: index)
+            setCarets(carets, primary: carets.count - 1)
+        } else {
+            carets.append(CaretSelection(caretAt: location))
+            setCarets(carets, primary: carets.count - 1)
+        }
+    }
+
+    /// ⇧-tap: extend the primary selection from its anchor to `location`.
+    func extendPrimarySelection(to location: Int) {
+        let anchor = primaryCaret?.anchor ?? location
+        setCarets(secondaryCarets + [CaretSelection(anchor: anchor, head: location)], primary: secondaryCarets.count)
+    }
+
+    func collapseToPrimarySelection() {
+        guard hasMultipleSelections, let primary = primaryCaret else { return }
+        setCarets([primary], primary: 0)
+    }
+
+    /// Drops the extra carets without touching the primary (the caller is about to set it).
+    func clearSecondaryCarets() {
+        secondaryCarets = []
+        primaryAnchor = nil
+    }
+
+    func selectNextOccurrence() {
+        let string = stringView.string
+        let (carets, primaryIndex) = caretsWithPrimary()
+        guard carets.indices.contains(primaryIndex) else { return }
+        let primary = carets[primaryIndex]
+        if primary.isCaret {
+            let word = TextNavigation.wordRange(at: primary.head, in: string)
+            guard word.length > 0 else { return }
+            var updated = carets
+            updated[primaryIndex] = CaretSelection(range: word)
+            setCarets(updated, primary: primaryIndex)
+            return
+        }
+        let needle = string.substring(with: primary.range)
+        let taken = Set(carets.map { $0.range.location })
+        var searchFrom = primary.range.upperBound
+        for _ in 0..<2 {
+            var from = searchFrom
+            while from <= string.length {
+                let found = string.range(of: needle, options: [], range: NSRange(location: from, length: string.length - from))
+                guard found.location != NSNotFound else { break }
+                if !taken.contains(found.location) {
+                    setCarets(carets + [CaretSelection(range: found)], primary: carets.count)
+                    return
+                }
+                from = found.location + max(1, found.length)
+            }
+            searchFrom = 0
+        }
+    }
+
+    func selectAllOccurrences() {
+        let string = stringView.string
+        let (carets, primaryIndex) = caretsWithPrimary()
+        guard carets.indices.contains(primaryIndex) else { return }
+        var primary = carets[primaryIndex]
+        if primary.isCaret {
+            primary = CaretSelection(range: TextNavigation.wordRange(at: primary.head, in: string))
+        }
+        guard primary.range.length > 0 else { return }
+        let needle = string.substring(with: primary.range)
+        var found: [CaretSelection] = []
+        var from = 0
+        while from <= string.length, found.count < 10_000 {
+            let range = string.range(of: needle, options: [], range: NSRange(location: from, length: string.length - from))
+            guard range.location != NSNotFound else { break }
+            found.append(CaretSelection(range: range))
+            from = range.location + max(1, range.length)
+        }
+        setCarets(found, primary: found.firstIndex { $0.range == primary.range } ?? found.count - 1)
+    }
+
+    func addCaret(_ direction: UITextLayoutDirection) {
+        let carets = allCarets
+        guard let edge = direction == .up ? carets.first : carets.last else { return }
+        guard let location = lineMovementController.location(from: edge.head, in: direction, offset: 1), location != edge.head else { return }
+        setCarets(carets + [CaretSelection(caretAt: location)], primary: carets.count)
+    }
+
+    // MARK: Movement
+
+    enum Motion {
+        case left, right, wordLeft, wordRight, lineStart, lineEnd, documentStart, documentEnd, up, down
+    }
+
+    fileprivate func lineContentRange(containing location: Int) -> NSRange {
+        let length = stringView.string.length
+        let line = lineManager.line(containingCharacterAt: min(location, length)) ?? lineManager.line(atRow: lineManager.lineCount - 1)
+        return NSRange(location: line.location, length: line.data.length)
+    }
+
+    fileprivate func destination(for motion: Motion, from caret: CaretSelection, extending: Bool) -> Int {
+        let string = stringView.string
+        let length = string.length
+        let head = caret.head
+        switch motion {
+        case .left:
+            if !extending && !caret.isCaret { return caret.range.location }
+            guard head > 0 else { return 0 }
+            return string.rangeOfComposedCharacterSequence(at: head - 1).location
+        case .right:
+            if !extending && !caret.isCaret { return caret.range.upperBound }
+            guard head < length else { return length }
+            return string.rangeOfComposedCharacterSequence(at: head).upperBound
+        case .wordLeft: return TextNavigation.wordStart(before: head, in: string)
+        case .wordRight: return TextNavigation.wordEnd(after: head, in: string)
+        case .lineStart:
+            let content = lineContentRange(containing: head)
+            let smart = TextNavigation.firstNonWhitespace(in: content, of: string)
+            return head == smart ? content.location : smart
+        case .lineEnd: return lineContentRange(containing: head).upperBound
+        case .documentStart: return 0
+        case .documentEnd: return length
+        case .up: return lineMovementController.location(from: head, in: .up, offset: 1) ?? 0
+        case .down: return lineMovementController.location(from: head, in: .down, offset: 1) ?? length
+        }
+    }
+
+    func move(_ motion: Motion, extending: Bool) {
+        let (carets, primaryIndex) = caretsWithPrimary()
+        guard !carets.isEmpty else { return }
+        let moved = carets.map { caret -> CaretSelection in
+            let target = destination(for: motion, from: caret, extending: extending)
+            return extending ? CaretSelection(anchor: caret.anchor, head: target) : CaretSelection(caretAt: target)
+        }
+        setCarets(moved, primary: primaryIndex)
+    }
+
+    /// Arrow keys and Escape while several carets exist. Returns false when the key is not ours.
+    fileprivate func handleMultiCaretKey(_ key: UIKey) -> Bool {
+        let flags = key.modifierFlags
+        let extending = flags.contains(.shift)
+        switch key.keyCode {
+        case .keyboardEscape:
+            collapseToPrimarySelection()
+        case .keyboardLeftArrow:
+            move(flags.contains(.command) ? .lineStart : flags.contains(.alternate) ? .wordLeft : .left, extending: extending)
+        case .keyboardRightArrow:
+            move(flags.contains(.command) ? .lineEnd : flags.contains(.alternate) ? .wordRight : .right, extending: extending)
+        case .keyboardUpArrow:
+            if flags.contains(.command) && flags.contains(.alternate) { addCaret(.up) }
+            else { move(flags.contains(.command) ? .documentStart : .up, extending: extending) }
+        case .keyboardDownArrow:
+            if flags.contains(.command) && flags.contains(.alternate) { addCaret(.down) }
+            else { move(flags.contains(.command) ? .documentEnd : .down, extending: extending) }
+        default:
+            return false
+        }
+        return true
+    }
+
+    // MARK: Multi-caret editing
+
+    /// Runs `edit` for every selection from last to first, then places each caret where its
+    /// edit left the primary range, shifted by the length changes of the edits before it.
+    func editAllCarets(_ edit: (NSRange) -> Void) {
+        let (carets, primaryIndex) = caretsWithPrimary()
+        guard carets.count > 1 else {
+            if let only = carets.first { edit(only.range) }
+            return
+        }
+        isUpdatingSelections = true
+        var afterEdit: [(range: NSRange, delta: Int)] = Array(repeating: (NSRange(location: 0, length: 0), 0), count: carets.count)
+        for (index, caret) in carets.enumerated().reversed() {
+            _selectedRange = caret.range
+            let before = stringView.string.length
+            edit(caret.range)
+            afterEdit[index] = (_selectedRange ?? caret.range, stringView.string.length - before)
+        }
+        isUpdatingSelections = false
+        var shift = 0
+        var finals: [CaretSelection] = []
+        for item in afterEdit {
+            finals.append(CaretSelection(range: NSRange(location: item.range.location + shift, length: item.range.length)))
+            shift += item.delta
+        }
+        setCarets(finals, primary: primaryIndex)
+    }
+
+    fileprivate func insertAtAllCarets(_ preparedText: String, originalText text: String) {
+        markedRange = nil
+        editAllCarets { range in
+            guard self.shouldChangeText(in: range, replacementText: preparedText) else { return }
+            if LineEnding(symbol: text) != nil {
+                self.indentController.insertLineBreak(in: range, using: self.lineEndings)
+            } else {
+                self.replaceText(in: range, with: preparedText)
+            }
+        }
+        layoutIfNeeded()
+        delegate?.textInputViewDidChangeSelection(self)
+    }
+
+    fileprivate func deleteBackwardAtAllCarets() {
+        editAllCarets { selected in
+            var range = selected
+            guard range.location > 0 || range.length > 0 else { return }
+            if range.length == 0 { range = NSRange(location: range.location - 1, length: 1) }
+            let deleteRange = self.rangeForDeletingText(in: range)
+            guard self.shouldChangeText(in: deleteRange, replacementText: "") else { return }
+            self.replaceText(in: deleteRange, with: "")
+        }
+        layoutIfNeeded()
+        delegate?.textInputViewDidChangeSelection(self)
+    }
+
+    /// Selected text; several selections are joined with line breaks.
+    func copyableText() -> String? {
+        let pieces = allCarets.map(\.range).filter { $0.length > 0 }.map { stringView.string.substring(with: $0) }
+        return pieces.isEmpty ? nil : pieces.joined(separator: lineEndings.symbol)
+    }
+
+    /// Pastes at every caret; with as many lines as carets, each caret gets its line.
+    func pasteText(_ text: String) {
+        guard hasMultipleSelections else {
+            let range = _selectedRange ?? NSRange(location: stringView.string.length, length: 0)
+            replaceText(in: range, with: text)
+            return
+        }
+        let lines = TextNavigation.lines(forDistributing: text)
+        let carets = allCarets
+        let distribute = lines.count == carets.count
+        var index = carets.count - 1
+        editAllCarets { range in
+            let piece = distribute ? lines[max(0, index)] : text
+            index -= 1
+            self.replaceText(in: range, with: piece)
+        }
+        layoutIfNeeded()
+        delegate?.textInputViewDidChangeSelection(self)
+    }
+
+    // MARK: Overlay
+
+    fileprivate func layoutMultiCaretOverlay() {
+        guard hasMultipleSelections else {
+            multiCaretOverlay.isHidden = true
+            return
+        }
+        if multiCaretOverlay.superview !== self {
+            addSubview(multiCaretOverlay)
+        }
+        multiCaretOverlay.isHidden = false
+        multiCaretOverlay.frame = bounds
+        bringSubviewToFront(multiCaretOverlay)
+        var caretRects: [CGRect] = []
+        var selectionRects: [CGRect] = []
+        for caret in secondaryCarets {
+            if caret.isCaret {
+                caretRects.append(caretRectService.caretRect(at: caret.head, allowMovingCaretToNextLineFragment: true))
+            } else {
+                selectionRects.append(contentsOf: selectionRectService.selectionRects(in: caret.range).map(\.rect))
+            }
+        }
+        multiCaretOverlay.caretColor = insertionPointColor
+        multiCaretOverlay.selectionColor = tintColor.withAlphaComponent(0.25)
+        multiCaretOverlay.update(caretRects: caretRects, selectionRects: selectionRects)
+    }
+}
+
+/// Draws the secondary carets and selections; UIKit draws the primary.
+final class MultiCaretOverlayView: UIView {
+    var caretColor: UIColor = .label
+    var selectionColor: UIColor = UIColor.tintColor.withAlphaComponent(0.25)
+    private var caretRects: [CGRect] = []
+    private var selectionRects: [CGRect] = []
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        isUserInteractionEnabled = false
+        backgroundColor = .clear
+        isOpaque = false
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    func update(caretRects: [CGRect], selectionRects: [CGRect]) {
+        self.caretRects = caretRects
+        self.selectionRects = selectionRects
+        setNeedsDisplay()
+    }
+
+    override func draw(_ rect: CGRect) {
+        guard let context = UIGraphicsGetCurrentContext() else { return }
+        context.setFillColor(selectionColor.cgColor)
+        for r in selectionRects where r.intersects(rect) { context.fill(r) }
+        context.setFillColor(caretColor.cgColor)
+        for r in caretRects where r.intersects(rect) { context.fill(r) }
     }
 }
 

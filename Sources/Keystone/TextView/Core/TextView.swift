@@ -209,6 +209,8 @@ open class TextView: UIScrollView {
             }
         }
         set {
+            // A host-set single range is back to one cursor.
+            textInputView.clearSecondaryCarets()
             textInputView.selectedTextRange = IndexedRange(newValue)
         }
     }
@@ -308,6 +310,52 @@ open class TextView: UIScrollView {
             textInputView.showLineNumbers = newValue
         }
     }
+    /// Every selection, including the primary, sorted by location. Setting more than one
+    /// range creates multiple cursors; the last one is primary. Driven by a hardware
+    /// keyboard (⌘D, ⌘⇧L, ⌘⌥↑/↓, arrows, Esc) or a pointer (⌥-tap, ⇧-tap).
+    public var selectedRanges: [NSRange] {
+        get { textInputView.selectedRanges }
+        set { textInputView.setCarets(newValue.map { CaretSelection(range: $0) }, primary: max(0, newValue.count - 1)) }
+    }
+
+    /// Adds a cursor at `location` (or removes the one already there). ⌥-tap does this.
+    public func toggleCaret(at location: Int) {
+        textInputView.toggleCaret(at: location)
+    }
+
+    /// Selects the word at the caret, then each further occurrence of the selection (⌘D).
+    public func selectNextOccurrence() {
+        textInputView.selectNextOccurrence()
+    }
+
+    /// One selection per occurrence of the selected text (⌘⇧L).
+    public func selectAllOccurrences() {
+        textInputView.selectAllOccurrences()
+    }
+
+    /// Adds a cursor on the line above the top-most one.
+    public func addCaretAbove() {
+        textInputView.addCaret(.up)
+    }
+
+    /// Adds a cursor on the line below the bottom-most one.
+    public func addCaretBelow() {
+        textInputView.addCaret(.down)
+    }
+
+    /// Back to a single cursor (Esc).
+    public func collapseSelections() {
+        textInputView.collapseToPrimarySelection()
+    }
+
+    #if DEBUG
+    func debugInsertText(_ text: String) { textInputView.insertText(text) }
+    func debugDeleteBackward() { textInputView.deleteBackward() }
+    func debugCopyableText() -> String? { textInputView.copyableText() }
+    func debugPaste(_ text: String) { textInputView.pasteText(text) }
+    func debugMove(_ motion: TextInputView.Motion, extending: Bool) { textInputView.move(motion, extending: extending) }
+    #endif
+
     /// Enable to show code folding indicators in the gutter.
     public var showCodeFolding: Bool {
         get {
@@ -1220,6 +1268,20 @@ private extension TextView {
         if gestureRecognizer.state == .ended {
             let point = gestureRecognizer.location(in: textInputView)
             let oldSelectedRange = textInputView.selectedRange
+            let modifiers = gestureRecognizer.modifierFlags
+            if modifiers.contains(.alternate), let location = textInputView.location(closestTo: point) {
+                // ⌥-tap (pointer or trackpad) adds or removes a caret
+                textInputView.toggleCaret(at: location)
+                installEditableInteraction()
+                becomeFirstResponder()
+                return
+            }
+            if modifiers.contains(.shift), let location = textInputView.location(closestTo: point) {
+                textInputView.extendPrimarySelection(to: location)
+                installEditableInteraction()
+                becomeFirstResponder()
+                return
+            }
             textInputView.moveCaret(to: point)
             if textInputView.selectedRange != oldSelectedRange {
                 layoutIfNeeded()

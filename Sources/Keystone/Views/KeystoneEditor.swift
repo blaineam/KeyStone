@@ -613,14 +613,12 @@ public struct KeystoneEditor: View {
         if inlineAssistHandler != nil {
             commands.insert(EditorCommand(id: "inlineAssist", title: String(localized: "Inline Assist…", bundle: .module), subtitle: String(localized: "Describe a change to the selection", bundle: .module), systemImage: "sparkles", shortcut: "⌘I") { startInlineAssist() }, at: 0)
         }
-        #if os(macOS)
         commands += [
             EditorCommand(id: "selectNext", title: String(localized: "Select Next Occurrence", bundle: .module), systemImage: "text.cursor", shortcut: "⌘D") { editorActions.selectNextOccurrence?() },
             EditorCommand(id: "selectAllOcc", title: String(localized: "Select All Occurrences", bundle: .module), systemImage: "text.cursor", shortcut: "⌘⇧L") { editorActions.selectAllOccurrences?() },
             EditorCommand(id: "caretAbove", title: String(localized: "Add Cursor Above", bundle: .module), systemImage: "arrow.up.to.line", shortcut: "⌘⌥↑") { editorActions.addCaretAbove?() },
             EditorCommand(id: "caretBelow", title: String(localized: "Add Cursor Below", bundle: .module), systemImage: "arrow.down.to.line", shortcut: "⌘⌥↓") { editorActions.addCaretBelow?() },
         ]
-        #endif
         for ending in LineEnding.allCases where ending != configuration.lineEnding {
             commands.append(EditorCommand(id: "lineEnding.\(ending.rawValue)", title: String(localized: "Convert Line Endings to \(ending.rawValue.uppercased())", bundle: .module), systemImage: "return") {
                 configuration.lineEnding = ending

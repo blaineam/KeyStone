@@ -2,7 +2,7 @@
 
 All notable changes to KeyStone are documented here. This project adheres to [Semantic Versioning](https://semver.org/). Releases before 2.6.0 are described by their tags and commit history.
 
-## [Unreleased]
+## [2.7.0] - 2026-10-21
 
 ### Added
 
@@ -20,7 +20,7 @@ All notable changes to KeyStone are documented here. This project adheres to [Se
 - Typing deep inside a very long wrapped line resumes typesetting after the edit instead of from the line start (115 ms → ~40 ms per keystroke in a 1 MB line).
 
 - **macOS keyboard parity.** The Mac view handled only arrows and Delete. It now implements the standard key bindings: word movement (⌥←/→), smart Home/End, paragraph and document movement, Page Up/Down, every ⇧-extending variant, ⌥⌫/⌥⌦, ⌘⌫, ⌃K, ⇧Tab outdent and Tab indent of multi-line selections, Select Word/Line, and ⇧-click to extend.
-- **Multiple cursors on macOS.** ⌥-click adds or removes a caret, ⌘D selects the word then each next occurrence, ⌘⇧L selects every occurrence, ⌘⌥↑/↓ (or ⌃⇧↑/↓) add a caret above/below, Esc collapses. Typing, deleting, Tab, paste (one line per caret when the counts match), copy (joined) and undo all work across carets. `TextView.selectedRanges`, `selectNextOccurrence()`, `selectAllOccurrences()`, `addCaretAbove()/Below()`, `toggleCaret(at:)`, `collapseSelections()`.
+- **Multiple cursors.** ⌥-click adds or removes a caret, ⌘D selects the word then each next occurrence, ⌘⇧L selects every occurrence, ⌘⌥↑/↓ (or ⌃⇧↑/↓ on the Mac) add a caret above/below, Esc collapses. Typing, deleting, paste (one line per caret when the counts match), copy (joined) and undo all work across carets. On iPadOS/iOS this needs a hardware keyboard or a pointer (⌥-tap, ⇧-tap): UIKit's selection UI only knows the primary cursor, so Keystone draws the others itself and routes arrow keys, ⌘D/⌘⇧L/⌘⌥↑/↓ and Esc through its own key handling while several carets exist. `TextView.selectedRanges`, `selectNextOccurrence()`, `selectAllOccurrences()`, `addCaretAbove()/Below()`, `toggleCaret(at:)`, `collapseSelections()` on both platforms.
 
 - **Go to Symbol (⌘⇧O), breadcrumbs and a command palette (⌘⇧P).** Symbols (functions, methods, types, headings, JSON/YAML keys, CSS selectors, HTML ids…) come from the syntax tree for every tree-sitter language, refreshed after each parse up to 500 KB and on demand above. The status bar shows the symbol path around the caret. The palette lists every editor command with its shortcut, fuzzy-filtered; hosts add their own with `KeystoneEditor.commands(_:)`. `KeystoneDocument.symbols` / `symbolPath(atOffset:)` / `refreshSymbols()`.
 

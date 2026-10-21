@@ -20,7 +20,7 @@ change and bump `Package.resolved` once this branch is on `main`).
 | Search as you type at any size | `KeystoneEditor` find bar | 150 ms / 400 ms debounce, off main |
 | Budgets | `PerformanceBudgetTests` | open < 1 s, keystroke < 50 ms (100 ms inside a minified line), find hand-off < 50 ms |
 | macOS keyboard parity | `TextInputViewMac` navigation extension, `TextNavigation.swift` | word/line/document movement, ⇧-extension, delete word/line, Tab/⇧Tab indent, Select Word/Line, ⇧-click |
-| Multiple cursors (macOS) | same | ⌥-click, ⌘D, ⌘⇧L, ⌘⌥↑/↓, Esc; typing/delete/paste/copy/undo across carets; `TextView.selectedRanges` |
+| Multiple cursors (macOS; iPadOS/iOS with a hardware keyboard or pointer) | same + `TextInputView` multi-caret extension | ⌥-click, ⌘D, ⌘⇧L, ⌘⌥↑/↓, Esc; typing/delete/paste/copy/undo across carets; `TextView.selectedRanges` |
 | Go to Symbol, breadcrumbs, command palette | `DocumentSymbols.swift`, `FuzzyPicker.swift`, `EditorCommands.swift` | symbols from the tree for every language; ⌘⇧O / ⌘⇧P; host commands via `.commands(_:)` |
 | Gutter change markers | `LineDiff.swift`, `KeystoneDocument.changeMarkers`, `GutterBackgroundView` | Myers over line hashes, 0.4 s debounce, reset by `markSaved()` |
 | Indent guides, bracket-pair colours, matching-bracket highlight | `LayoutManager`, `LineFragmentRenderer`, `TreeSitterSyntaxHighlighter` | settings toggles + palette commands |
@@ -34,7 +34,8 @@ Known residuals:
   would remove that.
 - JavaScript/TypeScript prettify/minify need js-beautify + terser in
   JavaScriptCore (a download the user has to approve).
-- Multiple cursors are macOS only (UIKit's `UITextInput` holds one range).
+- On iOS, multiple cursors need a hardware keyboard or pointer; the on-screen keyboard
+  types into every caret but can't add or move them.
 - Symbols refresh automatically up to 500 KB; above that, opening Go to Symbol
   computes them on demand.
 
