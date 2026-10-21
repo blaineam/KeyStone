@@ -24,6 +24,7 @@ public struct KeystoneTextView: UIViewRepresentable {
     var searchMatches: [SearchMatch]
     var currentMatchIndex: Int
     var undoController: UndoController?
+    var actions: EditorActions?
     var onParsingTimeout: (() -> Void)?
 
     public init(
@@ -37,6 +38,7 @@ public struct KeystoneTextView: UIViewRepresentable {
         searchMatches: [SearchMatch] = [],
         currentMatchIndex: Int = 0,
         undoController: UndoController? = nil,
+        actions: EditorActions? = nil,
         onParsingTimeout: (() -> Void)? = nil
     ) {
         self.document = document
@@ -49,6 +51,7 @@ public struct KeystoneTextView: UIViewRepresentable {
         self.searchMatches = searchMatches
         self.currentMatchIndex = currentMatchIndex
         self.undoController = undoController
+        self.actions = actions
         self.onParsingTimeout = onParsingTimeout
     }
 
@@ -91,6 +94,7 @@ public struct KeystoneTextView: UIViewRepresentable {
 
         // Set up code folding
         setupCodeFolding(textView: textView, context: context)
+        setupActions(textView: textView, context: context)
 
         context.coordinator.textView = textView
         document.attach(textView) { [weak coordinator = context.coordinator] newText, preservingUndo in
@@ -98,6 +102,19 @@ public struct KeystoneTextView: UIViewRepresentable {
         }
 
         return textView
+    }
+
+    private func setupActions(textView: TextView, context: Context) {
+        guard let actions = actions else { return }
+        let foldingManager = context.coordinator.codeFoldingManager
+        actions.foldAll = { [weak foldingManager, weak textView] in
+            foldingManager?.foldAll()
+            textView?.forceLayoutRefresh()
+        }
+        actions.unfoldAll = { [weak foldingManager, weak textView] in
+            foldingManager?.unfoldAll()
+            textView?.forceLayoutRefresh()
+        }
     }
 
     private func setupCodeFolding(textView: TextView, context: Context) {
@@ -684,6 +701,7 @@ public struct KeystoneTextView: NSViewRepresentable {
     var searchMatches: [SearchMatch]
     var currentMatchIndex: Int
     var undoController: UndoController?
+    var actions: EditorActions?
     /// Called when TreeSitter parsing times out (default 30 seconds).
     var onParsingTimeout: (() -> Void)?
 
@@ -698,6 +716,7 @@ public struct KeystoneTextView: NSViewRepresentable {
         searchMatches: [SearchMatch] = [],
         currentMatchIndex: Int = 0,
         undoController: UndoController? = nil,
+        actions: EditorActions? = nil,
         onParsingTimeout: (() -> Void)? = nil
     ) {
         self.document = document
@@ -710,6 +729,7 @@ public struct KeystoneTextView: NSViewRepresentable {
         self.searchMatches = searchMatches
         self.currentMatchIndex = currentMatchIndex
         self.undoController = undoController
+        self.actions = actions
         self.onParsingTimeout = onParsingTimeout
     }
 
@@ -744,6 +764,7 @@ public struct KeystoneTextView: NSViewRepresentable {
 
         // Set up code folding
         setupCodeFolding(textView: textView, context: context)
+        setupActions(textView: textView, context: context)
 
         context.coordinator.textView = textView
         document.attach(textView) { [weak coordinator = context.coordinator] newText, preservingUndo in
@@ -751,6 +772,24 @@ public struct KeystoneTextView: NSViewRepresentable {
         }
 
         return textView
+    }
+
+    private func setupActions(textView: TextView, context: Context) {
+        guard let actions = actions else { return }
+        let foldingManager = context.coordinator.codeFoldingManager
+        actions.foldAll = { [weak foldingManager, weak textView] in
+            foldingManager?.foldAll()
+            textView?.forceLayoutRefresh()
+        }
+        actions.unfoldAll = { [weak foldingManager, weak textView] in
+            foldingManager?.unfoldAll()
+            textView?.forceLayoutRefresh()
+        }
+        actions.selectNextOccurrence = { [weak textView] in textView?.selectNextOccurrence() }
+        actions.selectAllOccurrences = { [weak textView] in textView?.selectAllOccurrences() }
+        actions.addCaretAbove = { [weak textView] in textView?.addCaretAbove() }
+        actions.addCaretBelow = { [weak textView] in textView?.addCaretBelow() }
+        actions.collapseSelections = { [weak textView] in textView?.collapseSelections() }
     }
 
     private func setupCodeFolding(textView: TextView, context: Context) {

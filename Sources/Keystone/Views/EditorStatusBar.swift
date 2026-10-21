@@ -12,8 +12,11 @@ public struct EditorStatusBar: View {
     @ObservedObject var configuration: KeystoneConfiguration
     let hasUnsavedChanges: Bool
     let language: KeystoneLanguage
+    /// Enclosing symbols of the caret, outermost first.
+    var breadcrumbs: [String] = []
     var onSettingsTap: (() -> Void)?
     var onLanguageChange: ((KeystoneLanguage) -> Void)?
+    var onBreadcrumbTap: (() -> Void)?
 
     @State private var showingLanguagePicker = false
 
@@ -23,16 +26,20 @@ public struct EditorStatusBar: View {
         configuration: KeystoneConfiguration,
         hasUnsavedChanges: Bool = false,
         language: KeystoneLanguage = .plainText,
+        breadcrumbs: [String] = [],
         onSettingsTap: (() -> Void)? = nil,
-        onLanguageChange: ((KeystoneLanguage) -> Void)? = nil
+        onLanguageChange: ((KeystoneLanguage) -> Void)? = nil,
+        onBreadcrumbTap: (() -> Void)? = nil
     ) {
         self.cursorPosition = cursorPosition
         self.lineCount = lineCount
         self.configuration = configuration
         self.hasUnsavedChanges = hasUnsavedChanges
         self.language = language
+        self.breadcrumbs = breadcrumbs
         self.onSettingsTap = onSettingsTap
         self.onLanguageChange = onLanguageChange
+        self.onBreadcrumbTap = onBreadcrumbTap
     }
 
     public var body: some View {
@@ -54,6 +61,18 @@ public struct EditorStatusBar: View {
                         Text("Sel: \(cursorPosition.selectionLength)", bundle: .module)
                             .font(.caption)
                             .foregroundColor(.accentColor)
+                    }
+
+                    // Breadcrumbs: the symbols around the caret
+                    if !breadcrumbs.isEmpty {
+                        Button(action: { onBreadcrumbTap?() }) {
+                            Text(breadcrumbs.joined(separator: " › "))
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                                .lineLimit(1)
+                        }
+                        .buttonStyle(.plain)
+                        .help(String(localized: "Go to Symbol", bundle: .module))
                     }
 
                     Spacer(minLength: 20)

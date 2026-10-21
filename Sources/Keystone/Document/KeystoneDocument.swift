@@ -59,6 +59,10 @@ public final class KeystoneDocument: ObservableObject {
     /// Fires after every edit, on the main thread, with no text attached.
     public let didChange = PassthroughSubject<Change, Never>()
 
+    /// Outline symbols from the syntax tree, refreshed after each parse for documents
+    /// up to 500 KB; call ``refreshSymbols()`` for bigger ones.
+    @Published public private(set) var symbols: [DocumentSymbol] = []
+
     private var storedText: NSString
     private weak var attachedView: TextView?
     /// Set by the view coordinator; applies a whole-document replacement to the attached view.
@@ -137,17 +141,38 @@ public final class KeystoneDocument: ObservableObject {
         refreshDerivedState()
     }
 
+    /// The symbols enclosing `offset`, outermost first (breadcrumbs).
+    public func symbolPath(atOffset offset: Int) -> [DocumentSymbol] {
+        symbols.path(containing: offset)
+    }
+
+    /// Recomputes ``symbols`` from the current tree. Returns them for convenience.
+    @discardableResult
+    public func refreshSymbols() -> [DocumentSymbol] {
+        guard let view = attachedView else { return symbols }
+        let fresh = view.computeDocumentSymbolsNow()
+        if fresh != symbols { symbols = fresh }
+        return fresh
+    }
+
+    func setSymbols(_ fresh: [DocumentSymbol]) {
+        if fresh != symbols { symbols = fresh }
+    }
+
     // MARK: - View attachment (internal)
 
     func attach(_ view: TextView, apply: @escaping (String, Bool) -> Void) {
         attachedView = view
         applyToView = apply
+        view.onDocumentSymbolsChange = { [weak self] symbols in self?.setSymbols(symbols) }
+        setSymbols(view.documentSymbols)
         refreshDerivedState()
     }
 
     func detach(_ view: TextView) {
         guard attachedView === view else { return }
         storedText = view.backingString.copy() as? NSString ?? view.text as NSString
+        view.onDocumentSymbolsChange = nil
         attachedView = nil
         applyToView = nil
     }

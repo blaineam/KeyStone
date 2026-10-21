@@ -184,6 +184,9 @@ final class TextInputView: UIView, UITextInput {
     }
     /// Fold regions from the last parse, kept until a folding manager is attached.
     private var latestSyntaxFoldRegions: [FoldableRegion]?
+    /// Outline symbols from the last parse.
+    private(set) var documentSymbols: [DocumentSymbol] = []
+    var onDocumentSymbolsChange: (([DocumentSymbol]) -> Void)?
     var onFoldToggle: ((Int) -> Void)? {
         get { layoutManager.onFoldToggle }
         set { layoutManager.onFoldToggle = newValue }
@@ -598,9 +601,17 @@ final class TextInputView: UIView, UITextInput {
                 if let treeSitterLanguageMode = languageMode as? TreeSitterInternalLanguageMode {
                     treeSitterLanguageMode.delegate = self
                     latestSyntaxFoldRegions = treeSitterLanguageMode.foldRegions()
+                    if let symbols = treeSitterLanguageMode.automaticDocumentSymbols() {
+                        documentSymbols = symbols
+                        onDocumentSymbolsChange?(symbols)
+                    }
                 } else {
                     latestSyntaxFoldRegions = nil
                     codeFoldingManager?.usesSyntaxTreeRegions = false
+                    if !documentSymbols.isEmpty {
+                        documentSymbols = []
+                        onDocumentSymbolsChange?([])
+                    }
                 }
                 deliverSyntaxFoldRegions()
                 startDeferredParseIfNeeded()
@@ -1713,6 +1724,22 @@ extension TextInputView: TreeSitterLanguageModeDelegate {
         guard languageMode === self.languageMode as AnyObject else { return }
         latestSyntaxFoldRegions = regions
         deliverSyntaxFoldRegions()
+    }
+
+    func treeSitterLanguageMode(_ languageMode: TreeSitterInternalLanguageMode, didComputeSymbols symbols: [DocumentSymbol]) {
+        guard languageMode === self.languageMode as AnyObject else { return }
+        documentSymbols = symbols
+        onDocumentSymbolsChange?(symbols)
+    }
+
+    /// Computes symbols from the current tree now (big documents don't refresh them automatically).
+    func computeDocumentSymbolsNow() -> [DocumentSymbol] {
+        guard let mode = languageMode as? TreeSitterInternalLanguageMode, let symbols = mode.documentSymbols() else {
+            return documentSymbols
+        }
+        documentSymbols = symbols
+        onDocumentSymbolsChange?(symbols)
+        return symbols
     }
 
     private func deliverSyntaxFoldRegions() {

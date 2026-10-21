@@ -122,6 +122,13 @@ public struct KeystoneEditor: View {
     }
     @State private var goToLineText = ""
     @State private var showSettings = false
+    @State private var showOutline = false
+    @State private var showCommandPalette = false
+    /// Bumped when the symbols change, so breadcrumbs re-render without a caret move.
+    @State private var symbolsVersion = 0
+    @State private var editorActions = EditorActions()
+    /// Commands the host adds to the palette (``commands(_:)``).
+    private var additionalCommands: [EditorCommand] = []
 
     #if os(iOS)
     /// Tracks whether the find/replace search field is focused (for symbol keyboard insertion)
@@ -320,6 +327,8 @@ public struct KeystoneEditor: View {
             isTailFollowEnabled: isTailFollowEnabled,
             language: internalLanguage,
             onGoToLine: { showGoToLine.wrappedValue = true },
+            onShowOutline: { showOutline = true },
+            onShowCommandPalette: { showCommandPalette = true },
             onShowSettings: { showSettings = true },
             onToggleTailFollow: onToggleTailFollow,
             onToggleComment: toggleComment,
@@ -333,6 +342,8 @@ public struct KeystoneEditor: View {
             isTailFollowEnabled: isTailFollowEnabled,
             language: internalLanguage,
             onGoToLine: { showGoToLine.wrappedValue = true },
+            onShowOutline: { showOutline = true },
+            onShowCommandPalette: { showCommandPalette = true },
             onShowSettings: { showSettings = true },
             onToggleTailFollow: onToggleTailFollow,
             onToggleComment: toggleComment,
@@ -378,6 +389,7 @@ public struct KeystoneEditor: View {
             searchMatches: findReplaceManager.matches,
             currentMatchIndex: findReplaceManager.currentMatchIndex,
             undoController: undoController,
+            actions: editorActions,
             onParsingTimeout: {
                 if internalLanguage != .plainText {
                     internalLanguage = .plainText
@@ -403,15 +415,18 @@ public struct KeystoneEditor: View {
 
     @ViewBuilder
     private var statusBarView: some View {
+        let _ = symbolsVersion
         EditorStatusBar(
             cursorPosition: cursorPosition.wrappedValue,
             lineCount: lineCount,
             configuration: configuration,
             language: internalLanguage,
+            breadcrumbs: document.symbolPath(atOffset: cursorPosition.wrappedValue.offset).map(\.name),
             onLanguageChange: { newLanguage in
                 internalLanguage = newLanguage
                 externalLanguage?.wrappedValue = newLanguage
-            }
+            },
+            onBreadcrumbTap: { showOutline = true }
         )
     }
 
@@ -453,6 +468,9 @@ public struct KeystoneEditor: View {
         .onReceive(document.$lineCount) { count in
             if count != lineCount { lineCount = count }
         }
+        .onReceive(document.$symbols) { _ in
+            symbolsVersion &+= 1
+        }
         .onChange(of: legacyText?.wrappedValue) { _, newValue in
             handleLegacyTextChange(newValue)
         }
@@ -479,6 +497,7 @@ public struct KeystoneEditor: View {
 
     public var body: some View {
         editorContent
+            .overlay(alignment: .top) { pickerOverlay }
             .alert(String(localized: "Go to Line", bundle: .module), isPresented: showGoToLine) {
                 TextField(String(localized: "Line or Line:Column (e.g., 42 or 42:10)", bundle: .module), text: $goToLineText)
                     #if os(iOS)
@@ -505,7 +524,122 @@ public struct KeystoneEditor: View {
             #endif
     }
 
+    // MARK: - Pickers
+
+    @ViewBuilder
+    private var pickerOverlay: some View {
+        if showOutline || showCommandPalette {
+            ZStack(alignment: .top) {
+                // Click outside closes
+                Color.black.opacity(0.001)
+                    .contentShape(Rectangle())
+                    .onTapGesture { dismissPickers() }
+                Group {
+                    if showOutline {
+                        SymbolOutlineView(document: document, onSelect: jump(to:), onDismiss: dismissPickers)
+                    } else {
+                        CommandPaletteView(commands: paletteCommands, onDismiss: dismissPickers)
+                    }
+                }
+                .frame(maxWidth: 560)
+                .padding(.top, 52)
+                .padding(.horizontal, 16)
+            }
+        }
+    }
+
+    private func dismissPickers() {
+        showOutline = false
+        showCommandPalette = false
+        isEditorFocused = true
+    }
+
+    private func jump(to symbol: DocumentSymbol) {
+        dismissPickers()
+        cursorPosition.wrappedValue = document.position(atOffset: symbol.selectionRange.location, selectionLength: symbol.selectionRange.length)
+        scrollToCursor.wrappedValue = true
+    }
+
+    /// Everything the palette offers, in display order.
+    private var paletteCommands: [EditorCommand] {
+        func toggle(_ id: String, _ title: String, _ image: String, _ isOn: Bool, _ flip: @escaping () -> Void) -> EditorCommand {
+            EditorCommand(id: id, title: title, subtitle: isOn ? String(localized: "On", bundle: .module) : String(localized: "Off", bundle: .module), systemImage: image) {
+                flip()
+                configuration.saveToUserDefaults()
+            }
+        }
+        var commands: [EditorCommand] = [
+            EditorCommand(id: "find", title: String(localized: "Find", bundle: .module), systemImage: "magnifyingglass", shortcut: "⌘F") { findReplaceManager.show() },
+            EditorCommand(id: "replace", title: String(localized: "Find and Replace", bundle: .module), systemImage: "arrow.triangle.2.circlepath") { showFindReplace() },
+            EditorCommand(id: "gotoLine", title: String(localized: "Go to Line…", bundle: .module), systemImage: "arrow.right.to.line", shortcut: "⌘L") { showGoToLineDialog() },
+            EditorCommand(id: "gotoSymbol", title: String(localized: "Go to Symbol…", bundle: .module), systemImage: "list.bullet.indent", shortcut: "⌘⇧O") { showOutline = true },
+            toggle("lineNumbers", String(localized: "Line Numbers", bundle: .module), "list.number", configuration.showLineNumbers) { configuration.showLineNumbers.toggle() },
+            toggle("wordWrap", String(localized: "Word Wrap", bundle: .module), "text.justify.left", configuration.lineWrapping) { configuration.lineWrapping.toggle() },
+            toggle("invisibles", String(localized: "Invisible Characters", bundle: .module), "eye", configuration.showInvisibleCharacters) { configuration.showInvisibleCharacters.toggle() },
+            toggle("folding", String(localized: "Code Folding", bundle: .module), "chevron.down.square", configuration.showCodeFolding) { configuration.showCodeFolding.toggle() },
+            toggle("currentLine", String(localized: "Highlight Current Line", bundle: .module), "rectangle.lefthalf.inset.filled", configuration.highlightCurrentLine) { configuration.highlightCurrentLine.toggle() },
+            toggle("brackets", String(localized: "Highlight Matching Brackets", bundle: .module), "curlybraces", configuration.highlightMatchingBrackets) { configuration.highlightMatchingBrackets.toggle() },
+            EditorCommand(id: "foldAll", title: String(localized: "Fold All", bundle: .module), systemImage: "arrow.down.right.and.arrow.up.left") { editorActions.foldAll?() },
+            EditorCommand(id: "unfoldAll", title: String(localized: "Unfold All", bundle: .module), systemImage: "arrow.up.left.and.arrow.down.right") { editorActions.unfoldAll?() },
+        ]
+        if internalLanguage.supportsComments {
+            commands.append(EditorCommand(id: "comment", title: String(localized: "Toggle Comment", bundle: .module), systemImage: "text.bubble", shortcut: "⌘/") { toggleComment() })
+        }
+        commands.append(EditorCommand(id: "base64", title: String(localized: "Toggle Base64", bundle: .module), systemImage: "arrow.triangle.2.circlepath", shortcut: "⌘⇧B") { toggleBase64() })
+        #if os(macOS)
+        commands += [
+            EditorCommand(id: "selectNext", title: String(localized: "Select Next Occurrence", bundle: .module), systemImage: "text.cursor", shortcut: "⌘D") { editorActions.selectNextOccurrence?() },
+            EditorCommand(id: "selectAllOcc", title: String(localized: "Select All Occurrences", bundle: .module), systemImage: "text.cursor", shortcut: "⌘⇧L") { editorActions.selectAllOccurrences?() },
+            EditorCommand(id: "caretAbove", title: String(localized: "Add Cursor Above", bundle: .module), systemImage: "arrow.up.to.line", shortcut: "⌘⌥↑") { editorActions.addCaretAbove?() },
+            EditorCommand(id: "caretBelow", title: String(localized: "Add Cursor Below", bundle: .module), systemImage: "arrow.down.to.line", shortcut: "⌘⌥↓") { editorActions.addCaretBelow?() },
+        ]
+        #endif
+        for ending in LineEnding.allCases where ending != configuration.lineEnding {
+            commands.append(EditorCommand(id: "lineEnding.\(ending.rawValue)", title: String(localized: "Convert Line Endings to \(ending.rawValue.uppercased())", bundle: .module), systemImage: "return") {
+                configuration.lineEnding = ending
+                configuration.saveToUserDefaults()
+                document.replaceAll(with: LineEnding.convert(document.text, to: ending), preservingUndo: true)
+                onConvertLineEndings?(ending)
+            })
+        }
+        let indentChoices: [IndentationSettings] = [IndentationSettings(type: .spaces, width: 2), IndentationSettings(type: .spaces, width: 4), IndentationSettings(type: .tabs, width: 4)]
+        for choice in indentChoices where choice != configuration.indentation {
+            let label = choice.type == .tabs ? String(localized: "Tabs", bundle: .module) : String(localized: "\(choice.width) Spaces", bundle: .module)
+            commands.append(EditorCommand(id: "indent.\(choice.type.rawValue).\(choice.width)", title: String(localized: "Convert Indentation to \(label)", bundle: .module), systemImage: "increase.indent") {
+                configuration.indentation = choice
+                configuration.saveToUserDefaults()
+                document.replaceAll(with: IndentationSettings.convert(document.text, to: choice), preservingUndo: true)
+                onConvertIndentation?(choice)
+            })
+        }
+        commands.append(EditorCommand(id: "settings", title: String(localized: "Editor Settings…", bundle: .module), systemImage: "gearshape") { showSettings = true })
+        for language in KeystoneLanguage.allCases where language != internalLanguage {
+            commands.append(EditorCommand(id: "language.\(language.rawValue)", title: String(localized: "Language: \(language.displayName)", bundle: .module), systemImage: "chevron.left.forwardslash.chevron.right") {
+                internalLanguage = language
+                externalLanguage?.wrappedValue = language
+            })
+        }
+        return additionalCommands + commands
+    }
+
     // MARK: - Public Methods
+
+    /// Adds host commands to the command palette, listed first.
+    public func commands(_ extra: [EditorCommand]) -> KeystoneEditor {
+        var copy = self
+        copy.additionalCommands = extra
+        return copy
+    }
+
+    /// Shows Go to Symbol (⌘⇧O).
+    public func showSymbolOutline() {
+        showOutline = true
+    }
+
+    /// Shows the command palette (⌘⇧P).
+    public func showCommandPaletteView() {
+        showCommandPalette = true
+    }
 
     /// Shows the find bar.
     public func showFind() {
@@ -1184,6 +1318,8 @@ struct KeystoneEditorToolbarBar: View {
     var isTailFollowEnabled: Binding<Bool>?
     var language: KeystoneLanguage = .plainText
     var onGoToLine: (() -> Void)?
+    var onShowOutline: (() -> Void)?
+    var onShowCommandPalette: (() -> Void)?
     var onShowSettings: (() -> Void)?
     var onToggleTailFollow: (() -> Void)?
     var onToggleComment: (() -> Void)?
@@ -1226,6 +1362,16 @@ struct KeystoneEditorToolbarBar: View {
             // Go to Line
             toolbarButton(icon: "arrow.right.to.line", tooltip: String(localized: "Go to Line", bundle: .module), enabled: true) {
                 onGoToLine?()
+            }
+
+            // Go to Symbol
+            toolbarButton(icon: "list.bullet.indent", tooltip: String(localized: "Go to Symbol (⌘⇧O)", bundle: .module), enabled: true) {
+                onShowOutline?()
+            }
+
+            // Commands
+            toolbarButton(icon: "command", tooltip: String(localized: "Commands (⌘⇧P)", bundle: .module), enabled: true) {
+                onShowCommandPalette?()
             }
 
             Divider().frame(height: 18)
@@ -1303,6 +1449,12 @@ struct KeystoneEditorToolbarBar: View {
                 // Cmd+L: Go to Line
                 Button("", action: { onGoToLine?() })
                     .keyboardShortcut("l", modifiers: .command)
+                // Cmd+Shift+O: Go to Symbol
+                Button("", action: { onShowOutline?() })
+                    .keyboardShortcut("o", modifiers: [.command, .shift])
+                // Cmd+Shift+P: Command palette
+                Button("", action: { onShowCommandPalette?() })
+                    .keyboardShortcut("p", modifiers: [.command, .shift])
                 // Cmd+/: Toggle Comment (only if language supports comments)
                 if language.supportsComments, let onToggleComment = onToggleComment {
                     Button("", action: { onToggleComment() })
@@ -1352,6 +1504,8 @@ struct KeystoneEditorToolbarBar: View {
     var isTailFollowEnabled: Binding<Bool>?
     var language: KeystoneLanguage = .plainText
     var onGoToLine: (() -> Void)?
+    var onShowOutline: (() -> Void)?
+    var onShowCommandPalette: (() -> Void)?
     var onShowSettings: (() -> Void)?
     var onToggleTailFollow: (() -> Void)?
     var onToggleComment: (() -> Void)?
@@ -1395,6 +1549,16 @@ struct KeystoneEditorToolbarBar: View {
                 // Go to Line
                 toolbarButton(icon: "arrow.right.to.line", enabled: true) {
                     onGoToLine?()
+                }
+
+                // Go to Symbol
+                toolbarButton(icon: "list.bullet.indent", enabled: true) {
+                    onShowOutline?()
+                }
+
+                // Commands
+                toolbarButton(icon: "command", enabled: true) {
+                    onShowCommandPalette?()
                 }
 
                 Divider().frame(height: 24)

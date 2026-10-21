@@ -21,32 +21,34 @@ extension TreeSitterLanguageLayer {
         }
     }
 
-    private func collect(_ node: TreeSitterNode, into regions: inout [FoldableRegion], seen: inout Set<FoldLineSpan>, limit: Int) {
-        guard regions.count < limit else { return }
-        let startRow = Int(node.startPoint.row)
-        var endRow = Int(node.endPoint.row)
-        guard endRow > startRow else { return }
-        // A node that ends at column 0 really ends on the previous line.
-        if node.endPoint.column == 0 { endRow -= 1 }
-        if endRow > startRow, node.isNamed, let type = node.type, Self.isFoldable(node, type: type) {
-            let span = FoldLineSpan(start: startRow, end: endRow)
-            if seen.insert(span).inserted {
-                regions.append(FoldableRegion(
-                    startLine: startRow,
-                    endLine: endRow,
-                    type: Self.regionType(forNodeType: type),
-                    range: NSRange(node.byteRange),
-                    previewText: previewText(at: node.startByte)
-                ))
+    /// Iterative walk (deep error-recovery trees would overflow a background thread's stack).
+    private func collect(_ root: TreeSitterNode, into regions: inout [FoldableRegion], seen: inout Set<FoldLineSpan>, limit: Int) {
+        var stack: [TreeSitterNode] = [root]
+        while let node = stack.popLast(), regions.count < limit {
+            let startRow = Int(node.startPoint.row)
+            var endRow = Int(node.endPoint.row)
+            guard endRow > startRow else { continue }
+            // A node that ends at column 0 really ends on the previous line.
+            if node.endPoint.column == 0 { endRow -= 1 }
+            if endRow > startRow, node.isNamed, let type = node.type, Self.isFoldable(node, type: type) {
+                let span = FoldLineSpan(start: startRow, end: endRow)
+                if seen.insert(span).inserted {
+                    regions.append(FoldableRegion(
+                        startLine: startRow,
+                        endLine: endRow,
+                        type: Self.regionType(forNodeType: type),
+                        range: NSRange(node.byteRange),
+                        previewText: previewText(at: node.startByte)
+                    ))
+                }
             }
-        }
-        let count = node.childCount
-        var index = 0
-        while index < count {
-            if let child = node.child(at: index) {
-                collect(child, into: &regions, seen: &seen, limit: limit)
+            var index = node.childCount - 1
+            while index >= 0 {
+                if let child = node.child(at: index) {
+                    stack.append(child)
+                }
+                index -= 1
             }
-            index += 1
         }
     }
 

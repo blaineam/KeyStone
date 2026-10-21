@@ -9,6 +9,8 @@ protocol TreeSitterLanguageModeDelegate: AnyObject {
     func treeSitterLanguageMode(_ languageMode: TreeSitterInternalLanguageMode, didReparseLines lines: Set<DocumentLineNode>)
     /// Fold regions derived from the (re)parsed syntax tree.
     func treeSitterLanguageMode(_ languageMode: TreeSitterInternalLanguageMode, didComputeFoldRegions regions: [FoldableRegion])
+    /// Outline symbols derived from the (re)parsed syntax tree.
+    func treeSitterLanguageMode(_ languageMode: TreeSitterInternalLanguageMode, didComputeSymbols symbols: [DocumentSymbol])
 }
 
 /// Tree-sitter parsing and querying for one text view.
@@ -22,6 +24,8 @@ protocol TreeSitterLanguageModeDelegate: AnyObject {
 final class TreeSitterInternalLanguageMode: InternalLanguageMode {
     /// Documents with at least this many UTF-16 units parse on the background queue.
     nonisolated(unsafe) static var backgroundParseThreshold = 200_000
+    /// Up to this size, outline symbols are refreshed after every parse; beyond it only on demand.
+    nonisolated(unsafe) static var automaticSymbolsThreshold = 500_000
 
     weak var delegate: TreeSitterLanguageModeDelegate?
     var canHighlight: Bool { hasTree }
@@ -106,11 +110,13 @@ final class TreeSitterInternalLanguageMode: InternalLanguageMode {
                 DispatchQueue.main.async { completion(false) }
                 return
             }
-            let folds: [FoldableRegion] = self.treeLock.withLock {
+            // Folds and symbols read text through the snapshot, so they stay inside the lock.
+            let (folds, symbols): ([FoldableRegion], [DocumentSymbol]?) = self.treeLock.withLock {
                 self.textSource.snapshot = StringView(string: snapshot)
                 defer { self.textSource.snapshot = nil }
                 self.rootLanguageLayer.parse(snapshot)
-                return self.parser.didTimeout ? [] : self.rootLanguageLayer.foldRegions()
+                guard !self.parser.didTimeout else { return ([], nil) }
+                return (self.rootLanguageLayer.foldRegions(), self.automaticSymbolsLocked(textLength: snapshot.length))
             }
             let didTimeout = self.parser.didTimeout
             self.pendingDeliveries.increment()
@@ -121,6 +127,7 @@ final class TreeSitterInternalLanguageMode: InternalLanguageMode {
                 } else if !operation.isCancelled {
                     self.hasTree = true
                     self.delegate?.treeSitterLanguageMode(self, didComputeFoldRegions: folds)
+                    if let symbols { self.delegate?.treeSitterLanguageMode(self, didComputeSymbols: symbols) }
                 }
                 completion(!operation.isCancelled && !didTimeout)
                 // Edits that arrived during the parse were queued behind it; parse them too.
@@ -145,6 +152,9 @@ final class TreeSitterInternalLanguageMode: InternalLanguageMode {
             let (changed, folds) = treeLock.withLock { (rootLanguageLayer.apply(edit), rootLanguageLayer.foldRegions()) }
             hasTree = hasTree || !parser.didTimeout
             delegate?.treeSitterLanguageMode(self, didComputeFoldRegions: folds)
+            if let symbols = symbolsIfAutomatic(textLength: stringView.string.length) {
+                delegate?.treeSitterLanguageMode(self, didComputeSymbols: symbols)
+            }
             return lineChangeSet(forChangedByteRanges: changed)
         }
 
@@ -174,11 +184,12 @@ final class TreeSitterInternalLanguageMode: InternalLanguageMode {
             guard let self = self else { return }
             let window = self.pendingWindow
             self.pendingWindow = nil
-            let (changed, folds): ([ByteRange], [FoldableRegion]) = self.treeLock.withLock {
+            let (changed, folds, symbols): ([ByteRange], [FoldableRegion], [DocumentSymbol]?) = self.treeLock.withLock {
                 self.textSource.snapshot = StringView(string: snapshot)
                 defer { self.textSource.snapshot = nil }
                 let changed = self.rootLanguageLayer.reparse(parsing: [], window: window)
-                return (changed, self.parser.didTimeout ? [] : self.rootLanguageLayer.foldRegions())
+                guard !self.parser.didTimeout else { return (changed, [], nil) }
+                return (changed, self.rootLanguageLayer.foldRegions(), self.automaticSymbolsLocked(textLength: snapshot.length))
             }
             let didTimeout = self.parser.didTimeout
             self.pendingDeliveries.increment()
@@ -192,6 +203,7 @@ final class TreeSitterInternalLanguageMode: InternalLanguageMode {
                 self.hasTree = true
                 self.delegate?.treeSitterLanguageMode(self, didReparseLines: self.lines(forChangedByteRanges: changed))
                 self.delegate?.treeSitterLanguageMode(self, didComputeFoldRegions: folds)
+                if let symbols { self.delegate?.treeSitterLanguageMode(self, didComputeSymbols: symbols) }
                 self.scheduleBackgroundParseIfNeeded()
             }
         }
@@ -273,6 +285,31 @@ final class TreeSitterInternalLanguageMode: InternalLanguageMode {
             return nil
         }
         return found ?? nil
+    }
+
+    /// Symbols after a parse, for documents small enough to refresh them every time.
+    /// Main thread only (reads the live text); the background ops use `automaticSymbolsLocked`.
+    private func symbolsIfAutomatic(textLength: Int) -> [DocumentSymbol]? {
+        guard textLength < Self.automaticSymbolsThreshold, !parser.didTimeout else { return nil }
+        return treeLock.withLock { rootLanguageLayer.documentSymbols() }
+    }
+
+    /// Same, for callers already holding `treeLock` with the text snapshot installed.
+    private func automaticSymbolsLocked(textLength: Int) -> [DocumentSymbol]? {
+        guard textLength < Self.automaticSymbolsThreshold else { return nil }
+        return rootLanguageLayer.documentSymbols()
+    }
+
+    /// Symbols for a document small enough to keep them current automatically; nil otherwise.
+    func automaticDocumentSymbols() -> [DocumentSymbol]? {
+        guard stringView.string.length < Self.automaticSymbolsThreshold else { return nil }
+        return documentSymbols()
+    }
+
+    /// Symbols from the current tree, computed now. Nil while a background parse holds the tree.
+    func documentSymbols() -> [DocumentSymbol]? {
+        guard hasTree else { return nil }
+        return withTreeIfAvailable { rootLanguageLayer.documentSymbols() }
     }
 
     /// Fold regions from the current tree, or nil while a background parse holds it

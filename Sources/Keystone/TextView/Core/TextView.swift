@@ -303,6 +303,16 @@ open class TextView: UIScrollView {
         }
     }
     /// The code folding manager for tracking foldable regions.
+    /// Outline symbols from the last parse (refreshed automatically up to 500 KB).
+    public var documentSymbols: [DocumentSymbol] { textInputView.documentSymbols }
+    /// Called whenever ``documentSymbols`` changes.
+    public var onDocumentSymbolsChange: (([DocumentSymbol]) -> Void)? {
+        get { textInputView.onDocumentSymbolsChange }
+        set { textInputView.onDocumentSymbolsChange = newValue }
+    }
+    /// Recomputes symbols from the current tree, for documents too big to refresh them automatically.
+    public func computeDocumentSymbolsNow() -> [DocumentSymbol] { textInputView.computeDocumentSymbolsNow() }
+
     public var codeFoldingManager: CodeFoldingManager? {
         get {
             textInputView.codeFoldingManager
@@ -1779,6 +1789,16 @@ open class TextView: NSScrollView {
     }
 
     /// The code folding manager for tracking foldable regions.
+    /// Outline symbols from the last parse (refreshed automatically up to 500 KB).
+    public var documentSymbols: [DocumentSymbol] { textInputView.documentSymbols }
+    /// Called whenever ``documentSymbols`` changes.
+    public var onDocumentSymbolsChange: (([DocumentSymbol]) -> Void)? {
+        get { textInputView.onDocumentSymbolsChange }
+        set { textInputView.onDocumentSymbolsChange = newValue }
+    }
+    /// Recomputes symbols from the current tree, for documents too big to refresh them automatically.
+    public func computeDocumentSymbolsNow() -> [DocumentSymbol] { textInputView.computeDocumentSymbolsNow() }
+
     public var codeFoldingManager: CodeFoldingManager? {
         get { textInputView.codeFoldingManager }
         set { textInputView.codeFoldingManager = newValue }

@@ -51,6 +51,30 @@ final class TreeSitterNode {
     var isNamed: Bool {
         ts_node_is_named(rawValue)
     }
+    var isNull: Bool {
+        ts_node_is_null(rawValue)
+    }
+
+    /// The child the grammar labels `fieldName` (e.g. "name", "declarator", "key").
+    func child(forFieldName fieldName: String) -> TreeSitterNode? {
+        let node = fieldName.withCString { ts_node_child_by_field_name(rawValue, $0, UInt32(fieldName.utf8.count)) }
+        return ts_node_is_null(node) ? nil : TreeSitterNode(node: node)
+    }
+
+    /// Depth-first search for the first descendant whose type satisfies `predicate`.
+    func firstDescendant(maxDepth: Int = 6, where predicate: (String) -> Bool) -> TreeSitterNode? {
+        guard maxDepth > 0 else { return nil }
+        let count = childCount
+        var index = 0
+        while index < count {
+            if let child = child(at: index) {
+                if let type = child.type, predicate(type) { return child }
+                if let found = child.firstDescendant(maxDepth: maxDepth - 1, where: predicate) { return found }
+            }
+            index += 1
+        }
+        return nil
+    }
 
     init(node: TSNode) {
         self.rawValue = node
