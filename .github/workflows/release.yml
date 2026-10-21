@@ -17,7 +17,7 @@ jobs:
     - name: Setup Xcode
       uses: maxim-lobanov/setup-xcode@60606e260d2fc5762a71e64e74b2174e8ea3c8bd # v1.6.0
       with:
-        xcode-version: '15.0'
+        xcode-version: '15.4'
 
     - name: Build Package
       run: swift build -c release -v
@@ -71,8 +71,8 @@ jobs:
 
         ### Requirements
         - iOS 17.0+ / macOS 14.0+
-        - Swift 5.9+
-        - Xcode 15.0+
+        - Swift 5.10+
+        - Xcode 15.4+
 
         See the [README](https://github.com/blaineam/KeyStone#readme) for full documentation.
         EOF

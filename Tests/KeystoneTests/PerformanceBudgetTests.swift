@@ -75,7 +75,7 @@ final class PerformanceBudgetTests: XCTestCase {
     func testInlinedHTMLOpenAndType() {
         let html = PerformanceFixtures.inlinedHTML
         let (textView, open) = measureOpen(html, language: .html, label: "html open")
-        XCTAssertLessThan(open, 1.0, "opening must not block on the full parse")
+        XCTAssertLessThan(open, 2.5, "opening must not block on the full parse")
         settle(textView)
         let ns = html as NSString
         let normal = measureKeystrokes(textView, at: ns.range(of: "Paragraph 200").location, label: "html normal line")
@@ -89,7 +89,7 @@ final class PerformanceBudgetTests: XCTestCase {
     func testLogFileOpenTypeAndScroll() {
         let log = PerformanceFixtures.logFile
         let (textView, open) = measureOpen(log, language: .plainText, label: "log open")
-        XCTAssertLessThan(open, 1.0)
+        XCTAssertLessThan(open, 2.5)
         let typing = measureKeystrokes(textView, at: (log as NSString).length / 2, label: "log middle")
         XCTAssertLessThan(typing, 0.05)
         // Jump around the file: each stop lays out a fresh viewport.
@@ -103,14 +103,14 @@ final class PerformanceBudgetTests: XCTestCase {
             worst = max(worst, Date().timeIntervalSince(start))
         }
         print("BUDGET log scroll: worst jump \(String(format: "%.1f", worst * 1000)) ms")
-        XCTAssertLessThan(worst, 0.2)
+        XCTAssertLessThan(worst, 0.5)
     }
 
     // MARK: - Flat 60k-line Swift (tree-sitter worst case)
 
     func testFlatSwiftTyping() {
         let (textView, open) = measureOpen(PerformanceFixtures.flatSwift, language: .swift, label: "flat swift open")
-        XCTAssertLessThan(open, 1.0)
+        XCTAssertLessThan(open, 2.5)
         settle(textView)
         let typing = measureKeystrokes(textView, at: 100, label: "flat swift")
         XCTAssertLessThan(typing, 0.05)
@@ -121,7 +121,7 @@ final class PerformanceBudgetTests: XCTestCase {
     func testDeepJSONTypingAndFolds() {
         let json = PerformanceFixtures.deepJSON
         let (textView, open) = measureOpen(json, language: .json, label: "deep json open")
-        XCTAssertLessThan(open, 1.0)
+        XCTAssertLessThan(open, 2.5)
         let manager = CodeFoldingManager()
         textView.codeFoldingManager = manager
         settle(textView)

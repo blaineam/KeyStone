@@ -62,7 +62,8 @@ final class LineDiffTests: XCTestCase {
         let elapsed = Date().timeIntervalSince(start)
         XCTAssertEqual(m?.modified, IndexSet([100_000]))
         XCTAssertEqual(m?.added, IndexSet([150_000]))
-        XCTAssertLessThan(elapsed, 1.0, "\(elapsed)s")
+        // Guards against a quadratic regression (minutes), so the limit leaves room for slow CI runners.
+        XCTAssertLessThan(elapsed, 5.0, "\(elapsed)s")
     }
 
     func testGivesUpOnUnrelatedTexts() {

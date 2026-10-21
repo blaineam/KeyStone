@@ -2,6 +2,12 @@
 
 All notable changes to KeyStone are documented here. This project adheres to [Semantic Versioning](https://semver.org/). Releases before 2.6.0 are described by their tags and commit history.
 
+## [2.8.2] - 2026-10-21
+
+### CI
+
+- Timing guards leave room for slow CI runners (the line-diff guard is against a quadratic regression, not a 1 s budget); open-time budgets 2.5 s. The Release workflow builds with Xcode 15.4 like CI (the code uses `nonisolated(unsafe)`, Swift 5.10). Tags are published both as `X.Y.Z` and `vX.Y.Z`; the Release workflow listens for `v*`.
+
 ## [2.8.1] - 2026-10-21
 
 ### Fixed
