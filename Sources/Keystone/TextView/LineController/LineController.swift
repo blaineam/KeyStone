@@ -22,6 +22,15 @@ final class LineController {
     private var previousAttributedString: NSAttributedString?
     /// Length of the unchanged prefix after the last edit; typesetting resumes there.
     private var unchangedPrefixLength: Int?
+    /// Indent guides for this line, applied to every fragment.
+    var indentGuides = IndentGuideSpec.none {
+        didSet {
+            guard indentGuides != oldValue else { return }
+            for (_, controller) in lineFragmentControllers {
+                controller.indentGuides = indentGuides
+            }
+        }
+    }
 
     private enum TypesetAmount {
         case inRect(CGRect)
@@ -400,6 +409,7 @@ private extension LineController {
                 invisibleCharacterConfiguration: invisibleCharacterConfiguration
             )
             lineFragmentController.delegate = self
+            lineFragmentController.indentGuides = indentGuides
             lineFragmentControllers[lineFragment.id] = lineFragmentController
             applyTheme(to: lineFragmentController)
             return lineFragmentController

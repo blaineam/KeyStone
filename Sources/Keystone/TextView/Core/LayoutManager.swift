@@ -60,6 +60,7 @@ final class LayoutManager {
     }
     var theme: Theme = DefaultTheme() {
         didSet {
+            cachedIndentUnitWidth = nil
             if theme !== oldValue {
                 gutterBackgroundView.backgroundColor = theme.gutterBackgroundColor
                 gutterBackgroundView.hairlineColor = theme.gutterHairlineColor
@@ -103,6 +104,38 @@ final class LayoutManager {
     }
     /// Code folding manager for tracking foldable regions
     var codeFoldingManager: CodeFoldingManager?
+    var showIndentGuides = false {
+        didSet {
+            if showIndentGuides != oldValue { setNeedsLayout() }
+        }
+    }
+    /// Characters per indentation level, from the indent strategy.
+    var indentUnitLength = 4 {
+        didSet {
+            if indentUnitLength != oldValue {
+                cachedIndentUnitWidth = nil
+                setNeedsLayout()
+            }
+        }
+    }
+    var showChangeMarkers = false {
+        didSet {
+            if showChangeMarkers != oldValue { setNeedsLayout() }
+        }
+    }
+    var changeMarkers = LineChangeMarkers.empty {
+        didSet {
+            if changeMarkers != oldValue { setNeedsLayout() }
+        }
+    }
+    private var cachedIndentUnitWidth: CGFloat?
+    private var indentUnitWidth: CGFloat {
+        if let cached = cachedIndentUnitWidth { return cached }
+        let spaceWidth = (" " as NSString).size(withAttributes: [.font: theme.font]).width
+        let width = spaceWidth * CGFloat(max(1, indentUnitLength))
+        cachedIndentUnitWidth = width
+        return width
+    }
     /// Called when a fold toggle is tapped, with the line number (0-indexed)
     var onFoldToggle: ((Int) -> Void)?
     var lineSelectionDisplayType: LineSelectionDisplayType = .disabled {
@@ -150,7 +183,7 @@ final class LayoutManager {
     private var foldIndicatorViewReuseQueue = ViewReuseQueue<DocumentLineNodeID, FoldIndicatorView>()
     private var visibleLineIDs: Set<DocumentLineNodeID> = []
     private let linesContainerView = RSLayoutView()
-    private let gutterBackgroundView = GutterBackgroundView()
+    let gutterBackgroundView = GutterBackgroundView()
     private let lineNumbersContainerView = RSLayoutView()
     private let foldIndicatorsContainerView = RSLayoutView()
     private let gutterSelectionBackgroundView = RSLayoutView()
@@ -446,6 +479,8 @@ extension LayoutManager {
         var appearedLineFragmentIDs: Set<LineFragmentID> = []
         var maxY = insetViewport.minY
         var contentOffsetAdjustmentY: CGFloat = 0
+        var markerRects: [(rect: CGRect, color: RunestoneColor)] = []
+        let markerX = safeAreaInsets.left + gutterWidthService.gutterWidth - theme.gutterHairlineWidth - 5
         while let line = nextLine, maxY < insetViewport.maxY, constrainingLineWidth > 0 {
             let isLineHidden = showCodeFolding && hiddenLines.contains(line.index)
 
@@ -468,9 +503,15 @@ extension LayoutManager {
                 let lineController = lineControllerStorage.getOrCreateLineController(for: line)
                 let oldLineHeight = lineController.lineHeight
                 lineController.constrainingWidth = constrainingLineWidth
+                lineController.indentGuides = showIndentGuides
+                    ? IndentGuideSpec(count: indentGuideCount(for: line), unitWidth: indentUnitWidth, color: theme.indentGuideColor)
+                    : .none
                 lineController.prepareToDisplayString(in: lineLocalViewport, syntaxHighlightAsynchronously: true)
                 layoutLineNumberView(for: line)
                 layoutFoldIndicatorView(for: line)
+                if showChangeMarkers && !changeMarkers.isEmpty && (showLineNumbers || showCodeFolding) {
+                    appendChangeMarkers(for: line, lineController: lineController, x: markerX, into: &markerRects)
+                }
                 // Layout line fragments ("sublines") in the line until we have filled the viewport.
                 let lineYPosition = line.yPosition
                 let lineFragmentControllers = lineController.lineFragmentControllers(in: insetViewport)
@@ -511,6 +552,7 @@ extension LayoutManager {
         linesContainerView.frame = CGRect(x: 0, y: 0, width: contentSize.width, height: contentSize.height)
         // Update the visible lines and line fragments. Clean up everything that is not in the viewport anymore.
         visibleLineIDs = appearedLineIDs
+        gutterBackgroundView.changeMarkerRects = markerRects
         let disappearedLineIDs = oldVisibleLineIDs.subtracting(appearedLineIDs)
         let disappearedLineFragmentIDs = oldVisibleLineFragmentIDs.subtracting(appearedLineFragmentIDs)
         for disappearedLineID in disappearedLineIDs {
@@ -523,6 +565,69 @@ extension LayoutManager {
         if contentOffsetAdjustmentY != 0 {
             let contentOffsetAdjustment = CGPoint(x: 0, y: contentOffsetAdjustmentY)
             delegate?.layoutManager(self, didProposeContentOffsetAdjustment: contentOffsetAdjustment)
+        }
+    }
+
+    /// Number of indent guides for `line`: its indentation level, or for a blank line the
+    /// shallower of its non-blank neighbours so guides run through blank lines inside a block.
+    func indentGuideCount(for line: DocumentLineNode) -> Int {
+        let unit = max(1, indentUnitLength)
+        let own = indentation(of: line, unit: unit)
+        guard own.isBlank else { return own.level }
+        var previous = 0
+        var row = line.index - 1
+        var steps = 0
+        while row >= 0 && steps < 50 {
+            let measured = indentation(of: lineManager.line(atRow: row), unit: unit)
+            if !measured.isBlank { previous = measured.level; break }
+            row -= 1
+            steps += 1
+        }
+        var next = 0
+        row = line.index + 1
+        steps = 0
+        while row < lineManager.lineCount && steps < 50 {
+            let measured = indentation(of: lineManager.line(atRow: row), unit: unit)
+            if !measured.isBlank { next = measured.level; break }
+            row += 1
+            steps += 1
+        }
+        return min(previous, next)
+    }
+
+    private func indentation(of line: DocumentLineNode, unit: Int) -> (level: Int, isBlank: Bool) {
+        let string = stringView.string
+        let start = line.location
+        let end = start + line.data.length
+        var columns = 0
+        var i = start
+        while i < end {
+            let unit16 = string.character(at: i)
+            if unit16 == 0x20 {
+                columns += 1
+            } else if unit16 == 0x09 {
+                columns += unit - (columns % unit)
+            } else {
+                return (columns / unit, false)
+            }
+            i += 1
+        }
+        return (columns / unit, true)
+    }
+
+    private func appendChangeMarkers(for line: DocumentLineNode, lineController: LineController, x: CGFloat, into rects: inout [(rect: CGRect, color: RunestoneColor)]) {
+        let top = textContainerInset.top + line.yPosition - viewport.minY
+        let height = lineController.lineHeight
+        if changeMarkers.added.contains(line.index) {
+            rects.append((CGRect(x: x, y: top, width: 3, height: height), theme.gutterAddedColor))
+        } else if changeMarkers.modified.contains(line.index) {
+            rects.append((CGRect(x: x, y: top, width: 3, height: height), theme.gutterModifiedColor))
+        }
+        if changeMarkers.deletedBefore.contains(line.index) {
+            rects.append((CGRect(x: x - 2, y: top - 1, width: 7, height: 2), theme.gutterDeletedColor))
+        }
+        if line.index == lineManager.lineCount - 1 && changeMarkers.deletedBefore.contains(lineManager.lineCount) {
+            rects.append((CGRect(x: x - 2, y: top + height - 1, width: 7, height: 2), theme.gutterDeletedColor))
         }
     }
 

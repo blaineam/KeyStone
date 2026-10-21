@@ -129,6 +129,33 @@ final class TextInputViewMac: NSView, NSTextInputClient {
         didSet { applyThemeToChildren() }
     }
 
+    var showIndentGuides = false {
+        didSet {
+            if showIndentGuides != oldValue {
+                layoutManager.showIndentGuides = showIndentGuides
+                layoutManager.setNeedsLayout()
+                needsLayout = true
+            }
+        }
+    }
+    var showChangeMarkers = false {
+        didSet {
+            if showChangeMarkers != oldValue {
+                layoutManager.showChangeMarkers = showChangeMarkers
+                layoutManager.setNeedsLayout()
+                needsLayout = true
+            }
+        }
+    }
+    var changeMarkers = LineChangeMarkers.empty {
+        didSet {
+            if changeMarkers != oldValue {
+                layoutManager.changeMarkers = changeMarkers
+                layoutManager.setNeedsLayout()
+                needsLayout = true
+            }
+        }
+    }
     var showLineNumbers = false {
         didSet {
             if showLineNumbers != oldValue {
@@ -213,6 +240,7 @@ final class TextInputViewMac: NSView, NSTextInputClient {
         didSet {
             if indentStrategy != oldValue {
                 indentController.indentStrategy = indentStrategy
+                layoutManager.indentUnitLength = indentStrategy.tabLength
                 layoutManager.setNeedsLayout()
                 needsLayout = true
                 layoutSubtreeIfNeeded()
@@ -1963,6 +1991,12 @@ extension TextInputViewMac {
 #if DEBUG
 extension TextInputViewMac {
     /// Every highlight capture in the document, for tests comparing incremental and fresh parses.
+    func debugIndentGuideCount(atRow row: Int) -> Int {
+        layoutManager.indentGuideCount(for: lineManager.line(atRow: row))
+    }
+    var debugChangeMarkerRectCount: Int { layoutManager.gutterBackgroundView.changeMarkerRects.count }
+    var debugTreeSitterMode: TreeSitterInternalLanguageMode? { languageMode as? TreeSitterInternalLanguageMode }
+
     var debugIsParsingIdle: Bool {
         (languageMode as? TreeSitterInternalLanguageMode)?.debugIsParsingIdle ?? true
     }

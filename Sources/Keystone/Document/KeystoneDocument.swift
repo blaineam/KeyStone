@@ -63,6 +63,18 @@ public final class KeystoneDocument: ObservableObject {
     /// up to 500 KB; call ``refreshSymbols()`` for bigger ones.
     @Published public private(set) var symbols: [DocumentSymbol] = []
 
+    /// Lines that differ from the saved text (the state at the last load or ``markSaved()``),
+    /// refreshed about 0.4 s after edits pause, off the main thread. Drawn in the gutter.
+    @Published public private(set) var changeMarkers: LineChangeMarkers = .empty
+
+    /// Documents above this many UTF-16 units don't track changes.
+    nonisolated(unsafe) public static var changeTrackingSizeLimit = 5_000_000
+
+    private var baselineLineHashes: [Int]?
+    private var changeDiffWorkItem: DispatchWorkItem?
+    private var diffGeneration = 0
+    private static let diffQueue = DispatchQueue(label: "com.keystone.linediff", qos: .utility)
+
     private var storedText: NSString
     private weak var attachedView: TextView?
     /// Set by the view coordinator; applies a whole-document replacement to the attached view.
@@ -71,6 +83,7 @@ public final class KeystoneDocument: ObservableObject {
     public init(text: String = "") {
         storedText = text as NSString
         lineCount = Self.countLines(in: storedText)
+        resetChangeBaseline(to: text)
     }
 
     // MARK: - Reading
@@ -130,15 +143,66 @@ public final class KeystoneDocument: ObservableObject {
             storedText = newText as NSString
         }
         version += 1
-        if markSaved { savedVersion = version }
+        if markSaved {
+            savedVersion = version
+            resetChangeBaseline(to: newText)
+        } else {
+            scheduleChangeDiff()
+        }
         refreshDerivedState()
         didChange.send(Change(version: version, range: nil, replacementLength: nil))
     }
 
-    /// Records that the current text has been saved. ``isModified`` becomes `false`.
+    /// Records that the current text has been saved. ``isModified`` becomes `false` and the
+    /// change markers reset to this text.
     public func markSaved() {
         savedVersion = version
         refreshDerivedState()
+        resetChangeBaseline(to: text)
+    }
+
+    // MARK: - Change tracking
+
+    private func resetChangeBaseline(to baseline: String) {
+        changeDiffWorkItem?.cancel()
+        diffGeneration += 1
+        let generation = diffGeneration
+        if !changeMarkers.isEmpty { changeMarkers = .empty }
+        guard baseline.utf16.count <= Self.changeTrackingSizeLimit else {
+            baselineLineHashes = nil
+            return
+        }
+        Self.diffQueue.async { [weak self] in
+            let hashes = LineDiff.lineHashes(of: baseline)
+            DispatchQueue.main.async {
+                guard let self, self.diffGeneration == generation else { return }
+                self.baselineLineHashes = hashes
+            }
+        }
+    }
+
+    private func scheduleChangeDiff() {
+        changeDiffWorkItem?.cancel()
+        guard baselineLineHashes != nil || diffGeneration > 0 else { return }
+        let work = DispatchWorkItem { [weak self] in self?.runChangeDiff() }
+        changeDiffWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: work)
+    }
+
+    private func runChangeDiff() {
+        guard let baseline = baselineLineHashes, utf16Length <= Self.changeTrackingSizeLimit else { return }
+        let snapshot = text
+        let generation = diffGeneration
+        let versionAtStart = version
+        Self.diffQueue.async { [weak self] in
+            let markers = LineDiff.markers(old: baseline, new: LineDiff.lineHashes(of: snapshot)) ?? .empty
+            DispatchQueue.main.async {
+                guard let self, self.diffGeneration == generation else { return }
+                if self.changeMarkers != markers { self.changeMarkers = markers }
+                // Edits landed while diffing: go again.
+                if self.version != versionAtStart { self.scheduleChangeDiff() }
+            }
+        }
     }
 
     /// The symbols enclosing `offset`, outermost first (breadcrumbs).
@@ -181,6 +245,7 @@ public final class KeystoneDocument: ObservableObject {
     func noteEdit(range: NSRange?, replacementLength: Int?) {
         version += 1
         refreshDerivedState()
+        scheduleChangeDiff()
         didChange.send(Change(version: version, range: range, replacementLength: replacementLength))
     }
 

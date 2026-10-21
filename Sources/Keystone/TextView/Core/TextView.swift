@@ -285,6 +285,21 @@ open class TextView: UIScrollView {
         }
     }
     /// Enable to show line numbers in the gutter.
+    /// Vertical guides at each indentation level.
+    public var showIndentGuides: Bool {
+        get { textInputView.showIndentGuides }
+        set { textInputView.showIndentGuides = newValue }
+    }
+    /// Added/modified/deleted markers in the gutter (see ``changeMarkers``).
+    public var showChangeMarkers: Bool {
+        get { textInputView.showChangeMarkers }
+        set { textInputView.showChangeMarkers = newValue }
+    }
+    /// Which lines differ from the saved text; drawn in the gutter when ``showChangeMarkers`` is on.
+    public var changeMarkers: LineChangeMarkers {
+        get { textInputView.changeMarkers }
+        set { textInputView.changeMarkers = newValue }
+    }
     public var showLineNumbers: Bool {
         get {
             textInputView.showLineNumbers
@@ -1641,6 +1656,9 @@ open class TextView: NSScrollView {
     #if DEBUG
     func debugCaptureSignature() -> [String] { textInputView.debugCaptureSignature() }
     var debugIsParsingIdle: Bool { textInputView.debugIsParsingIdle }
+    func debugIndentGuideCount(atRow row: Int) -> Int { textInputView.debugIndentGuideCount(atRow: row) }
+    var debugChangeMarkerRectCount: Int { textInputView.debugChangeMarkerRectCount }
+    var debugTreeSitterMode: TreeSitterInternalLanguageMode? { textInputView.debugTreeSitterMode }
     #endif
 
     public var text: String {
@@ -1782,6 +1800,21 @@ open class TextView: NSScrollView {
         set { textInputView.showLineNumbers = newValue }
     }
 
+    /// Vertical guides at each indentation level.
+    public var showIndentGuides: Bool {
+        get { textInputView.showIndentGuides }
+        set { textInputView.showIndentGuides = newValue }
+    }
+    /// Added/modified/deleted markers in the gutter (see ``changeMarkers``).
+    public var showChangeMarkers: Bool {
+        get { textInputView.showChangeMarkers }
+        set { textInputView.showChangeMarkers = newValue }
+    }
+    /// Which lines differ from the saved text; drawn in the gutter when ``showChangeMarkers`` is on.
+    public var changeMarkers: LineChangeMarkers {
+        get { textInputView.changeMarkers }
+        set { textInputView.changeMarkers = newValue }
+    }
     /// Enable to show code folding indicators in the gutter.
     public var showCodeFolding: Bool {
         get { textInputView.showCodeFolding }

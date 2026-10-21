@@ -331,6 +331,7 @@ final class TreeSitterInternalLanguageMode: InternalLanguageMode {
     }
 
     #if DEBUG
+    var debugRootNode: TreeSitterNode? { rootLanguageLayer.tree?.rootNode }
     /// True when no parse is queued, running, or pending. For tests.
     var debugIsParsingIdle: Bool {
         operationQueue.operationCount == 0 && !isParseInFlight && !hasEditsSinceSnapshot && !needsDeferredParse && pendingDeliveries.value == 0

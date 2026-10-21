@@ -153,6 +153,33 @@ final class TextInputView: UIView, UITextInput {
             applyThemeToChildren()
         }
     }
+    var showIndentGuides = false {
+        didSet {
+            if showIndentGuides != oldValue {
+                layoutManager.showIndentGuides = showIndentGuides
+                layoutManager.setNeedsLayout()
+                setNeedsLayout()
+            }
+        }
+    }
+    var showChangeMarkers = false {
+        didSet {
+            if showChangeMarkers != oldValue {
+                layoutManager.showChangeMarkers = showChangeMarkers
+                layoutManager.setNeedsLayout()
+                setNeedsLayout()
+            }
+        }
+    }
+    var changeMarkers = LineChangeMarkers.empty {
+        didSet {
+            if changeMarkers != oldValue {
+                layoutManager.changeMarkers = changeMarkers
+                layoutManager.setNeedsLayout()
+                setNeedsLayout()
+            }
+        }
+    }
     var showLineNumbers = false {
         didSet {
             if showLineNumbers != oldValue {
@@ -319,6 +346,7 @@ final class TextInputView: UIView, UITextInput {
         didSet {
             if indentStrategy != oldValue {
                 indentController.indentStrategy = indentStrategy
+                layoutManager.indentUnitLength = indentStrategy.tabLength
                 layoutManager.setNeedsLayout()
                 setNeedsLayout()
                 layoutIfNeeded()

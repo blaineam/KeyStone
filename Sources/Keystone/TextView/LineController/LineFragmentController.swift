@@ -25,6 +25,15 @@ final class LineFragmentController {
             }
         }
     }
+    var indentGuides: IndentGuideSpec {
+        get { renderer.indentGuides }
+        set {
+            if newValue != renderer.indentGuides {
+                renderer.indentGuides = newValue
+                lineFragmentView?.setNeedsDisplay()
+            }
+        }
+    }
     var markedRange: NSRange? {
         get {
             renderer.markedRange

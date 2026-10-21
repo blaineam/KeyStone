@@ -45,6 +45,9 @@ public struct EditorSettingsView: View {
                     Toggle(String(localized: "Show Invisible Characters", bundle: .module), isOn: $configuration.showInvisibleCharacters)
                     Toggle(String(localized: "Line Wrapping", bundle: .module), isOn: $configuration.lineWrapping)
                     Toggle(String(localized: "Code Folding", bundle: .module), isOn: $configuration.showCodeFolding)
+                    Toggle(String(localized: "Indent Guides", bundle: .module), isOn: $configuration.showIndentGuides)
+                    Toggle(String(localized: "Bracket Pair Colors", bundle: .module), isOn: $configuration.colorizeBracketPairs)
+                    Toggle(String(localized: "Change Markers in Gutter", bundle: .module), isOn: $configuration.showChangeMarkers)
 
                     HStack {
                         Text("Font Size", bundle: .module)
@@ -192,6 +195,9 @@ public struct EditorSettingsView: View {
                             Toggle(String(localized: "Show Invisible Characters", bundle: .module), isOn: $configuration.showInvisibleCharacters)
                             Toggle(String(localized: "Line Wrapping", bundle: .module), isOn: $configuration.lineWrapping)
                             Toggle(String(localized: "Code Folding", bundle: .module), isOn: $configuration.showCodeFolding)
+                            Toggle(String(localized: "Indent Guides", bundle: .module), isOn: $configuration.showIndentGuides)
+                            Toggle(String(localized: "Bracket Pair Colors", bundle: .module), isOn: $configuration.colorizeBracketPairs)
+                            Toggle(String(localized: "Change Markers in Gutter", bundle: .module), isOn: $configuration.showChangeMarkers)
 
                             HStack {
                                 Text("Font Size", bundle: .module)

@@ -24,6 +24,8 @@ All notable changes to KeyStone are documented here. This project adheres to [Se
 
 - **Go to Symbol (⌘⇧O), breadcrumbs and a command palette (⌘⇧P).** Symbols (functions, methods, types, headings, JSON/YAML keys, CSS selectors, HTML ids…) come from the syntax tree for every tree-sitter language, refreshed after each parse up to 500 KB and on demand above. The status bar shows the symbol path around the caret. The palette lists every editor command with its shortcut, fuzzy-filtered; hosts add their own with `KeystoneEditor.commands(_:)`. `KeystoneDocument.symbols` / `symbolPath(atOffset:)` / `refreshSymbols()`.
 
+- **Gutter change markers, indent guides, bracket-pair colours, and a visible matching bracket.** `KeystoneDocument.changeMarkers` diffs the buffer against the saved text (Myers over line hashes, off the main thread, ~0.4 s after edits pause, reset by `markSaved()`); the gutter shows added (green), modified (blue) and deleted (red) lines. Indent guides follow the indent strategy and run through blank lines inside a block. Brackets are coloured by nesting depth from the syntax tree (`KeystoneTheme.bracketPairColors`). The matching bracket, which was computed but never drawn, is now highlighted. All three have settings toggles and palette commands.
+
 ### Tests
 
 - `KeystoneDocumentTests`, `BackgroundParsingTests` (edits during the initial parse and across reparses converge to a fresh parse, including breaking and restoring a `<script>` tag), and a per-keystroke budget on a flat 20k-line Swift file.

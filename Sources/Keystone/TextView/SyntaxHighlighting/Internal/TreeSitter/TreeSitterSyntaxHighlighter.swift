@@ -158,7 +158,11 @@ private extension TreeSitterSyntaxHighlighter {
 private extension TreeSitterSyntaxHighlighter {
     private func token(from capture: TreeSitterCapture, in byteRange: ByteRange) -> TreeSitterSyntaxHighlightToken {
         let range = NSRange(byteRange)
-        let textColor = theme.textColor(for: capture.name)
+        var textColor = theme.textColor(for: capture.name)
+        if theme.colorizesBracketPairs, capture.name.hasPrefix("punctuation.bracket"),
+           let color = theme.bracketPairColor(depth: Self.bracketDepth(of: capture.node)) {
+            textColor = color
+        }
         let shadow = theme.shadow(for: capture.name)
         let font = theme.font(for: capture.name)
         let fontTraits = theme.fontTraits(for: capture.name)
@@ -184,3 +188,23 @@ private extension NSFont {
     }
 }
 #endif
+
+extension TreeSitterSyntaxHighlighter {
+    private static let openingBrackets: Set<String> = ["(", "[", "{"]
+
+    /// Nesting depth of a bracket token: how many enclosing constructs open with a bracket
+    /// (the token's own parent counts as the first, so the outermost pair is depth 0).
+    static func bracketDepth(of node: TreeSitterNode) -> Int {
+        var depth = -1
+        var current = node.parent
+        var hops = 0
+        while let ancestor = current, hops < 64 {
+            if let first = ancestor.child(at: 0), !first.isNamed, let type = first.type, openingBrackets.contains(type) {
+                depth += 1
+            }
+            current = ancestor.parent
+            hops += 1
+        }
+        return max(0, depth)
+    }
+}

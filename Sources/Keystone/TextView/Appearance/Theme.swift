@@ -59,6 +59,16 @@ public protocol Theme: AnyObject {
     ///
     /// See <doc:CreatingATheme> for more information on higlight names.
     func shadow(for highlightName: String) -> NSShadow?
+    /// Colour for a bracket at nesting `depth` (0 = outermost), or nil to use the capture's colour.
+    func bracketPairColor(depth: Int) -> ThemeColor?
+    /// Whether brackets are coloured by depth at all.
+    var colorizesBracketPairs: Bool { get }
+    /// Indent guide lines.
+    var indentGuideColor: ThemeColor { get }
+    /// Gutter change markers.
+    var gutterAddedColor: ThemeColor { get }
+    var gutterModifiedColor: ThemeColor { get }
+    var gutterDeletedColor: ThemeColor { get }
     /// Highlighted range for a text range matching a search query.
     ///
     /// This function is called when highlighting a search result that was found using the standard find/replace interaction enabled using <doc:TextView/isFindInteractionEnabled>.
@@ -94,6 +104,13 @@ public extension Theme {
     func fontTraits(for highlightName: String) -> FontTraits {
         []
     }
+
+    func bracketPairColor(depth: Int) -> ThemeColor? { nil }
+    var colorizesBracketPairs: Bool { false }
+    var indentGuideColor: ThemeColor { lineNumberColor.withAlphaComponent(0.35) }
+    var gutterAddedColor: ThemeColor { .systemGreen }
+    var gutterModifiedColor: ThemeColor { .systemBlue }
+    var gutterDeletedColor: ThemeColor { .systemRed }
 
     func shadow(for highlightName: String) -> NSShadow? {
         nil

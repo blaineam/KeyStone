@@ -53,6 +53,15 @@ public struct KeystoneTheme: Equatable, Sendable {
     /// The invisible character color.
     public var invisibleCharacter: Color
 
+    /// Colours for nested bracket pairs, cycled by depth.
+    public var bracketPairColors: [Color] = KeystoneTheme.defaultBracketPairColors
+
+    public static let defaultBracketPairColors: [Color] = [
+        Color(red: 1.0, green: 0.84, blue: 0.0),
+        Color(red: 0.85, green: 0.44, blue: 0.84),
+        Color(red: 0.09, green: 0.62, blue: 1.0),
+    ]
+
     // MARK: - Initialization
 
     public init(

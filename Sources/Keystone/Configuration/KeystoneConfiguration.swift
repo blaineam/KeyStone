@@ -32,6 +32,15 @@ public final class KeystoneConfiguration: ObservableObject {
     /// Whether to show code folding indicators in the gutter.
     @Published public var showCodeFolding: Bool = true
 
+    /// Vertical guides at each indentation level.
+    @Published public var showIndentGuides: Bool = true
+
+    /// Colour nested bracket pairs by depth.
+    @Published public var colorizeBracketPairs: Bool = true
+
+    /// Added/modified/deleted markers in the gutter, relative to the saved text.
+    @Published public var showChangeMarkers: Bool = true
+
     // MARK: - Behavior Settings
 
     /// Whether to automatically insert matching pairs (brackets, quotes).
@@ -145,6 +154,9 @@ public final class KeystoneConfiguration: ObservableObject {
         static let fontSize = "keystone.fontSize"
         static let lineHeightMultiplier = "keystone.lineHeightMultiplier"
         static let showLineNumbers = "keystone.showLineNumbers"
+        static let showIndentGuides = "keystone.showIndentGuides"
+        static let colorizeBracketPairs = "keystone.colorizeBracketPairs"
+        static let showChangeMarkers = "keystone.showChangeMarkers"
         static let highlightCurrentLine = "keystone.highlightCurrentLine"
         static let showInvisibleCharacters = "keystone.showInvisibleCharacters"
         static let lineWrapping = "keystone.lineWrapping"
@@ -218,6 +230,15 @@ public final class KeystoneConfiguration: ObservableObject {
         if defaults.object(forKey: Keys.showLineNumbers) != nil {
             showLineNumbers = defaults.bool(forKey: Keys.showLineNumbers)
         }
+        if defaults.object(forKey: Keys.showIndentGuides) != nil {
+            showIndentGuides = defaults.bool(forKey: Keys.showIndentGuides)
+        }
+        if defaults.object(forKey: Keys.colorizeBracketPairs) != nil {
+            colorizeBracketPairs = defaults.bool(forKey: Keys.colorizeBracketPairs)
+        }
+        if defaults.object(forKey: Keys.showChangeMarkers) != nil {
+            showChangeMarkers = defaults.bool(forKey: Keys.showChangeMarkers)
+        }
         if defaults.object(forKey: Keys.highlightCurrentLine) != nil {
             highlightCurrentLine = defaults.bool(forKey: Keys.highlightCurrentLine)
         }
@@ -262,6 +283,9 @@ public final class KeystoneConfiguration: ObservableObject {
         defaults.set(Double(fontSize), forKey: Keys.fontSize)
         defaults.set(Double(lineHeightMultiplier), forKey: Keys.lineHeightMultiplier)
         defaults.set(showLineNumbers, forKey: Keys.showLineNumbers)
+        defaults.set(showIndentGuides, forKey: Keys.showIndentGuides)
+        defaults.set(colorizeBracketPairs, forKey: Keys.colorizeBracketPairs)
+        defaults.set(showChangeMarkers, forKey: Keys.showChangeMarkers)
         defaults.set(highlightCurrentLine, forKey: Keys.highlightCurrentLine)
         defaults.set(showInvisibleCharacters, forKey: Keys.showInvisibleCharacters)
         defaults.set(lineWrapping, forKey: Keys.lineWrapping)

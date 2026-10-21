@@ -7,6 +7,7 @@
 //
 
 import SwiftUI
+import Combine
 
 #if canImport(UIKit)
 import UIKit
@@ -100,6 +101,7 @@ public struct KeystoneTextView: UIViewRepresentable {
         document.attach(textView) { [weak coordinator = context.coordinator] newText, preservingUndo in
             coordinator?.applyText(newText, preservingUndo: preservingUndo)
         }
+        context.coordinator.observeChangeMarkers(of: document, on: textView)
 
         return textView
     }
@@ -163,9 +165,10 @@ public struct KeystoneTextView: UIViewRepresentable {
         // This prevents syntax highlighting re-evaluation on every cursor move
         let currentTheme = configuration.theme
         let currentFontSize = configuration.fontSize
-        if currentTheme != coordinator.lastSyncedTheme || currentFontSize != coordinator.lastSyncedFontSize {
+        if currentTheme != coordinator.lastSyncedTheme || currentFontSize != coordinator.lastSyncedFontSize || configuration.colorizeBracketPairs != coordinator.lastSyncedBracketColors {
             coordinator.lastSyncedTheme = currentTheme
             coordinator.lastSyncedFontSize = currentFontSize
+            coordinator.lastSyncedBracketColors = configuration.colorizeBracketPairs
             let theme = KeystoneRunestoneTheme(configuration: configuration)
             textView.theme = theme
         }
@@ -256,6 +259,8 @@ public struct KeystoneTextView: UIViewRepresentable {
         // Appearance settings
         textView.showLineNumbers = configuration.showLineNumbers
         textView.showCodeFolding = configuration.showCodeFolding
+        textView.showIndentGuides = configuration.showIndentGuides
+        textView.showChangeMarkers = configuration.showChangeMarkers
         textView.lineHeightMultiplier = configuration.lineHeightMultiplier
         textView.isLineWrappingEnabled = configuration.lineWrapping
 
@@ -348,6 +353,10 @@ public struct KeystoneTextView: UIViewRepresentable {
         var lastSyncedLanguage: KeystoneLanguage?
         var lastSyncedTheme: KeystoneTheme
         var lastSyncedFontSize: CGFloat
+        var lastSyncedBracketColors = true
+        /// Matching-bracket highlights, merged with the search highlights.
+        private var bracketHighlights: [HighlightedRange] = []
+        private var changeMarkersCancellable: AnyCancellable?
         private var highlightedRanges: [HighlightedRange] = []
         let codeFoldingManager = CodeFoldingManager()
         private var foldingAnalysisWorkItem: DispatchWorkItem?
@@ -396,7 +405,7 @@ public struct KeystoneTextView: UIViewRepresentable {
             guard !searchMatches.isEmpty else {
                 // Clear all highlights
                 highlightedRanges.removeAll()
-                textView.highlightedRanges = []
+                applyHighlights(to: textView)
                 return
             }
 
@@ -430,26 +439,47 @@ public struct KeystoneTextView: UIViewRepresentable {
 
             // Update the text view's highlighted ranges
             highlightedRanges = newHighlights
-            textView.highlightedRanges = newHighlights
+            applyHighlights(to: textView)
         }
 
         // MARK: - Bracket Matching
 
         func updateBracketMatch(textView: TextView) {
-            guard parent.configuration.highlightMatchingBrackets else {
-                if parent.matchingBracket != nil { parent.matchingBracket = nil }
-                return
+            var match: BracketMatch?
+            if parent.configuration.highlightMatchingBrackets {
+                let offset = textView.selectedRange.location
+                let text = textView.backingString
+                match = BracketMatcher.findMatch(inNSString: text, at: offset)
+                if match == nil, offset > 0 {
+                    match = BracketMatcher.findMatch(inNSString: text, at: offset - 1)
+                }
             }
-            let offset = textView.selectedRange.location
-            let text = textView.backingString
+            if parent.matchingBracket != match {
+                parent.matchingBracket = match
+            }
+            let color = HighlightColor(parent.configuration.theme.matchingBracket)
+            let newHighlights = match.map { found in
+                [
+                    HighlightedRange(id: "bracket-open", range: NSRange(location: found.openPosition, length: 1), color: color, cornerRadius: 2),
+                    HighlightedRange(id: "bracket-close", range: NSRange(location: found.closePosition, length: 1), color: color, cornerRadius: 2),
+                ]
+            } ?? []
+            if newHighlights.map(\.range) != bracketHighlights.map(\.range) {
+                bracketHighlights = newHighlights
+                applyHighlights(to: textView)
+            }
+        }
 
-            // Find bracket match at cursor
-            if let match = BracketMatcher.findMatch(inNSString: text, at: offset) {
-                parent.matchingBracket = match
-            } else if offset > 0, let match = BracketMatcher.findMatch(inNSString: text, at: offset - 1) {
-                parent.matchingBracket = match
-            } else {
-                parent.matchingBracket = nil
+        /// Search highlights plus the matching-bracket pair.
+        private func applyHighlights(to textView: TextView) {
+            textView.highlightedRanges = highlightedRanges + bracketHighlights
+        }
+
+        /// Keeps the gutter's change markers in step with the document's diff.
+        func observeChangeMarkers(of document: KeystoneDocument, on textView: TextView) {
+            textView.changeMarkers = document.changeMarkers
+            changeMarkersCancellable = document.$changeMarkers.sink { [weak textView] markers in
+                textView?.changeMarkers = markers
             }
         }
 
@@ -555,6 +585,8 @@ class KeystoneRunestoneTheme: Theme {
     private let _propertyColor: UIColor
     private let _attributeColor: UIColor
     private let _tagColor: UIColor
+    private let _bracketPairColors: [UIColor]
+    private let _colorizesBracketPairs: Bool
 
     @MainActor
     init(configuration: KeystoneConfiguration) {
@@ -576,6 +608,8 @@ class KeystoneRunestoneTheme: Theme {
         _propertyColor = UIColor(theme.property)
         _attributeColor = UIColor(theme.attribute)
         _tagColor = UIColor(theme.tag)
+        _bracketPairColors = theme.bracketPairColors.map { UIColor($0) }
+        _colorizesBracketPairs = configuration.colorizeBracketPairs
     }
 
     var font: UIFont {
@@ -585,6 +619,13 @@ class KeystoneRunestoneTheme: Theme {
     var textColor: UIColor {
         _textColor
     }
+
+    func bracketPairColor(depth: Int) -> UIColor? {
+        guard _colorizesBracketPairs, !_bracketPairColors.isEmpty else { return nil }
+        return _bracketPairColors[depth % _bracketPairColors.count]
+    }
+
+    var colorizesBracketPairs: Bool { _colorizesBracketPairs }
 
     var gutterBackgroundColor: UIColor {
         _gutterBackgroundColor
@@ -770,6 +811,7 @@ public struct KeystoneTextView: NSViewRepresentable {
         document.attach(textView) { [weak coordinator = context.coordinator] newText, preservingUndo in
             coordinator?.applyText(newText, preservingUndo: preservingUndo)
         }
+        context.coordinator.observeChangeMarkers(of: document, on: textView)
 
         return textView
     }
@@ -838,9 +880,10 @@ public struct KeystoneTextView: NSViewRepresentable {
         // This prevents syntax highlighting re-evaluation on every cursor move
         let currentTheme = configuration.theme
         let currentFontSize = configuration.fontSize
-        if currentTheme != coordinator.lastSyncedTheme || currentFontSize != coordinator.lastSyncedFontSize {
+        if currentTheme != coordinator.lastSyncedTheme || currentFontSize != coordinator.lastSyncedFontSize || configuration.colorizeBracketPairs != coordinator.lastSyncedBracketColors {
             coordinator.lastSyncedTheme = currentTheme
             coordinator.lastSyncedFontSize = currentFontSize
+            coordinator.lastSyncedBracketColors = configuration.colorizeBracketPairs
             let theme = KeystoneRunestoneThemeMac(configuration: configuration)
             textView.theme = theme
         }
@@ -922,6 +965,8 @@ public struct KeystoneTextView: NSViewRepresentable {
         // Appearance settings
         textView.showLineNumbers = configuration.showLineNumbers
         textView.showCodeFolding = configuration.showCodeFolding
+        textView.showIndentGuides = configuration.showIndentGuides
+        textView.showChangeMarkers = configuration.showChangeMarkers
         textView.lineHeightMultiplier = configuration.lineHeightMultiplier
         textView.isLineWrappingEnabled = configuration.lineWrapping
 
@@ -1018,6 +1063,10 @@ public struct KeystoneTextView: NSViewRepresentable {
         var lastSyncedLanguage: KeystoneLanguage?
         var lastSyncedTheme: KeystoneTheme
         var lastSyncedFontSize: CGFloat
+        var lastSyncedBracketColors = true
+        /// Matching-bracket highlights, merged with the search highlights.
+        private var bracketHighlights: [HighlightedRange] = []
+        private var changeMarkersCancellable: AnyCancellable?
         private var highlightedRanges: [HighlightedRange] = []
         let codeFoldingManager = CodeFoldingManager()
         private var foldingAnalysisWorkItem: DispatchWorkItem?
@@ -1060,7 +1109,7 @@ public struct KeystoneTextView: NSViewRepresentable {
         func updateSearchHighlights(textView: TextView, searchMatches: [SearchMatch], currentMatchIndex: Int) {
             guard !searchMatches.isEmpty else {
                 highlightedRanges.removeAll()
-                textView.highlightedRanges = []
+                applyHighlights(to: textView)
                 return
             }
 
@@ -1091,25 +1140,47 @@ public struct KeystoneTextView: NSViewRepresentable {
             }
 
             highlightedRanges = newHighlights
-            textView.highlightedRanges = newHighlights
+            applyHighlights(to: textView)
         }
 
         // MARK: - Bracket Matching
 
         func updateBracketMatch(textView: TextView) {
-            guard parent.configuration.highlightMatchingBrackets else {
-                if parent.matchingBracket != nil { parent.matchingBracket = nil }
-                return
+            var match: BracketMatch?
+            if parent.configuration.highlightMatchingBrackets {
+                let offset = textView.selectedRange.location
+                let text = textView.backingString
+                match = BracketMatcher.findMatch(inNSString: text, at: offset)
+                if match == nil, offset > 0 {
+                    match = BracketMatcher.findMatch(inNSString: text, at: offset - 1)
+                }
             }
-            let offset = textView.selectedRange.location
-            let text = textView.backingString
+            if parent.matchingBracket != match {
+                parent.matchingBracket = match
+            }
+            let color = HighlightColor(parent.configuration.theme.matchingBracket)
+            let newHighlights = match.map { found in
+                [
+                    HighlightedRange(id: "bracket-open", range: NSRange(location: found.openPosition, length: 1), color: color, cornerRadius: 2),
+                    HighlightedRange(id: "bracket-close", range: NSRange(location: found.closePosition, length: 1), color: color, cornerRadius: 2),
+                ]
+            } ?? []
+            if newHighlights.map(\.range) != bracketHighlights.map(\.range) {
+                bracketHighlights = newHighlights
+                applyHighlights(to: textView)
+            }
+        }
 
-            if let match = BracketMatcher.findMatch(inNSString: text, at: offset) {
-                parent.matchingBracket = match
-            } else if offset > 0, let match = BracketMatcher.findMatch(inNSString: text, at: offset - 1) {
-                parent.matchingBracket = match
-            } else {
-                parent.matchingBracket = nil
+        /// Search highlights plus the matching-bracket pair.
+        private func applyHighlights(to textView: TextView) {
+            textView.highlightedRanges = highlightedRanges + bracketHighlights
+        }
+
+        /// Keeps the gutter's change markers in step with the document's diff.
+        func observeChangeMarkers(of document: KeystoneDocument, on textView: TextView) {
+            textView.changeMarkers = document.changeMarkers
+            changeMarkersCancellable = document.$changeMarkers.sink { [weak textView] markers in
+                textView?.changeMarkers = markers
             }
         }
 
@@ -1206,6 +1277,8 @@ class KeystoneRunestoneThemeMac: Theme {
     private let _propertyColor: NSColor
     private let _attributeColor: NSColor
     private let _tagColor: NSColor
+    private let _bracketPairColors: [NSColor]
+    private let _colorizesBracketPairs: Bool
 
     @MainActor
     init(configuration: KeystoneConfiguration) {
@@ -1227,6 +1300,8 @@ class KeystoneRunestoneThemeMac: Theme {
         _propertyColor = NSColor(theme.property)
         _attributeColor = NSColor(theme.attribute)
         _tagColor = NSColor(theme.tag)
+        _bracketPairColors = theme.bracketPairColors.map { NSColor($0) }
+        _colorizesBracketPairs = configuration.colorizeBracketPairs
     }
 
     var font: NSFont {
@@ -1236,6 +1311,13 @@ class KeystoneRunestoneThemeMac: Theme {
     var textColor: NSColor {
         _textColor
     }
+
+    func bracketPairColor(depth: Int) -> NSColor? {
+        guard _colorizesBracketPairs, !_bracketPairColors.isEmpty else { return nil }
+        return _bracketPairColors[depth % _bracketPairColors.count]
+    }
+
+    var colorizesBracketPairs: Bool { _colorizesBracketPairs }
 
     var gutterBackgroundColor: NSColor {
         _gutterBackgroundColor

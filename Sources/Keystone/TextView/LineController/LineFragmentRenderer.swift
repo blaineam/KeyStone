@@ -28,6 +28,8 @@ final class LineFragmentRenderer {
     }()
     var markedTextBackgroundCornerRadius: CGFloat = 0
     var highlightedRangeFragments: [HighlightedRangeFragment] = []
+    /// Vertical guides drawn at each indentation level before this fragment's text.
+    var indentGuides = IndentGuideSpec.none
 
     private var showInvisibleCharacters: Bool {
         invisibleCharacterConfiguration.showTabs
@@ -43,6 +45,7 @@ final class LineFragmentRenderer {
 
     func draw(to context: CGContext, inCanvasOfSize canvasSize: CGSize) {
         drawHighlightedRanges(to: context, inCanvasOfSize: canvasSize)
+        drawIndentGuides(to: context)
         drawMarkedRange(to: context)
         drawInvisibleCharacters()
         drawText(to: context)
@@ -86,6 +89,18 @@ private extension LineFragmentRenderer {
                 context.fill(rect)
             }
             #endif
+        }
+        context.restoreGState()
+    }
+
+    private func drawIndentGuides(to context: CGContext) {
+        guard indentGuides.count > 0, indentGuides.unitWidth > 0 else { return }
+        context.saveGState()
+        context.setFillColor(indentGuides.color.cgColor)
+        let height = lineFragment.scaledSize.height
+        for level in 0..<indentGuides.count {
+            let x = (CGFloat(level) * indentGuides.unitWidth).rounded()
+            context.fill(CGRect(x: x, y: 0, width: 1, height: height))
         }
         context.restoreGState()
     }
@@ -179,4 +194,13 @@ private extension LineFragmentRenderer {
     private func isLineBreak(_ string: String.Element) -> Bool {
         string == Symbol.Character.lineFeed || string == Symbol.Character.carriageReturn || string == Symbol.Character.carriageReturnLineFeed
     }
+}
+
+/// Indent guides for one line: `count` lines, `unitWidth` points apart.
+struct IndentGuideSpec: Equatable {
+    var count: Int
+    var unitWidth: CGFloat
+    var color: RunestoneColor
+
+    static let none = IndentGuideSpec(count: 0, unitWidth: 0, color: .clear)
 }
