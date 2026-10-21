@@ -255,6 +255,24 @@ final class LargeFileTextViewTests: XCTestCase {
         XCTAssertLessThan(worst, 0.5, "keystroke inside a 1MB line took \(worst)s")
     }
 
+    func testProfileFeatureCombinations() {
+        let html = LargeFileFixtures.inlinedHTML()
+        let ns = html as NSString
+        let jsLoc = ns.range(of: "<script>").location + 500_000
+        let pLoc = ns.range(of: "Paragraph 200").location
+        for (name, wrap, numbers, invisibles) in [("plain", false, false, false), ("wrap", true, false, false), ("numbers+invisibles", false, true, true), ("all", true, true, true)] {
+            let tv = makeTextView(text: html)
+            tv.isLineWrappingEnabled = wrap
+            tv.showLineNumbers = numbers
+            tv.showTabs = invisibles; tv.showSpaces = invisibles; tv.showLineBreaks = invisibles
+            tv.layoutSubtreeIfNeeded()
+            settle()
+            let a = timedKeystroke(tv, at: pLoc), b = timedKeystroke(tv, at: pLoc + 1)
+            let c = timedKeystroke(tv, at: jsLoc), d = timedKeystroke(tv, at: jsLoc + 1)
+            print("PROFILE \(name): normal line \(String(format: "%.3f", max(a, b)))s, minified line \(String(format: "%.3f", max(c, d)))s")
+        }
+    }
+
     func testTypingInRegularLineOfHugeFileStaysResponsive() {
         let html = LargeFileFixtures.inlinedHTML()
         let textView = makeTextView(text: html)
