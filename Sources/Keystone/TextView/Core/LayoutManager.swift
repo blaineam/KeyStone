@@ -268,10 +268,19 @@ final class LayoutManager {
         layoutIfNeeded()
     }
 
-    func redisplayLines(withIDs lineIDs: Set<DocumentLineNodeID>) {
+    /// Invalidates and, when visible, re-prepares the lines. `replacement` is the text
+    /// replacement that caused this, if any; the line containing it can then update
+    /// incrementally instead of comparing its whole text.
+    func redisplayLines(withIDs lineIDs: Set<DocumentLineNodeID>, replacing replacement: TextReplacement? = nil) {
         for lineID in lineIDs {
             if let lineController = lineControllerStorage[lineID] {
-                lineController.invalidateEverything()
+                let line = lineController.line
+                if let replacement, replacement.range.location >= line.location, replacement.range.location <= line.location + line.data.totalLength {
+                    let localRange = NSRange(location: replacement.range.location - line.location, length: replacement.range.length)
+                    lineController.invalidateEverything(replacing: TextReplacement(range: localRange, replacementLength: replacement.replacementLength))
+                } else {
+                    lineController.invalidateEverything()
+                }
                 // Only display the line if it's currently visible on the screen. Otherwise it's enough to invalidate it and redisplay it later.
                 if visibleLineIDs.contains(lineID) {
                     let lineYPosition = lineController.line.yPosition

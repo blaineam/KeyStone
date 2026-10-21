@@ -1718,6 +1718,9 @@ open class TextView: NSScrollView {
     #if DEBUG
     func debugCaptureSignature() -> [String] { textInputView.debugCaptureSignature() }
     var debugIsParsingIdle: Bool { textInputView.debugIsParsingIdle }
+    #if canImport(AppKit)
+    func debugLineController(containing location: Int) -> LineController? { textInputView.debugLineController(containing: location) }
+    #endif
     func debugIndentGuideCount(atRow row: Int) -> Int { textInputView.debugIndentGuideCount(atRow: row) }
     var debugChangeMarkerRectCount: Int { textInputView.debugChangeMarkerRectCount }
     var debugTreeSitterMode: TreeSitterInternalLanguageMode? { textInputView.debugTreeSitterMode }

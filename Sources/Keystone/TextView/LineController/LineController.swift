@@ -9,19 +9,32 @@ import AppKit
 
 typealias LineFragmentTree = RedBlackTree<LineFragmentNodeID, Int, LineFragmentNodeData>
 
+/// One text replacement in document coordinates: `range` was replaced by `replacementLength` units.
+struct TextReplacement {
+    let range: NSRange
+    let replacementLength: Int
+}
+
 protocol LineControllerDelegate: AnyObject {
     func lineSyntaxHighlighter(for lineController: LineController) -> LineSyntaxHighlighter?
     func lineControllerDidInvalidateLineWidthDuringAsyncSyntaxHighlight(_ lineController: LineController)
 }
 
 final class LineController {
-    /// Lines longer than this (UTF-16 units) are not syntax highlighted.
+    /// Lines longer than this (UTF-16 units) are not syntax highlighted. They are also
+    /// stored and typeset in chunks (see `chunkLength`); shorter lines are one chunk.
     nonisolated(unsafe) static var maximumHighlightedLineLength = 20_000
+    /// Maximum size of one chunk of a long line, in UTF-16 units. An edit rebuilds the
+    /// attributed string and `CTTypesetter` of the chunk containing it, not the whole line.
+    nonisolated(unsafe) static var chunkLength = 8_192
     /// The attributed string from before the last edit, applied over the unchanged
     /// prefix and suffix of the new one until asynchronous highlighting replaces it.
     private var previousAttributedString: NSAttributedString?
     /// Length of the unchanged prefix after the last edit; typesetting resumes there.
     private var unchangedPrefixLength: Int?
+    /// The single replacement (line-local, in the old text) since the string was last
+    /// rebuilt, when that is known. Lets a chunked line skip comparing its whole text.
+    private var pendingReplacement: TextReplacement?
     /// Indent guides for this line, applied to every fragment.
     var indentGuides = IndentGuideSpec.none {
         didSet {
@@ -73,7 +86,7 @@ final class LineController {
             _lineHeight = lineHeight
             return lineHeight
         } else {
-            let knownLineFragmentHeight = typesetter.lineFragments.reduce(0) { $0 + $1.scaledSize.height }
+            let knownLineFragmentHeight = typesetter.typesetHeight
             let remainingNumberOfLineFragments = typesetter.bestGuessNumberOfLineFragments - typesetter.lineFragments.count
             let lineFragmentHeight = estimatedLineFragmentHeight * lineFragmentHeightMultiplier
             let remainingLineFragmentHeight = CGFloat(remainingNumberOfLineFragments) * lineFragmentHeight
@@ -103,7 +116,25 @@ final class LineController {
     var isFinishedTypesetting: Bool {
         typesetter.isFinishedTypesetting
     }
-    private(set) var attributedString: NSMutableAttributedString?
+    /// The whole line's attributed text. Lines above `maximumHighlightedLineLength` are stored
+    /// in chunks, so for them this concatenates on every call; prefer `chunks`.
+    var attributedString: NSMutableAttributedString? {
+        guard let first = chunks.first else {
+            return nil
+        }
+        guard chunks.count > 1 else {
+            return first.attributedString
+        }
+        let result = NSMutableAttributedString()
+        for chunk in chunks {
+            result.append(chunk.attributedString)
+        }
+        return result
+    }
+    /// The line's text in order; a single chunk unless the line is longer than `maximumHighlightedLineLength`.
+    private(set) var chunks: [LineChunk] = []
+    /// Whether `chunks` holds the line in pieces (set when the string is rebuilt).
+    private var isChunkedLine = false
 
     private let stringView: StringView
     private let invisibleCharacterConfiguration: InvisibleCharacterConfiguration
@@ -156,12 +187,24 @@ final class LineController {
     }
 
     func invalidateEverything() {
+        pendingReplacement = nil
         isLineFragmentCacheInvalid = true
         isStringInvalid = true
         isTypesetterInvalid = true
         isDefaultAttributesInvalid = true
         isSyntaxHighlightingInvalid = true
         _lineHeight = nil
+    }
+
+    /// Like `invalidateEverything()`, for a text replacement whose extent is known. The
+    /// replacement is remembered only when it is the sole change since the string was
+    /// last built; otherwise the next rebuild compares old and new text.
+    func invalidateEverything(replacing replacement: TextReplacement) {
+        let wasStringInvalid = isStringInvalid
+        invalidateEverything()
+        if !wasStringInvalid {
+            pendingReplacement = replacement
+        }
     }
 
     func invalidateSyntaxHighlighter() {
@@ -246,51 +289,171 @@ private extension LineController {
     }
 
     private func updateStringIfNecessary() {
-        if isStringInvalid {
-            let range = NSRange(location: line.location, length: line.data.totalLength)
-            let old = attributedString
-            if let string = stringView.substring(in: range) {
-                attributedString = NSMutableAttributedString(string: string)
-                if let old {
-                    unchangedPrefixLength = LineController.commonPrefixLength(old.string as NSString, string as NSString)
-                    // Keep the old attributes around: when highlighting is asynchronous the new
-                    // string shows them on the unchanged text until fresh captures land, instead
-                    // of flashing to plain text on every keystroke.
-                    let highlightable = syntaxHighlighter?.canHighlight == true && line.data.totalLength <= LineController.maximumHighlightedLineLength
-                    previousAttributedString = highlightable ? old : nil
-                } else {
-                    unchangedPrefixLength = nil
-                    previousAttributedString = nil
-                }
-            } else {
-                attributedString = nil
-            }
-            isStringInvalid = false
-            isDefaultAttributesInvalid = true
-            isSyntaxHighlightingInvalid = true
-            isTypesetterInvalid = true
+        guard isStringInvalid else {
+            return
         }
+        let length = line.data.totalLength
+        let range = NSRange(location: line.location, length: length)
+        let shouldChunk = length > LineController.maximumHighlightedLineLength
+        if shouldChunk && isChunkedLine && !chunks.isEmpty && updateChunksAroundEdit(newLength: length) {
+            // Only the chunks overlapping the edit were rebuilt; `unchangedPrefixLength` is set.
+            previousAttributedString = nil
+        } else if let string = stringView.substring(in: range) {
+            let old = isChunkedLine ? nil : chunks.first?.attributedString
+            if shouldChunk {
+                chunks = LineChunk.chunks(of: string, startingAt: 0, chunkLength: LineController.chunkLength)
+            } else {
+                chunks = [LineChunk(location: 0, string: string)]
+            }
+            isChunkedLine = shouldChunk
+            if let old {
+                unchangedPrefixLength = LineController.commonPrefixLength(old.string as NSString, string as NSString)
+                // Keep the old attributes around: when highlighting is asynchronous the new
+                // string shows them on the unchanged text until fresh captures land, instead
+                // of flashing to plain text on every keystroke.
+                let highlightable = syntaxHighlighter?.canHighlight == true && !shouldChunk
+                previousAttributedString = highlightable ? old : nil
+            } else {
+                unchangedPrefixLength = nil
+                previousAttributedString = nil
+            }
+            isDefaultAttributesInvalid = true
+        } else {
+            chunks = []
+            isChunkedLine = false
+            unchangedPrefixLength = nil
+            previousAttributedString = nil
+        }
+        // A hint describes exactly one rebuild; never let it outlive this one.
+        pendingReplacement = nil
+        isStringInvalid = false
+        isSyntaxHighlightingInvalid = true
+        isTypesetterInvalid = true
+    }
+
+    /// Reconciles the existing chunks of a long line with the edited text: finds the unchanged
+    /// prefix and suffix, rebuilds only the chunks overlapping the edited region and shifts the
+    /// ones after it. Returns `false` when the chunks cannot be reconciled and the caller must
+    /// rebuild the whole line.
+    private func updateChunksAroundEdit(newLength: Int) -> Bool {
+        let backing = stringView.string
+        let lineLocation = line.location
+        guard lineLocation >= 0, newLength > 0, lineLocation + newLength <= backing.length else {
+            return false
+        }
+        let oldLength = chunks.last.map(\.range.upperBound) ?? 0
+        let delta = newLength - oldLength
+        let replacement = pendingReplacement
+        pendingReplacement = nil
+
+        var prefix = 0
+        var suffix = 0
+        if let replacement,
+           replacement.range.location >= 0,
+           replacement.range.upperBound <= oldLength,
+           oldLength - replacement.range.length + replacement.replacementLength == newLength {
+            // The one edit since the last rebuild is known: no need to compare a megabyte of text.
+            prefix = replacement.range.location
+            suffix = oldLength - replacement.range.upperBound
+        } else {
+            (prefix, suffix) = unchangedPrefixAndSuffix(in: backing, lineLocation: lineLocation, oldLength: oldLength, newLength: newLength)
+        }
+
+        // Chunks overlapping the edited region [prefix, oldLength - suffix) in the old text.
+        func chunkIndex(containing offset: Int) -> Int {
+            if offset >= oldLength { return chunks.count - 1 }
+            return chunks.firstIndex { offset < $0.range.upperBound } ?? chunks.count - 1
+        }
+        let first = chunkIndex(containing: prefix)
+        let oldEditEnd = oldLength - suffix
+        var last = oldEditEnd > prefix ? chunkIndex(containing: oldEditEnd - 1) : first
+        last = max(first, last)
+        let regionLocation = chunks[first].location
+        var newRegionLength = chunks[last].range.upperBound - regionLocation + delta
+        // A region that shrank to a sliver would make a sliver of a soft-wrap line; fold the next chunk in.
+        if newRegionLength < LineController.chunkLength / 4 && last + 1 < chunks.count {
+            last += 1
+            newRegionLength += chunks[last].length
+        }
+        guard newRegionLength >= 0 else {
+            return false
+        }
+        var pieces: [LineChunk] = []
+        if newRegionLength > 0 {
+            let newRange = NSRange(location: lineLocation + regionLocation, length: newRegionLength)
+            guard let string = stringView.substring(in: newRange) else {
+                return false
+            }
+            pieces = LineChunk.chunks(of: string, startingAt: regionLocation, chunkLength: LineController.chunkLength)
+        }
+        if delta != 0 {
+            for chunk in chunks[(last + 1)...] {
+                chunk.location += delta
+            }
+        }
+        chunks.replaceSubrange(first...last, with: pieces)
+        guard let lastChunk = chunks.last, lastChunk.range.upperBound == newLength else {
+            return false
+        }
+        unchangedPrefixLength = prefix
+        return true
+    }
+
+    /// Lengths of the unchanged prefix and suffix between the old chunks and the line's new text.
+    private func unchangedPrefixAndSuffix(in backing: NSString, lineLocation: Int, oldLength: Int, newLength: Int) -> (prefix: Int, suffix: Int) {
+        let delta = newLength - oldLength
+        var prefix = 0
+        for chunk in chunks {
+            let comparable = min(chunk.length, newLength - chunk.location)
+            guard comparable > 0 else { break }
+            let common = LineController.commonLength(
+                chunk.string, NSRange(location: 0, length: comparable),
+                backing, NSRange(location: lineLocation + chunk.location, length: comparable),
+                fromEnd: false
+            )
+            prefix = chunk.location + common
+            if common < chunk.length { break }
+        }
+
+        var suffix = 0
+        let maximumSuffix = min(oldLength, newLength) - prefix
+        for chunk in chunks.reversed() where suffix < maximumSuffix {
+            let comparable = min(chunk.length, maximumSuffix - suffix)
+            let newUpperBound = lineLocation + chunk.range.upperBound + delta
+            let common = LineController.commonLength(
+                chunk.string, NSRange(location: chunk.length - comparable, length: comparable),
+                backing, NSRange(location: newUpperBound - comparable, length: comparable),
+                fromEnd: true
+            )
+            suffix += common
+            if common < comparable { break }
+        }
+        return (prefix, suffix)
     }
 
     private func updateDefaultAttributesIfNecessary() {
-        if isDefaultAttributesInvalid {
-            if let input = createLineSyntaxHighlightInput() {
-                let defaultStringAttributes = DefaultStringAttributes(
-                    textColor: theme.textColor,
-                    font: theme.font,
-                    kern: kern,
-                    tabWidth: tabWidth
-                )
-                defaultStringAttributes.apply(to: input.attributedString)
-                if let previous = previousAttributedString {
-                    LineController.carryOverAttributes(from: previous, to: input.attributedString, prefixLength: unchangedPrefixLength)
-                }
-            }
-            previousAttributedString = nil
-            isDefaultAttributesInvalid = false
-            isSyntaxHighlightingInvalid = true
-            isTypesetterInvalid = true
+        let applyToAll = isDefaultAttributesInvalid
+        guard applyToAll || chunks.contains(where: \.needsDefaultAttributes) else {
+            return
         }
+        let defaultStringAttributes = DefaultStringAttributes(
+            textColor: theme.textColor,
+            font: theme.font,
+            kern: kern,
+            tabWidth: tabWidth
+        )
+        for chunk in chunks where applyToAll || chunk.needsDefaultAttributes {
+            defaultStringAttributes.apply(to: chunk.attributedString)
+            chunk.needsDefaultAttributes = false
+            chunk.invalidateTypesetter()
+        }
+        if let previous = previousAttributedString, let input = createLineSyntaxHighlightInput() {
+            LineController.carryOverAttributes(from: previous, to: input.attributedString, prefixLength: unchangedPrefixLength)
+        }
+        previousAttributedString = nil
+        isDefaultAttributesInvalid = false
+        isSyntaxHighlightingInvalid = true
+        isTypesetterInvalid = true
     }
 
     private func updateTypesetterIfNecessary() {
@@ -301,18 +464,21 @@ private extension LineController {
             let reusable = unchangedPrefixLength.map { typesetter.reusableFragmentCount(forEditAt: $0) } ?? 0
             unchangedPrefixLength = nil
             if reusable > 0 && reusable <= lineFragmentTree.nodeTotalCount {
-                while lineFragmentTree.nodeTotalCount > reusable {
-                    lineFragmentTree.remove(lineFragmentTree.node(atIndex: lineFragmentTree.nodeTotalCount - 1))
-                }
+                // The tree nodes after the kept fragments are left in place: the next typesetting
+                // pass updates them in place (`updateLineHeight(for:)`) and trims whatever is left,
+                // which is far cheaper than removing and re-inserting them.
                 typesetter.reset(keepingFragments: reusable)
                 _lineHeight = nil
             } else {
                 lineFragmentTree.reset(rootValue: 0, rootData: LineFragmentNodeData(lineFragment: nil))
                 typesetter.reset()
             }
-            if let attributedString = attributedString {
-                typesetter.prepareToTypeset(attributedString)
+            if !isChunkedLine {
+                // Highlighting mutates the single chunk's attributes in place.
+                chunks.first?.invalidateTypesetter()
             }
+            let stringLength = chunks.last.map(\.range.upperBound) ?? 0
+            typesetter.prepareToTypeset(chunks: chunks, stringLength: stringLength)
             isTypesetterInvalid = false
         }
     }
@@ -365,15 +531,18 @@ private extension LineController {
             let length = lineFragment.range.length
             let data = LineFragmentNodeData(lineFragment: lineFragment)
             if lineFragment.index < lineFragmentTree.nodeTotalCount {
-                let node = lineFragmentTree.node(atIndex: lineFragment.index)
-                let heightDifference = abs(lineFragment.baseSize.height - node.data.lineFragmentHeight)
+                let node = previousNode.map { $0.next } ?? lineFragmentTree.node(atIndex: lineFragment.index)
+                let heightDifference = abs(lineFragment.scaledSize.height - node.data.lineFragmentHeight)
                 if heightDifference > CGFloat.ulpOfOne {
                     _lineHeight = nil
                 }
+                let valueChanged = node.value != length
                 node.value = length
                 node.data.lineFragment = lineFragment
                 node.updateTotalLineFragmentHeight()
-                lineFragmentTree.updateAfterChangingChildren(of: node)
+                if valueChanged {
+                    lineFragmentTree.updateAfterChangingChildren(of: node)
+                }
                 previousNode = node
             } else if let thisPreviousNode = previousNode {
                 let newNode = lineFragmentTree.insertNode(value: length, data: data, after: thisPreviousNode)
@@ -388,15 +557,21 @@ private extension LineController {
                 _lineHeight = nil
             }
         }
+        // The tree mirrors the typesetter's fragments (plus the root when there are none);
+        // drop nodes left over from before an edit.
+        let expectedCount = max(1, typesetter.lineFragments.count)
+        while lineFragmentTree.nodeTotalCount > expectedCount {
+            lineFragmentTree.remove(lineFragmentTree.node(atIndex: lineFragmentTree.nodeTotalCount - 1))
+            _lineHeight = nil
+        }
     }
 
     private func createLineSyntaxHighlightInput() -> LineSyntaxHighlighterInput? {
-        if let attributedString = attributedString {
-            let byteRange = line.data.totalByteRange
-            return LineSyntaxHighlighterInput(attributedString: attributedString, byteRange: byteRange)
-        } else {
+        // Chunked lines are never highlighted (they are above `maximumHighlightedLineLength`).
+        guard !isChunkedLine, let chunk = chunks.first else {
             return nil
         }
+        return LineSyntaxHighlighterInput(attributedString: chunk.attributedString, byteRange: line.data.totalByteRange)
     }
 
     private func lineFragmentController(for lineFragment: LineFragment) -> LineFragmentController {
@@ -477,7 +652,7 @@ extension LineController {
         // First check existing line fragments
         for lineFragment in typesetter.lineFragments {
             if let caretLocation = lineFragment.caretLocation(forLineLocalLocation: lineLocalLocation) {
-                let xPosition = CTLineGetOffsetForStringIndex(lineFragment.line, caretLocation, nil)
+                let xPosition = lineFragment.xOffset(forLineLocalIndex: caretLocation)
                 let yPosition = lineFragment.yPosition + (lineFragment.scaledSize.height - lineFragment.baseSize.height) / 2
                 return CGRect(x: xPosition, y: yPosition, width: Caret.width, height: lineFragment.baseSize.height)
             }
@@ -496,7 +671,7 @@ extension LineController {
             // Try again with the newly typeset fragments
             for lineFragment in typesetter.lineFragments {
                 if let caretLocation = lineFragment.caretLocation(forLineLocalLocation: lineLocalLocation) {
-                    let xPosition = CTLineGetOffsetForStringIndex(lineFragment.line, caretLocation, nil)
+                    let xPosition = lineFragment.xOffset(forLineLocalIndex: caretLocation)
                     let yPosition = lineFragment.yPosition + (lineFragment.scaledSize.height - lineFragment.baseSize.height) / 2
                     return CGRect(x: xPosition, y: yPosition, width: Caret.width, height: lineFragment.baseSize.height)
                 }
@@ -522,8 +697,8 @@ extension LineController {
         for lineFragment in typesetter.lineFragments {
             if let caretRange = lineFragment.caretRange(forLineLocalRange: lineLocalRange) {
                 let finalIndex = min(lineFragment.visibleRange.upperBound, caretRange.upperBound)
-                let xStart = CTLineGetOffsetForStringIndex(lineFragment.line, caretRange.location, nil)
-                let xEnd = CTLineGetOffsetForStringIndex(lineFragment.line, finalIndex, nil)
+                let xStart = lineFragment.xOffset(forLineLocalIndex: caretRange.location)
+                let xEnd = lineFragment.xOffset(forLineLocalIndex: finalIndex)
                 let yPosition = lineFragment.yPosition + (lineFragment.scaledSize.height - lineFragment.baseSize.height) / 2
                 return CGRect(x: xStart, y: yPosition, width: xEnd - xStart, height: lineFragment.baseSize.height)
             }
@@ -535,7 +710,7 @@ extension LineController {
         guard let closestLineFragment = lineFragment(closestTo: point) else {
             return line.location
         }
-        let localLocation = min(CTLineGetStringIndexForPosition(closestLineFragment.line, point), line.data.length)
+        let localLocation = min(closestLineFragment.lineLocalIndex(forPosition: point), line.data.length)
         return line.location + localLocation
     }
 }
@@ -550,29 +725,53 @@ extension LineController: LineFragmentControllerDelegate {
 }
 
 extension LineController {
-    /// Copies `previous`'s attribute runs onto `target` over their common prefix and
-    /// suffix, so a single edit keeps the rest of the line's highlighting.
     /// Length of the common prefix of two strings, in UTF-16 units.
     static func commonPrefixLength(_ a: NSString, _ b: NSString) -> Int {
         let maxCommon = min(a.length, b.length)
-        guard maxCommon > 0 else { return 0 }
-        let chunk = 4096
-        var prefix = 0
-        var bufferA = [unichar](repeating: 0, count: chunk)
-        var bufferB = [unichar](repeating: 0, count: chunk)
-        while prefix < maxCommon {
-            let length = min(chunk, maxCommon - prefix)
-            let range = NSRange(location: prefix, length: length)
-            a.getCharacters(&bufferA, range: range)
-            b.getCharacters(&bufferB, range: range)
-            var i = 0
-            while i < length && bufferA[i] == bufferB[i] { i += 1 }
-            prefix += i
-            if i < length { break }
-        }
-        return prefix
+        return commonLength(a, NSRange(location: 0, length: maxCommon), b, NSRange(location: 0, length: maxCommon), fromEnd: false)
     }
 
+    /// Number of equal UTF-16 units of `aRange` in `a` and `bRange` in `b` (which must have the
+    /// same length), counted from their starts, or from their ends when `fromEnd` is set.
+    static func commonLength(_ a: NSString, _ aRange: NSRange, _ b: NSString, _ bRange: NSRange, fromEnd: Bool) -> Int {
+        let maxCommon = min(aRange.length, bRange.length)
+        guard maxCommon > 0 else { return 0 }
+        let chunk = 4096
+        var common = 0
+        var bufferA = [unichar](repeating: 0, count: chunk)
+        var bufferB = [unichar](repeating: 0, count: chunk)
+        while common < maxCommon {
+            let length = min(chunk, maxCommon - common)
+            let rangeA: NSRange
+            let rangeB: NSRange
+            if fromEnd {
+                rangeA = NSRange(location: aRange.upperBound - common - length, length: length)
+                rangeB = NSRange(location: bRange.upperBound - common - length, length: length)
+            } else {
+                rangeA = NSRange(location: aRange.location + common, length: length)
+                rangeB = NSRange(location: bRange.location + common, length: length)
+            }
+            a.getCharacters(&bufferA, range: rangeA)
+            b.getCharacters(&bufferB, range: rangeB)
+            // memcmp first: a per-unit Swift loop over a megabyte is slow in debug builds.
+            let blockIsEqual = memcmp(bufferA, bufferB, length * MemoryLayout<unichar>.stride) == 0
+            var i = length
+            if !blockIsEqual {
+                i = 0
+                if fromEnd {
+                    while i < length && bufferA[length - 1 - i] == bufferB[length - 1 - i] { i += 1 }
+                } else {
+                    while i < length && bufferA[i] == bufferB[i] { i += 1 }
+                }
+            }
+            common += i
+            if i < length { break }
+        }
+        return common
+    }
+
+    /// Copies `previous`'s attribute runs onto `target` over their common prefix and
+    /// suffix, so a single edit keeps the rest of the line's highlighting.
     static func carryOverAttributes(from previous: NSAttributedString, to target: NSMutableAttributedString, prefixLength: Int? = nil) {
         let old = previous.string as NSString
         let new = target.string as NSString

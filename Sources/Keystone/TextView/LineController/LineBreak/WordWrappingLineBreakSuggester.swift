@@ -52,9 +52,6 @@ private extension WordWrappingLineBreakSuggester {
     }
 
     private func prefersInsertingLineBreakAfterCharacter(at location: Int) -> Bool {
-        let range = NSRange(location: location, length: 1)
-        let attributedSubstring = attributedString.attributedSubstring(from: range)
-        let string = attributedSubstring.string.trimmingCharacters(in: .whitespaces)
-        return string.isEmpty || CharacterSet(charactersIn: string).isSubset(of: .punctuationCharacters)
+        (attributedString.string as NSString).isLineBreakableCharacter(at: location)
     }
 }

@@ -13,8 +13,8 @@ struct CharacterLineBreakSuggester {
             return length
         }
         let lastCharacterIndex = startOffset + length - 1
-        let range = NSRange(location: lastCharacterIndex, length: 2)
-        if attributedString.attributedSubstring(from: range).string == Symbol.carriageReturnLineFeed {
+        let string = attributedString.string as NSString
+        if string.character(at: lastCharacterIndex) == 0x0D && string.character(at: lastCharacterIndex + 1) == 0x0A {
             // Suggested line break is in the middle of CRLF so return one position ahead which is after the character pair.
             return length + 1
         }

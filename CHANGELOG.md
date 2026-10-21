@@ -2,6 +2,16 @@
 
 All notable changes to KeyStone are documented here. This project adheres to [Semantic Versioning](https://semver.org/). Releases before 2.6.0 are described by their tags and commit history.
 
+## [Unreleased]
+
+### Changed
+
+- **Long lines are stored and typeset in chunks.** A line above `LineController.maximumHighlightedLineLength` (20k UTF-16 units) is split into pieces of at most `LineController.chunkLength` (8,192), each with its own attributed string and `CTTypesetter`. A keystroke rebuilds only the chunk containing it and shifts the rest; the text input views pass the replaced range through `LayoutManager.redisplayLines(withIDs:replacing:)` so the line never compares its whole text, with a memcmp-based prefix/suffix compare as the fallback for unhinted invalidations. Line fragments stay line-local (`LineFragment.stringOffset` carries the chunk base; `xOffset(forLineLocalIndex:)` / `lineLocalIndex(forPosition:)` replace direct `CTLine` index calls in the renderer and caret code), so soft-wrap boundaries may now fall at a chunk boundary in such lines, as in VS Code. Typing at offset 900,000 of the 1 MB minified line with wrapping, line numbers and invisibles on, viewport scrolled there, measures ~5–6 ms per keystroke in a debug build (was 38 ms average, 54 ms worst); with wrapping off ~9 ms (was 25 ms). Lines under the threshold are unchanged. Along the way: typesetting resumes with an in-place truncation instead of rebuilding the fragment map, fragment-tree nodes after the edit are updated in place rather than removed and re-inserted, the line-break suggester and whitespace check read UTF-16 units instead of making one-character substrings, the default paragraph style is cached per tab width, and the known fragment height is kept incrementally.
+
+### Tests
+
+- `ChunkedLineTests` (edits inside, at and across chunk boundaries, hinted and compared reconciliation, a line crossing the threshold both ways, caret round-trips across chunk offsets) and a `PerformanceBudgetTests` budget for typing deep inside the wrapped 1 MB line.
+
 ## [2.7.0] - 2026-10-21
 
 ### Added

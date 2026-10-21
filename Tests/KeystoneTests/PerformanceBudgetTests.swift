@@ -133,6 +133,44 @@ final class PerformanceBudgetTests: XCTestCase {
         XCTAssertGreaterThan(manager.regions.first?.endLine ?? 0, 40_000)
     }
 
+    // MARK: - Deep inside a 1 MB line, looking at it
+
+    /// Typing at offset 900,000 of the minified script line with the viewport scrolled
+    /// there, wrapping, line numbers and invisibles on. Before chunked lines this was
+    /// 25–40 ms per keystroke (whole-line attributed string + `CTTypesetter`); now ~6 ms
+    /// in a debug build on a loaded machine.
+    func testTypingDeepInsideWrappedMegabyteLine() {
+        let html = PerformanceFixtures.inlinedHTML
+        let textView = makeTextView(html, language: .html)
+        textView.isLineWrappingEnabled = true
+        textView.showLineNumbers = true
+        textView.showTabs = true
+        textView.showSpaces = true
+        textView.showLineBreaks = true
+        textView.layoutSubtreeIfNeeded()
+        settle(textView)
+        let location = (html as NSString).range(of: "<script>").location + 900_000
+        textView.selectedRange = NSRange(location: location, length: 0)
+        textView.scrollRangeToVisible(NSRange(location: location, length: 0), centerVertically: true)
+        textView.layoutSubtreeIfNeeded()
+        textView.displayIfNeeded()
+        let count = 10
+        var total: TimeInterval = 0
+        var worst: TimeInterval = 0
+        for i in 0..<count {
+            let start = Date()
+            textView.replace(NSRange(location: location + i, length: 0), withText: "x")
+            textView.layoutSubtreeIfNeeded()
+            textView.displayIfNeeded()
+            let elapsed = Date().timeIntervalSince(start)
+            total += elapsed
+            worst = max(worst, elapsed)
+        }
+        let average = total / Double(count)
+        print("BUDGET deep long line: average keystroke \(String(format: "%.1f", average * 1000)) ms, worst \(String(format: "%.1f", worst * 1000)) ms")
+        XCTAssertLessThan(average, 0.025, "a keystroke deep inside a wrapped 1 MB line must only rebuild its chunk")
+    }
+
     // MARK: - Find
 
     func testFindInLargeFileReturnsOffMainThread() {

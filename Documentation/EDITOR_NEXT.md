@@ -16,6 +16,7 @@ change and bump `Package.resolved` once this branch is on `main`).
 | Background tree-sitter parsing ≥ 200 KB | `TreeSitterInternalLanguageMode`, `TreeSitterLanguageLayer` | flat 60k-line Swift: 410 ms → 1.6 ms per keystroke; open no longer blocks on the parse; old highlights kept on the edited line |
 | Edit-local injection updates (HTML/Markdown) | `TreeSitterLanguageLayer.updateChildLayersNearEdit` | no whole-tree injections query per keystroke > 200 KB |
 | Resume typesetting after the edit in long lines | `LineController`, `LineTypesetter` | 1 MB wrapped line: 115 → ~40 ms |
+| Chunked long lines (> 20k units, 8,192-unit chunks) | `LineChunk`, `LineController`, `LineTypesetter`, `LineFragment.stringOffset` | keystroke deep inside a 1 MB wrapped line: ~40 → ~6 ms (debug build); the edit's range is passed to the line so it never compares its whole text |
 | Fold regions from the syntax tree | `TreeSitterFoldRegions.swift`, `CodeFoldingManager.applySyntaxTreeRegions` | accurate folds for all tree-sitter languages incl. injections; computed in the parse op; iterative walk |
 | Search as you type at any size | `KeystoneEditor` find bar | 150 ms / 400 ms debounce, off main |
 | Budgets | `PerformanceBudgetTests` | open < 1 s, keystroke < 50 ms (100 ms inside a minified line), find hand-off < 50 ms |
@@ -29,9 +30,11 @@ change and bump `Package.resolved` once this branch is on `main`).
 | Enter Space host | `CodeEditorView`, `EditorBufferStore`, `EditorAssistService`, `EditorAssistSettingsSection` | document API, lazy snapshots, Ari local API (macOS) / Apple on-device model, remote files opt-in, Save/Preview/Version History in the palette |
 
 Known residuals:
-- Typing deep inside a > 1 MB single line with wrapping still costs ~25–40 ms
-  (whole-line attributed string + `CTTypesetter` rebuild); only chunked lines
-  would remove that.
+- Chunked long lines wrap at chunk boundaries (every 8,192 units) as well as at
+  the view width; with wrapping off that adds an early break every ~6 rows of the
+  10,000 pt pseudo-width. A keystroke there still creates one `CTTypesetter` for
+  the edited chunk (~1 ms) and re-typesets the fragments between the edit and the
+  bottom of the viewport.
 - JavaScript/TypeScript prettify/minify need js-beautify + terser in
   JavaScriptCore (a download the user has to approve).
 - On iOS, multiple cursors need a hardware keyboard or pointer; the on-screen keyboard
