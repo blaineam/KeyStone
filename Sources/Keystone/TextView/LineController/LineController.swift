@@ -15,6 +15,9 @@ protocol LineControllerDelegate: AnyObject {
 }
 
 final class LineController {
+    /// Lines longer than this (UTF-16 units) are not syntax highlighted.
+    nonisolated(unsafe) static var maximumHighlightedLineLength = 20_000
+
     private enum TypesetAmount {
         case inRect(CGRect)
         case toLocation(Int)
@@ -276,6 +279,13 @@ private extension LineController {
             return
         }
         guard let syntaxHighlighter = syntaxHighlighter else {
+            return
+        }
+        // Highlighting rebuilds attributes for every token on the line, so a
+        // multi-hundred-KB minified line stalls on each keystroke. Plain text
+        // beyond the cap, as VS Code does with editor.maxTokenizationLineLength.
+        guard line.data.totalLength <= LineController.maximumHighlightedLineLength else {
+            isSyntaxHighlightingInvalid = false
             return
         }
         guard syntaxHighlighter.canHighlight else {

@@ -159,100 +159,58 @@ public final class CodeFoldingManager: ObservableObject {
 
     // MARK: - Region Detection
 
+    /// Generation counter so a slow background analysis can't overwrite a newer one.
+    private var analysisGeneration = 0
+
     /// Analyze text to find foldable regions.
     /// This is a simplified version - full implementation would use TreeSitter AST.
     public func analyzeText(_ text: String) {
+        analysisGeneration += 1
         guard isEnabled else {
-            regions = []
-            _regionsByStartLine.removeAll()
-            foldedRegionIds.removeAll()
-            invalidateHiddenLinesCache()
+            applyDisabledState()
             return
         }
+        apply(detectedRegions: Self.computeRegions(for: text))
+    }
 
-        var detectedRegions: [FoldableRegion] = []
-        let lines = text.components(separatedBy: .newlines)
-        let nsText = text as NSString
-
-        // Track brace and bracket-based folding
-        // Separate stacks for {} and [] to ensure proper matching
-        var braceStack: [(line: Int, location: Int)]  = []  // For {}
-        var bracketStack: [(line: Int, location: Int)] = []  // For []
-        var currentLocation = 0
-
-        for (lineIndex, line) in lines.enumerated() {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-
-            // Track braces and brackets for block folding
-            for (charIndex, char) in line.enumerated() {
-                switch char {
-                case "{":
-                    braceStack.append((lineIndex, currentLocation + charIndex))
-                case "}":
-                    if let openBrace = braceStack.popLast() {
-                        // Only create fold regions for multi-line blocks
-                        if lineIndex > openBrace.line {
-                            let regionType = detectRegionType(forLineAt: openBrace.line, in: lines)
-                            let startLoc = lineLocation(forLine: openBrace.line, in: lines)
-                            let endLoc = lineLocation(forLine: lineIndex, in: lines) + line.count
-                            let range = NSRange(location: startLoc, length: endLoc - startLoc)
-                            let preview = lines[openBrace.line].trimmingCharacters(in: .whitespaces)
-
-                            let region = FoldableRegion(
-                                startLine: openBrace.line,
-                                endLine: lineIndex,
-                                type: regionType,
-                                range: range,
-                                previewText: String(preview.prefix(50))
-                            )
-                            detectedRegions.append(region)
-                        }
-                    }
-                case "[":
-                    bracketStack.append((lineIndex, currentLocation + charIndex))
-                case "]":
-                    if let openBracket = bracketStack.popLast() {
-                        // Only create fold regions for multi-line arrays/brackets
-                        if lineIndex > openBracket.line {
-                            let startLoc = lineLocation(forLine: openBracket.line, in: lines)
-                            let endLoc = lineLocation(forLine: lineIndex, in: lines) + line.count
-                            let range = NSRange(location: startLoc, length: endLoc - startLoc)
-                            let preview = lines[openBracket.line].trimmingCharacters(in: .whitespaces)
-
-                            let region = FoldableRegion(
-                                startLine: openBracket.line,
-                                endLine: lineIndex,
-                                type: .block,  // Arrays/brackets are generic blocks
-                                range: range,
-                                previewText: String(preview.prefix(50))
-                            )
-                            detectedRegions.append(region)
-                        }
-                    }
-                default:
-                    break
-                }
-            }
-
-            currentLocation += line.count + 1 // +1 for newline
+    /// Same as `analyzeText(_:)` but does the scan off the main thread and applies
+    /// the result back on it. Superseded results are dropped. Use for big buffers.
+    public func analyzeTextInBackground(_ text: String) {
+        analysisGeneration += 1
+        let generation = analysisGeneration
+        guard isEnabled else {
+            applyDisabledState()
+            return
         }
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let detected = Self.computeRegions(for: text)
+            DispatchQueue.main.async {
+                guard let self, self.analysisGeneration == generation, self.isEnabled else { return }
+                self.apply(detectedRegions: detected)
+            }
+        }
+    }
 
-        // Detect multi-line comments
-        detectMultiLineComments(in: text, lines: lines, into: &detectedRegions)
+    private func applyDisabledState() {
+        regions = []
+        _regionsByStartLine.removeAll()
+        foldedRegionIds.removeAll()
+        invalidateHiddenLinesCache()
+    }
 
-        // Detect import blocks
-        detectImportBlocks(in: lines, into: &detectedRegions)
-
-        // Sort by start line
-        detectedRegions.sort { $0.startLine < $1.startLine }
+    private func apply(detectedRegions incoming: [FoldableRegion]) {
+        var detectedRegions = incoming
 
         // Preserve fold state for matching regions
-        for i in detectedRegions.indices {
-            if let existingRegion = regions.first(where: {
-                $0.startLine == detectedRegions[i].startLine &&
-                $0.endLine == detectedRegions[i].endLine
-            }) {
-                if foldedRegionIds.contains(existingRegion.id) {
+        if !foldedRegionIds.isEmpty {
+            var existingByLines: [LineSpan: FoldableRegion] = [:]
+            for region in regions {
+                let key = LineSpan(start: region.startLine, end: region.endLine)
+                if existingByLines[key] == nil { existingByLines[key] = region }
+            }
+            for i in detectedRegions.indices {
+                let key = LineSpan(start: detectedRegions[i].startLine, end: detectedRegions[i].endLine)
+                if let existingRegion = existingByLines[key], foldedRegionIds.contains(existingRegion.id) {
                     foldedRegionIds.remove(existingRegion.id)
                     foldedRegionIds.insert(detectedRegions[i].id)
                 }
@@ -271,6 +229,82 @@ public final class CodeFoldingManager: ObservableObject {
 
         invalidateHiddenLinesCache()
         onRegionsUpdated?(regions)
+    }
+
+    private struct LineSpan: Hashable {
+        let start: Int
+        let end: Int
+    }
+
+    /// Pure, linear-time region scan. Safe to call from any thread.
+    static func computeRegions(for text: String) -> [FoldableRegion] {
+        var detectedRegions: [FoldableRegion] = []
+        let lines = text.components(separatedBy: .newlines)
+
+        // UTF-16 start offset of every line, computed once. Region ranges are
+        // NSRanges, and looking offsets up here keeps the scan O(N) instead of
+        // re-walking the file for every region.
+        var lineStarts = [Int](repeating: 0, count: lines.count + 1)
+        for (i, line) in lines.enumerated() {
+            lineStarts[i + 1] = lineStarts[i] + line.utf16.count + 1 // +1 for newline
+        }
+
+        // Region type + preview depend only on the opening line; minified files
+        // open thousands of regions on the same enormous line.
+        var openingLineInfo: [Int: (type: FoldableRegionType, preview: String)] = [:]
+        func info(forLine index: Int) -> (type: FoldableRegionType, preview: String) {
+            if let cached = openingLineInfo[index] { return cached }
+            let head = String(lines[index].prefix(1000)).trimmingCharacters(in: .whitespaces)
+            let value = (detectRegionType(head), String(head.prefix(50)))
+            openingLineInfo[index] = value
+            return value
+        }
+
+        // Separate stacks for {} and [] to ensure proper matching
+        var braceStack: [Int] = []
+        var bracketStack: [Int] = []
+
+        for (lineIndex, line) in lines.enumerated() {
+            let lineLength = lineStarts[lineIndex + 1] - lineStarts[lineIndex] - 1
+            for unit in line.utf16 {
+                switch unit {
+                case 0x7B: // {
+                    braceStack.append(lineIndex)
+                case 0x7D: // }
+                    if let openLine = braceStack.popLast(), lineIndex > openLine {
+                        let opening = info(forLine: openLine)
+                        detectedRegions.append(FoldableRegion(
+                            startLine: openLine,
+                            endLine: lineIndex,
+                            type: opening.type,
+                            range: NSRange(location: lineStarts[openLine], length: lineStarts[lineIndex] + lineLength - lineStarts[openLine]),
+                            previewText: opening.preview
+                        ))
+                    }
+                case 0x5B: // [
+                    bracketStack.append(lineIndex)
+                case 0x5D: // ]
+                    if let openLine = bracketStack.popLast(), lineIndex > openLine {
+                        detectedRegions.append(FoldableRegion(
+                            startLine: openLine,
+                            endLine: lineIndex,
+                            type: .block,  // Arrays/brackets are generic blocks
+                            range: NSRange(location: lineStarts[openLine], length: lineStarts[lineIndex] + lineLength - lineStarts[openLine]),
+                            previewText: info(forLine: openLine).preview
+                        ))
+                    }
+                default:
+                    break
+                }
+            }
+        }
+
+        detectMultiLineComments(lines: lines, lineStarts: lineStarts, into: &detectedRegions)
+        detectImportBlocks(lines: lines, lineStarts: lineStarts, into: &detectedRegions)
+
+        // Sort by start line
+        detectedRegions.sort { $0.startLine < $1.startLine }
+        return detectedRegions
     }
 
     // MARK: - Fold/Unfold Operations
@@ -349,10 +383,8 @@ public final class CodeFoldingManager: ObservableObject {
 
     // MARK: - Private Helpers
 
-    private func detectRegionType(forLineAt lineIndex: Int, in lines: [String]) -> FoldableRegionType {
-        guard lineIndex < lines.count else { return .block }
-
-        let line = lines[lineIndex].trimmingCharacters(in: .whitespaces).lowercased()
+    private static func detectRegionType(_ trimmedLine: String) -> FoldableRegionType {
+        let line = trimmedLine.lowercased()
 
         if line.contains("func ") || line.contains("function ") || line.contains("def ") {
             return .function
@@ -375,7 +407,7 @@ public final class CodeFoldingManager: ObservableObject {
         return .block
     }
 
-    private func detectMultiLineComments(in text: String, lines: [String], into regions: inout [FoldableRegion]) {
+    private static func detectMultiLineComments(lines: [String], lineStarts: [Int], into regions: inout [FoldableRegion]) {
         // Detect /* */ style comments
         var inComment = false
         var commentStart = 0
@@ -387,8 +419,8 @@ public final class CodeFoldingManager: ObservableObject {
             }
             if inComment && line.contains("*/") {
                 if index > commentStart {
-                    let startLoc = lineLocation(forLine: commentStart, in: lines)
-                    let endLoc = lineLocation(forLine: index, in: lines) + line.count
+                    let startLoc = lineStarts[commentStart]
+                    let endLoc = lineStarts[index] + line.utf16.count
                     let region = FoldableRegion(
                         startLine: commentStart,
                         endLine: index,
@@ -403,7 +435,7 @@ public final class CodeFoldingManager: ObservableObject {
         }
     }
 
-    private func detectImportBlocks(in lines: [String], into regions: inout [FoldableRegion]) {
+    private static func detectImportBlocks(lines: [String], lineStarts: [Int], into regions: inout [FoldableRegion]) {
         var importStart: Int?
         var importEnd: Int?
 
@@ -425,8 +457,8 @@ public final class CodeFoldingManager: ObservableObject {
             } else if !trimmed.isEmpty && importStart != nil {
                 // Non-empty, non-import line - end the import block
                 if let start = importStart, let end = importEnd, end > start {
-                    let startLoc = lineLocation(forLine: start, in: lines)
-                    let endLoc = lineLocation(forLine: end, in: lines) + lines[end].count
+                    let startLoc = lineStarts[start]
+                    let endLoc = lineStarts[end] + lines[end].utf16.count
                     let region = FoldableRegion(
                         startLine: start,
                         endLine: end,
@@ -443,8 +475,8 @@ public final class CodeFoldingManager: ObservableObject {
 
         // Handle imports at end of file
         if let start = importStart, let end = importEnd, end > start {
-            let startLoc = lineLocation(forLine: start, in: lines)
-            let endLoc = lineLocation(forLine: end, in: lines) + lines[end].count
+            let startLoc = lineStarts[start]
+            let endLoc = lineStarts[end] + lines[end].utf16.count
             let region = FoldableRegion(
                 startLine: start,
                 endLine: end,
@@ -454,13 +486,5 @@ public final class CodeFoldingManager: ObservableObject {
             )
             regions.append(region)
         }
-    }
-
-    private func lineLocation(forLine lineIndex: Int, in lines: [String]) -> Int {
-        var location = 0
-        for i in 0..<lineIndex {
-            location += lines[i].count + 1 // +1 for newline
-        }
-        return location
     }
 }

@@ -13,6 +13,12 @@ final class TreeSitterLanguageLayerStore {
         }
     }
 
+    var allEntries: [(id: UnsafeRawPointer, layer: TreeSitterLanguageLayer)] {
+        lock.withLock {
+            store.map { (id: $0.key, layer: $0.value) }
+        }
+    }
+
     var isEmpty: Bool {
         lock.withLock {
             store.isEmpty

@@ -40,7 +40,12 @@ public struct BracketMatcher: Sendable {
     ///   - position: The character offset to check.
     /// - Returns: A `BracketMatch` if a matching bracket is found, otherwise `nil`.
     public static func findMatch(in text: String, at position: Int) -> BracketMatch? {
-        let nsText = text as NSString
+        findMatch(inNSString: text as NSString, at: position)
+    }
+
+    /// NSString variant so callers that already hold the editor's backing
+    /// storage don't copy a multi-megabyte buffer into a Swift `String`.
+    public static func findMatch(inNSString nsText: NSString, at position: Int) -> BracketMatch? {
         guard position >= 0 && position < nsText.length else { return nil }
 
         let charCode = nsText.character(at: position)

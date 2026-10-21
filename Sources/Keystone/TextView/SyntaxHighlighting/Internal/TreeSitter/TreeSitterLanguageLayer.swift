@@ -9,6 +9,14 @@ final class TreeSitterLanguageLayer {
         parser.language != nil && tree != nil
     }
 
+    /// Documents with more UTF-16 units than this only re-query injections near an edit
+    /// instead of walking the whole syntax tree on every keystroke.
+    nonisolated(unsafe) static var localInjectionUpdateThreshold = 200_000
+
+    /// Where this layer was injected in the parent, in current document bytes. Nil for the root layer.
+    private(set) var injectionByteRange: ByteRange?
+    var injectionLanguageName: String?
+
     private let lineManager: LineManager
     private let parser: TreeSitterParser
     private let stringView: StringView
@@ -74,9 +82,12 @@ extension TreeSitterLanguageLayer {
         tree = parser.parse(oldTree: tree)
         // Gather changed lines.
         let lineChangeSet = LineChangeSet()
+        var changedByteWindow: ByteRange?
         if let oldTree = oldTree, let newTree = tree {
             let changedRanges = oldTree.rangesChanged(comparingTo: newTree)
             for changedRange in changedRanges {
+                let range = ByteRange(from: changedRange.startByte, to: changedRange.endByte)
+                changedByteWindow = changedByteWindow.map { $0.union(range) } ?? range
                 let startRow = Int(changedRange.startPoint.row)
                 let endRow = Int(changedRange.endPoint.row)
                 for row in startRow ... endRow {
@@ -85,7 +96,7 @@ extension TreeSitterLanguageLayer {
                 }
             }
         }
-        let childLineChangeSet = updateChildLayers(applying: edit)
+        let childLineChangeSet = updateChildLayers(applying: edit, changedByteWindow: changedByteWindow)
         lineChangeSet.union(with: childLineChangeSet)
         return lineChangeSet
     }
@@ -112,6 +123,8 @@ extension TreeSitterLanguageLayer {
         let injectedLanguages = injectedLanguages(from: captures)
         for injectedLanguage in injectedLanguages {
             if let childLanguageLayer = childLanguageLayer(withID: injectedLanguage.id, forLanguageNamed: injectedLanguage.languageName) {
+                childLanguageLayer.injectionLanguageName = injectedLanguage.languageName
+                childLanguageLayer.injectionByteRange = ByteRange(from: injectedLanguage.textRange.startByte, to: injectedLanguage.textRange.endByte)
                 childLanguageLayer.parse([injectedLanguage.textRange], from: text)
             }
         }
@@ -167,10 +180,13 @@ private extension TreeSitterLanguageLayer {
         }
     }
 
-    private func updateChildLayers(applying edit: TreeSitterInputEdit) -> LineChangeSet {
+    private func updateChildLayers(applying edit: TreeSitterInputEdit, changedByteWindow: ByteRange?) -> LineChangeSet {
         guard let injectionsQuery = language.injectionsQuery, let node = tree?.rootNode else {
             childLanguageLayerStore.removeAll()
             return LineChangeSet()
+        }
+        if stringView.string.length > Self.localInjectionUpdateThreshold {
+            return updateChildLayersNearEdit(applying: edit, changedByteWindow: changedByteWindow, injectionsQuery: injectionsQuery, rootNode: node)
         }
         let injectionsQueryCursor = TreeSitterQueryCursor(query: injectionsQuery, node: node)
         injectionsQueryCursor.execute()
@@ -191,11 +207,124 @@ private extension TreeSitterLanguageLayer {
         let lineChangeSet = LineChangeSet()
         for injectedLanguage in injectedLanguages {
             if let childLanguageLayer = childLanguageLayer(withID: injectedLanguage.id, forLanguageNamed: injectedLanguage.languageName) {
+                childLanguageLayer.injectionLanguageName = injectedLanguage.languageName
+                childLanguageLayer.injectionByteRange = ByteRange(from: injectedLanguage.textRange.startByte, to: injectedLanguage.textRange.endByte)
                 let childLineChangeSet = childLanguageLayer.apply(edit, parsing: [injectedLanguage.textRange])
                 lineChangeSet.union(with: childLineChangeSet)
             }
         }
         return lineChangeSet
+    }
+
+    /// Large-document variant of `updateChildLayers`. Running the injections query over
+    /// the whole tree costs O(document) per keystroke, and the child layers away from
+    /// the edit can't have changed, so only the neighbourhood of the edit is queried.
+    /// Layers the edit doesn't touch are just carried forward (and shifted).
+    private func updateChildLayersNearEdit(
+        applying edit: TreeSitterInputEdit,
+        changedByteWindow: ByteRange?,
+        injectionsQuery: TreeSitterQuery,
+        rootNode: TreeSitterNode
+    ) -> LineChangeSet {
+        let lineChangeSet = LineChangeSet()
+        let delta = edit.newEndByte - edit.oldEndByte
+
+        // Everything that may have changed, in post-edit coordinates: the edit itself plus
+        // whatever the incremental parse says changed structurally (an edit can invalidate
+        // an injection outside its own span, e.g. by breaking the enclosing tag).
+        var window = ByteRange(from: edit.startByte, to: max(edit.newEndByte, edit.startByte))
+        if let changedByteWindow {
+            window = window.union(changedByteWindow)
+        }
+
+        func postEdit(_ range: ByteRange) -> ByteRange {
+            if range.lowerBound >= edit.oldEndByte {
+                return ByteRange(from: range.lowerBound + delta, to: range.upperBound + delta)
+            } else if range.upperBound >= edit.oldEndByte {
+                return ByteRange(from: range.lowerBound, to: range.upperBound + delta)
+            } else {
+                return range
+            }
+        }
+
+        // Split existing layers into those the change can't have touched and the rest.
+        var affected: [(id: UnsafeRawPointer, layer: TreeSitterLanguageLayer, range: ByteRange)] = []
+        for entry in childLanguageLayerStore.allEntries {
+            guard let oldRange = entry.layer.injectionByteRange else {
+                affected.append((entry.id, entry.layer, ByteRange(from: ByteCount(0), to: ByteCount(0))))
+                continue
+            }
+            let range = postEdit(oldRange)
+            if range.upperBound < window.lowerBound {
+                // Entirely before the change: untouched.
+            } else if range.lowerBound > window.upperBound {
+                // Entirely after it: no reparse needed, only keep node offsets in step with the document.
+                entry.layer.shiftForEditBeforeLayer(edit)
+                entry.layer.setInjectionByteRange(range)
+            } else {
+                affected.append((entry.id, entry.layer, range))
+            }
+        }
+
+        // Re-query only around the change (the tree is already post-edit).
+        let queryCursor = TreeSitterQueryCursor(query: injectionsQuery, node: rootNode)
+        queryCursor.setQueryRange(window)
+        queryCursor.execute()
+        let captures = queryCursor.validCaptures(in: stringView)
+        let injectedLanguages = injectedLanguages(from: captures)
+
+        var unclaimed = affected
+        for injected in injectedLanguages {
+            let injectedRange = ByteRange(from: injected.textRange.startByte, to: injected.textRange.endByte)
+            let layer: TreeSitterLanguageLayer?
+            if let existing = childLanguageLayerStore.layer(forKey: injected.id) {
+                layer = existing
+                unclaimed.removeAll { $0.id == injected.id }
+            } else if let index = unclaimed.firstIndex(where: { candidate in
+                // A layer around the edit gets a new node ID after the incremental parse
+                // but is the same injection; adopt it so its tree isn't reparsed from scratch.
+                candidate.layer.injectionLanguageName == injected.languageName
+                    && candidate.layer.injectionByteRange != nil
+                    && candidate.range.lowerBound <= injectedRange.upperBound
+                    && injectedRange.lowerBound <= candidate.range.upperBound
+            }) {
+                let candidate = unclaimed.remove(at: index)
+                childLanguageLayerStore.removeLayer(forKey: candidate.id)
+                childLanguageLayerStore.storeLayer(candidate.layer, forKey: injected.id)
+                layer = candidate.layer
+            } else {
+                layer = childLanguageLayer(withID: injected.id, forLanguageNamed: injected.languageName)
+            }
+            guard let layer else { continue }
+            layer.injectionLanguageName = injected.languageName
+            layer.setInjectionByteRange(injectedRange)
+            lineChangeSet.union(with: layer.apply(edit, parsing: [injected.textRange]))
+        }
+
+        // Layers around the change that no longer have a capture are gone.
+        for entry in unclaimed {
+            childLanguageLayerStore.removeLayer(forKey: entry.id)
+        }
+        for entry in childLanguageLayerStore.allEntries where entry.layer.isEmpty {
+            childLanguageLayerStore.removeLayer(forKey: entry.id)
+        }
+        return lineChangeSet
+    }
+
+    /// Applies an edit located before this layer to its tree (and nested layers) without reparsing.
+    private func shiftForEditBeforeLayer(_ edit: TreeSitterInputEdit) {
+        tree?.apply(edit)
+        let delta = edit.newEndByte - edit.oldEndByte
+        for entry in childLanguageLayerStore.allEntries {
+            entry.layer.shiftForEditBeforeLayer(edit)
+            if let range = entry.layer.injectionByteRange {
+                entry.layer.setInjectionByteRange(ByteRange(from: range.lowerBound + delta, to: range.upperBound + delta))
+            }
+        }
+    }
+
+    private func setInjectionByteRange(_ range: ByteRange) {
+        injectionByteRange = range
     }
 
     private func injectedLanguages(from captures: [TreeSitterCapture]) -> [TreeSitterInjectedLanguage] {

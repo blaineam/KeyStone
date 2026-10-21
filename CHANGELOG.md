@@ -2,6 +2,17 @@
 
 All notable changes to KeyStone are documented here. This project adheres to [Semantic Versioning](https://semver.org/). Releases before 2.6.0 are described by their tags and commit history.
 
+## [Unreleased]
+
+### Fixed
+
+- **Typing in multi-megabyte files (e.g. single-file HTML with minified JS/CSS inlined) is responsive again.** A keystroke in a 2.2 MB file measured 0.74 s in an ordinary line and 1.6 s inside the 1 MB minified line; it is now ~3 ms and ~0.1 s.
+  - Edits no longer "jump around and mix with old text": while the debounced binding write was pending, `updateView` mistook the stale binding for an external file load and wrote it back over what had just been typed. The decision lives in `EditorTextSync.isExternalChange` and is covered by tests.
+  - Code folding analysis was O(regions × file size) on the main thread (`lineLocation` re-walked every line per region). It is now linear, uses UTF-16 offsets for region ranges, and large buffers analyse on a background queue.
+  - No more whole-buffer copies per keystroke or selection change: cursor line/column come from the line index, bracket matching reads the backing `NSString`, and the binding snapshot is taken when typing pauses.
+  - HTML (and any language with injections) no longer re-runs the injections query over the whole syntax tree after each edit in documents over 200 KB; only the neighbourhood of the change is queried, untouched layers are shifted rather than reparsed, and a layer around the edit is adopted rather than rebuilt. Tests assert the result equals a fresh parse, including after breaking and restoring a `<script>` tag.
+  - Lines longer than 20,000 UTF-16 units are no longer syntax highlighted (`LineController.maximumHighlightedLineLength`), as in VS Code.
+
 ## [2.6.0] - 2026-10-04
 
 ### Added (localization)

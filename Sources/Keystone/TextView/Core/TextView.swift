@@ -28,6 +28,9 @@ open class TextView: UIScrollView {
         set { textInputView.isUpdatingText = newValue }
     }
     /// The text that the text view displays.
+    /// The editor's backing storage, without copying it into a Swift `String`.
+    /// Valid only until the next edit; use for synchronous, read-only scans.
+    public var backingString: NSString { textInputView.string }
     public var text: String {
         get {
             textInputView.string as String
@@ -1599,6 +1602,14 @@ open class TextView: NSScrollView {
     }
 
     /// The text that the text view displays.
+    /// The editor's backing storage, without copying it into a Swift `String`.
+    /// Valid only until the next edit; use for synchronous, read-only scans.
+    public var backingString: NSString { textInputView.string }
+
+    #if DEBUG
+    func debugCaptureSignature() -> [String] { textInputView.debugCaptureSignature() }
+    #endif
+
     public var text: String {
         get { textInputView.string as String }
         set {

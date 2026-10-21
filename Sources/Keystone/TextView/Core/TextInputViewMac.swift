@@ -1468,4 +1468,15 @@ extension TextInputViewMac: IndentControllerDelegate {
     }
 }
 
+#if DEBUG
+extension TextInputViewMac {
+    /// Every highlight capture in the document, for tests comparing incremental and fresh parses.
+    func debugCaptureSignature() -> [String] {
+        guard let mode = languageMode as? TreeSitterInternalLanguageMode else { return [] }
+        let range = ByteRange(location: ByteCount(0), length: ByteCount(string.length * 2))
+        return mode.captures(in: range).map { "\($0.name)@\($0.byteRange.location.value)+\($0.byteRange.length.value)" }.sorted()
+    }
+}
+#endif
+
 #endif // canImport(AppKit)

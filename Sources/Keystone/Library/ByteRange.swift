@@ -13,6 +13,10 @@ struct ByteRange: Hashable {
         length == 0
     }
 
+    func union(_ other: ByteRange) -> ByteRange {
+        ByteRange(from: min(lowerBound, other.lowerBound), to: max(upperBound, other.upperBound))
+    }
+
     init(location: ByteCount, length: ByteCount) {
         self.location = location
         self.length = length
