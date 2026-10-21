@@ -41,17 +41,16 @@ enum JavaScriptFormatter {
     /// terser cannot parse it. Terser parses JavaScript only, so TypeScript
     /// (type annotations, interfaces, enums) is refused rather than mangled.
     ///
-    /// Identifiers and statements are kept (`compress: false`, `mangle: false`):
-    /// like the JSON/CSS/HTML minifiers, this strips whitespace and comments and
-    /// reprints the program, so the result still reads as the author's code and
-    /// prettifies back to the same text.
+    /// Real minification: terser's compressor and local-name mangler run, comments
+    /// go; top-level names are kept (`toplevel: false`) so the result stays usable
+    /// as a drop-in script. Behaviour is preserved, text is not round-trippable.
     static func minify(_ source: String, isTypeScript: Bool = false) -> String? {
         guard !isTypeScript, source.utf8.count <= maxInputBytes else { return nil }
         return queue.sync {
             guard let terser = Library.terser.function else { return nil }
             let options: [String: Any] = [
-                "compress": false,
-                "mangle": false,
+                "compress": ["passes": 1],
+                "mangle": ["toplevel": false],
                 "format": ["comments": false],
             ]
             // minify_sync returns { code } or throws; the async `minify` would

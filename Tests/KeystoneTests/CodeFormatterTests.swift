@@ -1,4 +1,5 @@
 import XCTest
+import JavaScriptCore
 @testable import Keystone
 
 final class CodeFormatterTests: XCTestCase {
@@ -188,9 +189,13 @@ final class CodeFormatterTests: XCTestCase {
         let minified = CodeFormatter.format(pretty, language: .javascript, operation: .minify)!
         XCTAssertFalse(minified.contains("\n"))
         XCTAssertLessThan(minified.count, pretty.count)
-        XCTAssertTrue(minified.contains("greet"), "identifiers are kept")
-        XCTAssertEqual(CodeFormatter.format(minified, language: .javascript, operation: .prettify), pretty,
-                       "minified program prettifies back to the original prettified text")
+        XCTAssertTrue(minified.contains("greet"), "top-level identifiers are kept")
+        // Behaviour, not text, survives: both versions evaluate to the same result.
+        let probe = "\n;typeof greet === 'function' ? String(greet('x')) : 'no greet'"
+        let original = JSContext()!.evaluateScript(pretty + probe)?.toString()
+        let afterMinify = JSContext()!.evaluateScript(minified + probe)?.toString()
+        XCTAssertEqual(afterMinify, original)
+        XCTAssertNotNil(CodeFormatter.format(minified, language: .javascript, operation: .prettify), "minified output still parses")
     }
 
     func testJavaScriptMinifyDropsComments() {
