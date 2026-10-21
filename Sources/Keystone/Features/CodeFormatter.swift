@@ -4,7 +4,8 @@
 //
 //  Prettify and minify for JSON, CSS and HTML/XML. Token-based: only whitespace
 //  (and, when minifying, comments) changes, so output is semantically the input.
-//  JavaScript/TypeScript need a real parser and are not handled here.
+//  JavaScript/TypeScript go through js-beautify and terser in JavaScriptCore
+//  (see JavaScriptFormatter.swift); minify is JavaScript-only.
 //
 
 import Foundation
@@ -23,11 +24,12 @@ public enum CodeFormatter {
         case .json: return operation == .prettify ? JSONReformatter.prettify(text, indent: indent) : JSONReformatter.minify(text)
         case .css: return operation == .prettify ? CSSReformatter.prettify(text, indent: indent) : CSSReformatter.minify(text)
         case .markup(let isHTML): return operation == .prettify ? MarkupReformatter.prettify(text, indent: indent, isHTML: isHTML) : MarkupReformatter.minify(text, isHTML: isHTML)
+        case .javascript(let isTypeScript): return operation == .prettify ? JavaScriptFormatter.prettify(text, indent: indent, isTypeScript: isTypeScript) : JavaScriptFormatter.minify(text, isTypeScript: isTypeScript)
         case nil: return nil
         }
     }
 
-    enum Kind { case json, css, markup(isHTML: Bool) }
+    enum Kind { case json, css, markup(isHTML: Bool), javascript(isTypeScript: Bool) }
 
     static func formatterKind(for language: KeystoneLanguage) -> Kind? {
         switch language.rawValue.lowercased() {
@@ -35,6 +37,8 @@ public enum CodeFormatter {
         case "css", "scss", "less": return .css
         case "html", "htm", "svelte", "vue", "astro": return .markup(isHTML: true)
         case "xml", "svg", "plist", "xaml": return .markup(isHTML: false)
+        case "javascript", "js", "mjs", "cjs", "jsx": return .javascript(isTypeScript: false)
+        case "typescript", "ts", "mts", "cts", "tsx": return .javascript(isTypeScript: true)
         default: return nil
         }
     }

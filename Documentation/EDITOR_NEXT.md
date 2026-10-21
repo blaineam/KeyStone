@@ -24,7 +24,7 @@ change and bump `Package.resolved` once this branch is on `main`).
 | Go to Symbol, breadcrumbs, command palette | `DocumentSymbols.swift`, `FuzzyPicker.swift`, `EditorCommands.swift` | symbols from the tree for every language; ⌘⇧O / ⌘⇧P; host commands via `.commands(_:)` |
 | Gutter change markers | `LineDiff.swift`, `KeystoneDocument.changeMarkers`, `GutterBackgroundView` | Myers over line hashes, 0.4 s debounce, reset by `markSaved()` |
 | Indent guides, bracket-pair colours, matching-bracket highlight | `LayoutManager`, `LineFragmentRenderer`, `TreeSitterSyntaxHighlighter` | settings toggles + palette commands |
-| Format: prettify / minify | `CodeFormatter.swift` | JSON (+JSONC), CSS, HTML/XML; token-based |
+| Format: prettify / minify | `CodeFormatter.swift`, `JavaScriptFormatter.swift` | JSON (+JSONC), CSS, HTML/XML token-based; JavaScript/TypeScript via js-beautify + terser in JavaScriptCore (`Resources/Formatters`), minify is JS-only |
 | Inline Assist (⌘I) | `InlineAssist.swift`, `KeystoneEditor` | host supplies the model; proposal is one undo step, Accept/Reject/Try Again |
 | Enter Space host | `CodeEditorView`, `EditorBufferStore`, `EditorAssistService`, `EditorAssistSettingsSection` | document API, lazy snapshots, Ari local API (macOS) / Apple on-device model, remote files opt-in, Save/Preview/Version History in the palette |
 
@@ -32,8 +32,10 @@ Known residuals:
 - Typing deep inside a > 1 MB single line with wrapping still costs ~25–40 ms
   (whole-line attributed string + `CTTypesetter` rebuild); only chunked lines
   would remove that.
-- JavaScript/TypeScript prettify/minify need js-beautify + terser in
-  JavaScriptCore (a download the user has to approve).
+- TypeScript minify returns nil: terser parses JavaScript only, and stripping
+  types first would need a TypeScript compiler (another ~10 MB bundle). JS/TS
+  formatting runs synchronously on the main thread; the 2 MB input cap keeps
+  that under a second, but the first terser call pays ~0.5 s to load the bundle.
 - On iOS, multiple cursors need a hardware keyboard or pointer; the on-screen keyboard
   types into every caret but can't add or move them.
 - Symbols refresh automatically up to 500 KB; above that, opening Go to Symbol

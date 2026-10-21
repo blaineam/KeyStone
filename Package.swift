@@ -71,7 +71,9 @@ let package = Package(
             path: "Sources/Keystone",
             resources: [
                 .copy("PrivacyInfo.xcprivacy"),
-                .process("TextView/Appearance/Theme.xcassets")
+                .process("TextView/Appearance/Theme.xcassets"),
+                // js-beautify + terser, run in JavaScriptCore by CodeFormatter.
+                .copy("Resources/Formatters")
             ]
         ),
         .testTarget(

@@ -2,6 +2,12 @@
 
 All notable changes to KeyStone are documented here. This project adheres to [Semantic Versioning](https://semver.org/). Releases before 2.6.0 are described by their tags and commit history.
 
+## [Unreleased]
+
+### Added
+
+- **Format: Prettify / Minify for JavaScript and TypeScript.** `CodeFormatter` now supports `.javascript` and `.typescript` through js-beautify 1.15.4 (MIT) and terser 5.44.0 (BSD-2), bundled as package resources under `Resources/Formatters` and run in-process in JavaScriptCore (`JavaScriptFormatter.swift`): no process, no network. Prettify honours the editor's indent string (spaces or tabs) and ends with a newline; minify strips whitespace and comments but keeps identifiers and statements (`compress: false`, `mangle: false`), so the result prettifies back to the same text. Minify is JavaScript-only (terser does not parse type annotations) and returns nil for TypeScript; inputs over 2 MB and programs with syntax errors return nil instead of throwing. Each library is evaluated lazily, once, on a private serial queue; the first call costs ~40 ms (js-beautify) / ~0.5 s (terser) to load.
+
 ## [2.7.0] - 2026-10-21
 
 ### Added

@@ -138,6 +138,104 @@ final class CodeFormatterTests: XCTestCase {
 
     func testUnsupportedLanguage() {
         XCTAssertNil(CodeFormatter.format("let a = 1", language: .swift, operation: .prettify))
-        XCTAssertFalse(CodeFormatter.supports(.javascript))
+        XCTAssertFalse(CodeFormatter.supports(.swift))
+        XCTAssertTrue(CodeFormatter.supports(.javascript))
+        XCTAssertTrue(CodeFormatter.supports(.typescript))
+    }
+
+    // MARK: - JavaScript / TypeScript
+
+    private let program = """
+    function greet(name){if(!name){return "hello"}
+    const items=[1,2,3].map(x=>x*2);return `hi ${name}: ${items.join(", ")}`}
+    class Counter{constructor(){this.n=0}
+    inc(){this.n+=1;return this}}
+    """
+
+    func testJavaScriptPrettifyIsIdempotent() {
+        let pretty = CodeFormatter.format(program, language: .javascript, operation: .prettify)!
+        XCTAssertEqual(pretty, """
+        function greet(name) {
+          if (!name) {
+            return "hello"
+          }
+          const items = [1, 2, 3].map(x => x * 2);
+          return `hi ${name}: ${items.join(", ")}`
+        }
+        class Counter {
+          constructor() {
+            this.n = 0
+          }
+          inc() {
+            this.n += 1;
+            return this
+          }
+        }
+
+        """)
+        XCTAssertEqual(CodeFormatter.format(pretty, language: .javascript, operation: .prettify), pretty, "idempotent")
+    }
+
+    func testJavaScriptPrettifyHonoursIndent() {
+        let pretty = CodeFormatter.format("if(a){b()}", language: .javascript, operation: .prettify, indent: "\t")!
+        XCTAssertEqual(pretty, "if (a) {\n\tb()\n}\n")
+        let four = CodeFormatter.format("if(a){b()}", language: .javascript, operation: .prettify, indent: "    ")!
+        XCTAssertEqual(four, "if (a) {\n    b()\n}\n")
+    }
+
+    func testJavaScriptMinifyRoundTrips() {
+        let pretty = CodeFormatter.format(program, language: .javascript, operation: .prettify)!
+        let minified = CodeFormatter.format(pretty, language: .javascript, operation: .minify)!
+        XCTAssertFalse(minified.contains("\n"))
+        XCTAssertLessThan(minified.count, pretty.count)
+        XCTAssertTrue(minified.contains("greet"), "identifiers are kept")
+        XCTAssertEqual(CodeFormatter.format(minified, language: .javascript, operation: .prettify), pretty,
+                       "minified program prettifies back to the original prettified text")
+    }
+
+    func testJavaScriptMinifyDropsComments() {
+        let minified = CodeFormatter.format("// top\nconst a = 1; /* mid */ const b = 2;", language: .javascript, operation: .minify)!
+        XCTAssertFalse(minified.contains("top"))
+        XCTAssertFalse(minified.contains("mid"))
+        XCTAssertTrue(minified.contains("const a=1"))
+    }
+
+    func testJavaScriptRegexAndTemplateLiteralsSurvive() {
+        let input = "const re=/a\\/b{2}\\s+\"x\"/gi;const t=`line1\n  ${re.source}  {not: code}\n`;export{re,t};"
+        let pretty = CodeFormatter.format(input, language: .javascript, operation: .prettify)!
+        XCTAssertTrue(pretty.contains("/a\\/b{2}\\s+\"x\"/gi"), pretty)
+        XCTAssertTrue(pretty.contains("`line1\n  ${re.source}  {not: code}\n`"), "template literal body is untouched")
+        let minified = CodeFormatter.format(input, language: .javascript, operation: .minify)!
+        XCTAssertTrue(minified.contains("/a\\/b{2}\\s+\"x\"/gi"), minified)
+        // terser reprints the template on one line with the newline escaped (`\n`), which is the same string.
+        XCTAssertTrue(minified.contains("`line1\\n  ${re.source}  {not: code}\\n`"), minified)
+    }
+
+    func testTypeScriptPrettifyKeepsTypes() {
+        let input = "interface User{id:number;name?:string}\nfunction find<T extends User>(xs:T[],id:number):T|undefined{return xs.find(x=>x.id===id)}\nenum Mode{A=1,B}\nconst u=find<User>([],1) as User;"
+        let pretty = CodeFormatter.format(input, language: .typescript, operation: .prettify)!
+        XCTAssertTrue(pretty.contains("interface User {"), pretty)
+        XCTAssertTrue(pretty.contains("id: number;"), pretty)
+        XCTAssertTrue(pretty.contains("name ? : string") || pretty.contains("name?: string"), pretty)
+        XCTAssertTrue(pretty.contains("xs: T[]"), pretty)
+        XCTAssertTrue(pretty.contains("): T | undefined {"), pretty)
+        XCTAssertTrue(pretty.contains("enum Mode {"), pretty)
+        XCTAssertTrue(pretty.contains("as User"), pretty)
+        XCTAssertEqual(CodeFormatter.format(pretty, language: .typescript, operation: .prettify), pretty, "idempotent")
+    }
+
+    func testTypeScriptMinifyIsRefused() {
+        XCTAssertNil(CodeFormatter.format("const a: number = 1;", language: .typescript, operation: .minify))
+    }
+
+    func testJavaScriptSyntaxErrorMinifyReturnsNil() {
+        XCTAssertNil(CodeFormatter.format("function (", language: .javascript, operation: .minify))
+    }
+
+    func testJavaScriptOversizeInputReturnsNil() {
+        let big = String(repeating: "var a = 1;\n", count: (JavaScriptFormatter.maxInputBytes / 11) + 1)
+        XCTAssertGreaterThan(big.utf8.count, JavaScriptFormatter.maxInputBytes)
+        XCTAssertNil(CodeFormatter.format(big, language: .javascript, operation: .prettify))
+        XCTAssertNil(CodeFormatter.format(big, language: .javascript, operation: .minify))
     }
 }
