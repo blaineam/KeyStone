@@ -14,7 +14,7 @@ import UIKit
 /// A SwiftUI wrapper for Runestone's high-performance TextView.
 /// Provides the same interface as the main branch's KeystoneTextView.
 public struct KeystoneTextView: UIViewRepresentable {
-    @Binding var text: String
+    let document: KeystoneDocument
     let language: KeystoneLanguage
     @ObservedObject var configuration: KeystoneConfiguration
     @Binding var cursorPosition: CursorPosition
@@ -27,7 +27,7 @@ public struct KeystoneTextView: UIViewRepresentable {
     var onParsingTimeout: (() -> Void)?
 
     public init(
-        text: Binding<String>,
+        document: KeystoneDocument,
         language: KeystoneLanguage,
         configuration: KeystoneConfiguration,
         cursorPosition: Binding<CursorPosition>,
@@ -39,7 +39,7 @@ public struct KeystoneTextView: UIViewRepresentable {
         undoController: UndoController? = nil,
         onParsingTimeout: (() -> Void)? = nil
     ) {
-        self._text = text
+        self.document = document
         self.language = language
         self._configuration = ObservedObject(wrappedValue: configuration)
         self._cursorPosition = cursorPosition
@@ -73,7 +73,7 @@ public struct KeystoneTextView: UIViewRepresentable {
         if let tsLanguage = language.treeSitterLanguage {
             let theme = KeystoneRunestoneTheme(configuration: configuration)
             let state = TextViewState(
-                text: text,
+                text: document.text,
                 theme: theme,
                 language: tsLanguage,
                 languageProvider: KeystoneLanguageProvider.shared
@@ -83,7 +83,7 @@ public struct KeystoneTextView: UIViewRepresentable {
             // No tree-sitter language, just set the text with theme
             let theme = KeystoneRunestoneTheme(configuration: configuration)
             textView.theme = theme
-            textView.text = text
+            textView.text = document.text
         }
 
         // Set up undo controller
@@ -93,6 +93,9 @@ public struct KeystoneTextView: UIViewRepresentable {
         setupCodeFolding(textView: textView, context: context)
 
         context.coordinator.textView = textView
+        document.attach(textView) { [weak coordinator = context.coordinator] newText, preservingUndo in
+            coordinator?.applyText(newText, preservingUndo: preservingUndo)
+        }
 
         return textView
     }
@@ -120,7 +123,12 @@ public struct KeystoneTextView: UIViewRepresentable {
         }
 
         // Initial analysis of text (only for non-large files)
-        foldingManager.analyzeText(text)
+        let initialText = document.text
+        if initialText.utf16.count > KeystoneConfiguration.defaultLargeFileThreshold {
+            foldingManager.analyzeTextInBackground(initialText)
+        } else {
+            foldingManager.analyzeText(initialText)
+        }
     }
 
     public func updateUIView(_ textView: TextView, context: Context) {
@@ -161,36 +169,11 @@ public struct KeystoneTextView: UIViewRepresentable {
             }
         }
 
-        // Handle external text changes (file loads) SAFELY
-        // NEVER call setState from updateUIView - it causes crashes because
-        // the keyboard queries line structure before RedBlackTree is ready.
-        // Instead, we queue the update and apply it when truly safe.
-        if EditorTextSync.isExternalChange(
-            binding: text,
-            lastSynced: coordinator.lastSyncedText,
-            bindingWritePending: coordinator.bindingWritePending,
-            isUpdatingText: coordinator.isUpdatingText,
-            editorText: { textView.text }
-        ) {
-            // Queue the pending text update - will be applied when keyboard is fully dismissed
-            let pendingTheme = KeystoneRunestoneTheme(configuration: configuration)
-            coordinator.pendingTextUpdate = (text: text, language: language.treeSitterLanguage, theme: pendingTheme)
-
-            // Try to apply immediately only if not editing (keyboard hidden)
-            if !textView.isFirstResponder {
-                // Use async to avoid state modification during view update
-                DispatchQueue.main.async {
-                    coordinator.applyPendingTextUpdate()
-                }
-            }
-            // If keyboard is showing, the keyboardDidHide observer will apply the update
-        }
-
         // Update cursor position if it changed externally (e.g., from find navigation)
         // Only update if not currently editing to avoid fighting with user input
         // MUST defer to async to avoid RedBlackTree crash - setting selectedRange
         // triggers keyboard tokenizer which queries line structure before tree is ready
-        if coordinator.pendingTextUpdate == nil && !coordinator.isUpdatingCursor && !coordinator.isUpdatingText {
+        if !coordinator.isUpdatingCursor && !coordinator.isUpdatingText {
             let expectedRange = NSRange(location: cursorPosition.offset, length: cursorPosition.selectionLength)
             let currentRange = textView.selectedRange
             let isExternalChange = cursorPosition != coordinator.lastSyncedCursorPosition
@@ -231,6 +214,14 @@ public struct KeystoneTextView: UIViewRepresentable {
 
         // Track scroll offset
         coordinator.lastScrollOffset = textView.contentOffset.y
+    }
+
+    public static func dismantleUIView(_ textView: TextView, coordinator: Coordinator) {
+        coordinator.parent.document.detach(textView)
+    }
+
+    public static func dismantleNSView(_ textView: TextView, coordinator: Coordinator) {
+        coordinator.parent.document.detach(textView)
     }
 
     public func makeCoordinator() -> Coordinator {
@@ -290,16 +281,12 @@ public struct KeystoneTextView: UIViewRepresentable {
     private func setupUndoController(textView: TextView, context: Context) {
         guard let undoController = undoController else { return }
 
-        let coordinator = context.coordinator
-
-        undoController.undoAction = { [weak textView, weak coordinator] in
+        undoController.undoAction = { [weak textView] in
             textView?.undoManager?.undo()
-            coordinator?.syncTextNow()
         }
 
-        undoController.redoAction = { [weak textView, weak coordinator] in
+        undoController.redoAction = { [weak textView] in
             textView?.undoManager?.redo()
-            coordinator?.syncTextNow()
         }
 
         undoController.checkUndoState = { [weak textView] in
@@ -308,13 +295,13 @@ public struct KeystoneTextView: UIViewRepresentable {
         }
 
         undoController.replaceTextAction = { [weak textView] range, replacementText in
-            guard let textView = textView else { return nil }
-            guard range.location + range.length <= textView.backingString.length else { return nil }
+            guard let textView = textView else { return false }
+            guard range.location + range.length <= textView.backingString.length else { return false }
 
             // Use Runestone's replace method to properly update internal state
             textView.replace(range, withText: replacementText)
 
-            return textView.text
+            return true
         }
 
         undoController.beginUndoGroupingAction = { [weak textView] in
@@ -336,7 +323,6 @@ public struct KeystoneTextView: UIViewRepresentable {
         var isUpdatingText = false
         var isUpdatingCursor = false
         var lastScrollOffset: CGFloat = 0
-        var lastSyncedText: String = ""
         var lastSyncedCursorPosition: CursorPosition?
         var lastSyncedLanguage: KeystoneLanguage?
         var lastSyncedTheme: KeystoneTheme
@@ -346,110 +332,41 @@ public struct KeystoneTextView: UIViewRepresentable {
         private var foldingAnalysisWorkItem: DispatchWorkItem?
         /// Debounce timer for cursor position updates to prevent rapid-fire binding updates
         private var cursorUpdateWorkItem: DispatchWorkItem?
-        /// Debounce timer for the SwiftUI `text` binding write. For huge files
-        /// (HTML dumps, JSON payloads, log captures) writing the whole String to
-        /// the binding on every keystroke beachballs because every observer
-        /// (line count, find/replace, host app) re-runs O(N) work. We coalesce
-        /// the write so external listeners only see a fresh snapshot once
-        /// typing pauses.
-        private var parentTextSyncWorkItem: DispatchWorkItem?
-        /// True while the editor holds edits the binding has not received yet.
-        var bindingWritePending = false
-        /// utf16 length above which we debounce the binding write. Below this
-        /// the immediate write keeps incremental UI (e.g. diff banner) snappy.
-        private static let largeTextSyncThreshold = 1_500_000  // ~1.5 MB
+        /// Range of the edit the text view just reported; consumed by textViewDidChange.
+        var pendingEdit: (range: NSRange, replacementLength: Int)?
 
-        /// Pending text update to apply when safe (keyboard fully dismissed)
-        var pendingTextUpdate: (text: String, language: TreeSitterLanguage?, theme: KeystoneRunestoneTheme)?
 
         init(_ parent: KeystoneTextView) {
             self.parent = parent
-            self.lastSyncedText = parent.text
             self.lastSyncedLanguage = parent.language
             self.lastSyncedTheme = parent.configuration.theme
             self.lastSyncedFontSize = parent.configuration.fontSize
             super.init()
-
-            // Observe keyboard dismiss to apply pending updates safely
-            NotificationCenter.default.addObserver(
-                self,
-                selector: #selector(keyboardDidHide),
-                name: UIResponder.keyboardDidHideNotification,
-                object: nil
-            )
         }
 
-        deinit {
-            NotificationCenter.default.removeObserver(self)
-        }
-
-        @objc private func keyboardDidHide() {
-            // Apply any pending text updates now that keyboard is fully dismissed
-            applyPendingTextUpdate()
-        }
-
-        func syncTextNow() {
-            guard let textView = textView, !isUpdatingText else { return }
-            parentTextSyncWorkItem?.cancel()
-            parentTextSyncWorkItem = nil
-            bindingWritePending = false
+        /// Replaces the whole text on behalf of the document (file load, revert, conversion).
+        func applyText(_ newText: String, preservingUndo: Bool) {
+            guard let textView = textView, textView.text != newText else { return }
             isUpdatingText = true
-            let currentText = textView.text
-            parent.text = currentText
-            lastSyncedText = currentText
-            isUpdatingText = false
-        }
-
-        /// Apply pending text update safely - only call when keyboard is fully dismissed
-        func applyPendingTextUpdate() {
-            guard let pending = pendingTextUpdate, let textView = textView else { return }
-
-            // Clear the pending update first
-            pendingTextUpdate = nil
-
-            // Double-check that we still need to update (avoid unnecessary setState calls)
-            guard textView.text != pending.text else {
-                // Text is already correct, no need to update (preserves undo history)
-                lastSyncedText = pending.text
-                return
-            }
-
-            isUpdatingText = true
-            // CRITICAL: Set the tokenizer flag to prevent crashes when keyboard queries line boundaries
+            // Keep the tokenizer from querying line boundaries mid-replacement.
             textView.isUpdatingText = true
-            defer { textView.isUpdatingText = false }
-
-            // Only use setState (which clears undo history) for initial setup or language changes.
-            // For simple text updates, just set the text property to preserve undo history.
-            // setState clears undo history, so we should only use it when truly necessary.
-            if let language = pending.language {
-                // Check if this is really a new language/file (significant text change)
-                // or just a minor external update that should preserve undo
-                let isSignificantChange = abs(textView.backingString.length - pending.text.utf16.count) > pending.text.utf16.count / 2
-                    || textView.backingString.length == 0
-                    || pending.text.isEmpty
-
-                if isSignificantChange {
-                    // Major change (like file load) - use setState and clear undo
-                    let state = TextViewState(
-                        text: pending.text,
-                        theme: pending.theme,
-                        language: language,
-                        languageProvider: KeystoneLanguageProvider.shared
-                    )
-                    textView.setState(state)
-                } else {
-                    // Minor change - use setTextPreservingUndo to preserve undo history
-                    textView.setTextPreservingUndo(pending.text)
-                    textView.theme = pending.theme
-                }
-            } else {
-                // No language, use setTextPreservingUndo to preserve undo history
-                textView.setTextPreservingUndo(pending.text)
+            defer {
+                textView.isUpdatingText = false
+                isUpdatingText = false
             }
-
-            lastSyncedText = pending.text
-            isUpdatingText = false
+            if preservingUndo {
+                textView.setTextPreservingUndo(newText)
+            } else if let language = parent.language.treeSitterLanguage {
+                let state = TextViewState(
+                    text: newText,
+                    theme: KeystoneRunestoneTheme(configuration: parent.configuration),
+                    language: language,
+                    languageProvider: KeystoneLanguageProvider.shared
+                )
+                textView.setState(state)
+            } else {
+                textView.text = newText
+            }
         }
 
         // MARK: - Search Highlighting
@@ -498,6 +415,10 @@ public struct KeystoneTextView: UIViewRepresentable {
         // MARK: - Bracket Matching
 
         func updateBracketMatch(textView: TextView) {
+            guard parent.configuration.highlightMatchingBrackets else {
+                if parent.matchingBracket != nil { parent.matchingBracket = nil }
+                return
+            }
             let offset = textView.selectedRange.location
             let text = textView.backingString
 
@@ -513,62 +434,30 @@ public struct KeystoneTextView: UIViewRepresentable {
 
         // MARK: - TextViewDelegate
 
+        public func textView(_ textView: TextView, didReplaceTextIn range: NSRange, replacementLength: Int) {
+            pendingEdit = (range, replacementLength)
+        }
+
         public func textViewDidChange(_ textView: TextView) {
+            let edit = pendingEdit
+            pendingEdit = nil
             guard !isUpdatingText else { return }
 
-            if textView.backingString.length >= Self.largeTextSyncThreshold {
-                // Big buffers: copying the text out on every keystroke is itself
-                // the cost. Mark the binding stale and snapshot once typing
-                // pauses. While stale, updateView must not treat the (older)
-                // binding value as an external change and write it back.
-                bindingWritePending = true
-                parentTextSyncWorkItem?.cancel()
-                let work = DispatchWorkItem { [weak self] in
-                    self?.flushPendingBindingWrite()
-                }
-                parentTextSyncWorkItem = work
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: work)
+            parent.document.noteEdit(range: edit?.range, replacementLength: edit?.replacementLength)
 
-                foldingAnalysisWorkItem?.cancel()
-                let folding = DispatchWorkItem { [weak self] in
-                    guard let self = self, let textView = self.textView else { return }
-                    self.codeFoldingManager.analyzeTextInBackground(textView.text)
-                }
-                foldingAnalysisWorkItem = folding
-                DispatchQueue.main.asyncAfter(deadline: .now() + 2.5, execute: folding)
-                return
-            }
-
-            isUpdatingText = true
-            let currentText = textView.text
-            // Mark this snapshot as ours so the eventual SwiftUI rebound from
-            // our own write doesn't ping-pong back through updateView.
-            lastSyncedText = currentText
-            parent.text = currentText
-            isUpdatingText = false
-
-            // Debounced code folding analysis - refreshes 2.5s after last change
+            // Debounced code folding analysis - refreshes 2.5s after typing pauses.
+            // The snapshot is taken when the work item fires, not on every keystroke.
             foldingAnalysisWorkItem?.cancel()
             let workItem = DispatchWorkItem { [weak self] in
-                guard let self = self else { return }
-                self.codeFoldingManager.analyzeText(currentText)
+                guard let self = self, let textView = self.textView else { return }
+                if textView.backingString.length > KeystoneConfiguration.defaultLargeFileThreshold {
+                    self.codeFoldingManager.analyzeTextInBackground(textView.text)
+                } else {
+                    self.codeFoldingManager.analyzeText(textView.text)
+                }
             }
             foldingAnalysisWorkItem = workItem
             DispatchQueue.main.asyncAfter(deadline: .now() + 2.5, execute: workItem)
-        }
-
-        /// Pushes the editor's current text to the binding if a debounced write is pending.
-        func flushPendingBindingWrite() {
-            parentTextSyncWorkItem?.cancel()
-            parentTextSyncWorkItem = nil
-            guard bindingWritePending, let textView = textView else { return }
-            bindingWritePending = false
-            let wasUpdating = isUpdatingText
-            isUpdatingText = true
-            let currentText = textView.text
-            lastSyncedText = currentText
-            parent.text = currentText
-            isUpdatingText = wasUpdating
         }
 
         public func textViewDidChangeSelection(_ textView: TextView) {
@@ -779,7 +668,7 @@ import AppKit
 /// macOS implementation using native Runestone TextView for iOS/macOS feature parity.
 /// Uses the same high-performance architecture as iOS: TextInputViewMac + NSTextInputClient.
 public struct KeystoneTextView: NSViewRepresentable {
-    @Binding var text: String
+    let document: KeystoneDocument
     let language: KeystoneLanguage
     @ObservedObject var configuration: KeystoneConfiguration
     @Binding var cursorPosition: CursorPosition
@@ -793,7 +682,7 @@ public struct KeystoneTextView: NSViewRepresentable {
     var onParsingTimeout: (() -> Void)?
 
     public init(
-        text: Binding<String>,
+        document: KeystoneDocument,
         language: KeystoneLanguage,
         configuration: KeystoneConfiguration,
         cursorPosition: Binding<CursorPosition>,
@@ -805,7 +694,7 @@ public struct KeystoneTextView: NSViewRepresentable {
         undoController: UndoController? = nil,
         onParsingTimeout: (() -> Void)? = nil
     ) {
-        self._text = text
+        self.document = document
         self.language = language
         self._configuration = ObservedObject(wrappedValue: configuration)
         self._cursorPosition = cursorPosition
@@ -831,7 +720,7 @@ public struct KeystoneTextView: NSViewRepresentable {
         if let tsLanguage = language.treeSitterLanguage {
             let theme = KeystoneRunestoneThemeMac(configuration: configuration)
             let state = TextViewState(
-                text: text,
+                text: document.text,
                 theme: theme,
                 language: tsLanguage,
                 languageProvider: KeystoneLanguageProvider.shared
@@ -841,7 +730,7 @@ public struct KeystoneTextView: NSViewRepresentable {
             // No tree-sitter language, just set the text with theme
             let theme = KeystoneRunestoneThemeMac(configuration: configuration)
             textView.theme = theme
-            textView.text = text
+            textView.text = document.text
         }
 
         // Set up undo controller
@@ -851,6 +740,9 @@ public struct KeystoneTextView: NSViewRepresentable {
         setupCodeFolding(textView: textView, context: context)
 
         context.coordinator.textView = textView
+        document.attach(textView) { [weak coordinator = context.coordinator] newText, preservingUndo in
+            coordinator?.applyText(newText, preservingUndo: preservingUndo)
+        }
 
         return textView
     }
@@ -878,7 +770,12 @@ public struct KeystoneTextView: NSViewRepresentable {
         }
 
         // Initial analysis of text (only for non-large files)
-        foldingManager.analyzeText(text)
+        let initialText = document.text
+        if initialText.utf16.count > KeystoneConfiguration.defaultLargeFileThreshold {
+            foldingManager.analyzeTextInBackground(initialText)
+        } else {
+            foldingManager.analyzeText(initialText)
+        }
     }
 
     public func updateNSView(_ textView: TextView, context: Context) {
@@ -919,26 +816,8 @@ public struct KeystoneTextView: NSViewRepresentable {
             }
         }
 
-        // Handle external text changes (file loads)
-        if EditorTextSync.isExternalChange(
-            binding: text,
-            lastSynced: coordinator.lastSyncedText,
-            bindingWritePending: coordinator.bindingWritePending,
-            isUpdatingText: coordinator.isUpdatingText,
-            editorText: { textView.text }
-        ) {
-            // Queue the pending text update - will be applied when safe
-            let pendingTheme = KeystoneRunestoneThemeMac(configuration: configuration)
-            coordinator.pendingTextUpdate = (text: text, language: language.treeSitterLanguage, theme: pendingTheme)
-
-            // Try to apply immediately
-            DispatchQueue.main.async {
-                coordinator.applyPendingTextUpdate()
-            }
-        }
-
         // Update cursor position if it changed externally (e.g., from jump to line)
-        if coordinator.pendingTextUpdate == nil && !coordinator.isUpdatingCursor && !coordinator.isUpdatingText {
+        if !coordinator.isUpdatingCursor && !coordinator.isUpdatingText {
             let expectedRange = NSRange(location: cursorPosition.offset, length: cursorPosition.selectionLength)
             let currentRange = textView.selectedRange
 
@@ -1040,16 +919,12 @@ public struct KeystoneTextView: NSViewRepresentable {
     private func setupUndoController(textView: TextView, context: Context) {
         guard let undoController = undoController else { return }
 
-        let coordinator = context.coordinator
-
-        undoController.undoAction = { [weak textView, weak coordinator] in
+        undoController.undoAction = { [weak textView] in
             textView?.textUndoManager.undo()
-            coordinator?.syncTextNow()
         }
 
-        undoController.redoAction = { [weak textView, weak coordinator] in
+        undoController.redoAction = { [weak textView] in
             textView?.textUndoManager.redo()
-            coordinator?.syncTextNow()
         }
 
         undoController.checkUndoState = { [weak textView] in
@@ -1058,18 +933,18 @@ public struct KeystoneTextView: NSViewRepresentable {
         }
 
         undoController.replaceTextAction = { [weak textView] range, replacementText in
-            guard let textView = textView else { return nil }
-            guard range.location + range.length <= textView.backingString.length else { return nil }
+            guard let textView = textView else { return false }
+            guard range.location + range.length <= textView.backingString.length else { return false }
 
             // Use the replace method which properly registers with the undo manager
             textView.replace(range, withText: replacementText)
-            return textView.text
+            return true
         }
 
         undoController.replaceAllAction = { [weak textView] newText in
-            guard let textView = textView else { return nil }
+            guard let textView = textView else { return false }
             textView.replaceAll(with: newText)
-            return textView.text
+            return true
         }
 
         undoController.beginUndoGroupingAction = { [weak textView] in
@@ -1090,7 +965,6 @@ public struct KeystoneTextView: NSViewRepresentable {
         weak var textView: TextView?
         var isUpdatingText = false
         var isUpdatingCursor = false
-        var lastSyncedText: String = ""
         var lastSyncedCursorPosition: CursorPosition?
         var lastSyncedLanguage: KeystoneLanguage?
         var lastSyncedTheme: KeystoneTheme
@@ -1099,19 +973,12 @@ public struct KeystoneTextView: NSViewRepresentable {
         let codeFoldingManager = CodeFoldingManager()
         private var foldingAnalysisWorkItem: DispatchWorkItem?
         private var cursorUpdateWorkItem: DispatchWorkItem?
-        /// See iOS Coordinator above — debounces the binding write for huge
-        /// files so per-keystroke observers don't re-scan the whole buffer.
-        private var parentTextSyncWorkItem: DispatchWorkItem?
-        /// True while the editor holds edits the binding has not received yet.
-        var bindingWritePending = false
-        private static let largeTextSyncThreshold = 1_500_000  // ~1.5 MB
+        /// Range of the edit the text view just reported; consumed by textViewDidChange.
+        var pendingEdit: (range: NSRange, replacementLength: Int)?
 
-        /// Pending text update to apply when safe
-        var pendingTextUpdate: (text: String, language: TreeSitterLanguage?, theme: KeystoneRunestoneThemeMac)?
 
         init(_ parent: KeystoneTextView) {
             self.parent = parent
-            self.lastSyncedText = parent.text
             self.lastSyncedCursorPosition = parent.cursorPosition
             self.lastSyncedLanguage = parent.language
             self.lastSyncedTheme = parent.configuration.theme
@@ -1119,59 +986,24 @@ public struct KeystoneTextView: NSViewRepresentable {
             super.init()
         }
 
-        func syncTextNow() {
-            guard let textView = textView, !isUpdatingText else { return }
-            parentTextSyncWorkItem?.cancel()
-            parentTextSyncWorkItem = nil
-            bindingWritePending = false
+        /// Replaces the whole text on behalf of the document (file load, revert, conversion).
+        func applyText(_ newText: String, preservingUndo: Bool) {
+            guard let textView = textView, textView.text != newText else { return }
             isUpdatingText = true
-            let currentText = textView.text
-            parent.text = currentText
-            lastSyncedText = currentText
-            isUpdatingText = false
-        }
-
-        /// Apply pending text update safely
-        func applyPendingTextUpdate() {
-            guard let pending = pendingTextUpdate, let textView = textView else { return }
-
-            // Clear the pending update first
-            pendingTextUpdate = nil
-
-            // Double-check that we still need to update
-            guard textView.text != pending.text else {
-                lastSyncedText = pending.text
-                return
-            }
-
-            isUpdatingText = true
-
-            if let language = pending.language {
-                // Check if this is a significant change (like file load)
-                let isSignificantChange = abs(textView.backingString.length - pending.text.utf16.count) > pending.text.utf16.count / 2
-                    || textView.backingString.length == 0
-                    || pending.text.isEmpty
-
-                if isSignificantChange {
-                    // Major change - use setState
-                    let state = TextViewState(
-                        text: pending.text,
-                        theme: pending.theme,
-                        language: language,
-                        languageProvider: KeystoneLanguageProvider.shared
-                    )
-                    textView.setState(state)
-                } else {
-                    // Minor change - preserve undo
-                    textView.setTextPreservingUndo(pending.text)
-                    textView.theme = pending.theme
-                }
+            defer { isUpdatingText = false }
+            if preservingUndo {
+                textView.setTextPreservingUndo(newText)
+            } else if let language = parent.language.treeSitterLanguage {
+                let state = TextViewState(
+                    text: newText,
+                    theme: KeystoneRunestoneThemeMac(configuration: parent.configuration),
+                    language: language,
+                    languageProvider: KeystoneLanguageProvider.shared
+                )
+                textView.setState(state)
             } else {
-                textView.setTextPreservingUndo(pending.text)
+                textView.text = newText
             }
-
-            lastSyncedText = pending.text
-            isUpdatingText = false
         }
 
         // MARK: - Search Highlighting
@@ -1216,6 +1048,10 @@ public struct KeystoneTextView: NSViewRepresentable {
         // MARK: - Bracket Matching
 
         func updateBracketMatch(textView: TextView) {
+            guard parent.configuration.highlightMatchingBrackets else {
+                if parent.matchingBracket != nil { parent.matchingBracket = nil }
+                return
+            }
             let offset = textView.selectedRange.location
             let text = textView.backingString
 
@@ -1230,62 +1066,30 @@ public struct KeystoneTextView: NSViewRepresentable {
 
         // MARK: - TextViewDelegate
 
+        public func textView(_ textView: TextView, didReplaceTextIn range: NSRange, replacementLength: Int) {
+            pendingEdit = (range, replacementLength)
+        }
+
         public func textViewDidChange(_ textView: TextView) {
+            let edit = pendingEdit
+            pendingEdit = nil
             guard !isUpdatingText else { return }
 
-            if textView.backingString.length >= Self.largeTextSyncThreshold {
-                // Big buffers: copying the text out on every keystroke is itself
-                // the cost. Mark the binding stale and snapshot once typing
-                // pauses. While stale, updateView must not treat the (older)
-                // binding value as an external change and write it back.
-                bindingWritePending = true
-                parentTextSyncWorkItem?.cancel()
-                let work = DispatchWorkItem { [weak self] in
-                    self?.flushPendingBindingWrite()
-                }
-                parentTextSyncWorkItem = work
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: work)
+            parent.document.noteEdit(range: edit?.range, replacementLength: edit?.replacementLength)
 
-                foldingAnalysisWorkItem?.cancel()
-                let folding = DispatchWorkItem { [weak self] in
-                    guard let self = self, let textView = self.textView else { return }
-                    self.codeFoldingManager.analyzeTextInBackground(textView.text)
-                }
-                foldingAnalysisWorkItem = folding
-                DispatchQueue.main.asyncAfter(deadline: .now() + 2.5, execute: folding)
-                return
-            }
-
-            isUpdatingText = true
-            let currentText = textView.text
-            // Mark this snapshot as ours so the eventual SwiftUI rebound from
-            // our own write doesn't ping-pong back through updateView.
-            lastSyncedText = currentText
-            parent.text = currentText
-            isUpdatingText = false
-
-            // Debounced code folding analysis - refreshes 2.5s after last change
+            // Debounced code folding analysis - refreshes 2.5s after typing pauses.
+            // The snapshot is taken when the work item fires, not on every keystroke.
             foldingAnalysisWorkItem?.cancel()
             let workItem = DispatchWorkItem { [weak self] in
-                guard let self = self else { return }
-                self.codeFoldingManager.analyzeText(currentText)
+                guard let self = self, let textView = self.textView else { return }
+                if textView.backingString.length > KeystoneConfiguration.defaultLargeFileThreshold {
+                    self.codeFoldingManager.analyzeTextInBackground(textView.text)
+                } else {
+                    self.codeFoldingManager.analyzeText(textView.text)
+                }
             }
             foldingAnalysisWorkItem = workItem
             DispatchQueue.main.asyncAfter(deadline: .now() + 2.5, execute: workItem)
-        }
-
-        /// Pushes the editor's current text to the binding if a debounced write is pending.
-        func flushPendingBindingWrite() {
-            parentTextSyncWorkItem?.cancel()
-            parentTextSyncWorkItem = nil
-            guard bindingWritePending, let textView = textView else { return }
-            bindingWritePending = false
-            let wasUpdating = isUpdatingText
-            isUpdatingText = true
-            let currentText = textView.text
-            lastSyncedText = currentText
-            parent.text = currentText
-            isUpdatingText = wasUpdating
         }
 
         public func textViewDidChangeSelection(_ textView: TextView) {
@@ -1499,26 +1303,3 @@ extension CursorPosition {
 }
 
 
-/// Decides whether a SwiftUI binding value is a genuine external change (file
-/// load, revert) that should replace the editor's contents.
-enum EditorTextSync {
-    /// - Parameters:
-    ///   - binding: The value SwiftUI currently holds for the text binding.
-    ///   - lastSynced: The last snapshot the coordinator pushed to the binding.
-    ///   - bindingWritePending: True while the editor has newer edits than the
-    ///     binding because the write is debounced. The binding is stale then,
-    ///     so it must never be written back over the editor.
-    ///   - isUpdatingText: True while the coordinator itself is mutating text.
-    ///   - editorText: Lazily reads the editor's text (a full copy for big files).
-    static func isExternalChange(
-        binding: String,
-        lastSynced: String,
-        bindingWritePending: Bool,
-        isUpdatingText: Bool,
-        editorText: () -> String
-    ) -> Bool {
-        if bindingWritePending || isUpdatingText { return false }
-        if binding == lastSynced { return false }
-        return editorText() != binding
-    }
-}

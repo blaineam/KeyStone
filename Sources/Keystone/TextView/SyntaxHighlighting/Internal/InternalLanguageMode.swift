@@ -6,6 +6,8 @@ struct InsertLineBreakIndentStrategy {
 }
 
 protocol InternalLanguageMode: AnyObject {
+    /// Whether lines should be highlighted asynchronously because a parse may be in flight.
+    var prefersAsynchronousHighlighting: Bool { get }
     func parse(_ text: NSString)
     func parse(_ text: NSString, completion: @escaping ((Bool) -> Void))
     func textDidChange(_ change: TextChange) -> LineChangeSet

@@ -44,6 +44,18 @@ public struct SearchMatch: Identifiable, Equatable, Sendable {
     /// Re-validates the match against the text the caller holds NOW. Returns
     /// nil when the document changed since the search and the offsets no
     /// longer fit (e.g. lines deleted while the find bar is open).
+    /// Like `resolvedRange(in:)` but against the editor's backing storage, without copying it.
+    public func resolvedNSRange(inBacking text: NSString) -> NSRange? {
+        guard nsRange.location != NSNotFound,
+              nsRange.location >= 0,
+              nsRange.length >= 0,
+              nsRange.location + nsRange.length <= text.length,
+              text.substring(with: nsRange) == matchedText else {
+            return nil
+        }
+        return nsRange
+    }
+
     public func resolvedNSRange(in text: String) -> NSRange? {
         guard nsRange.location != NSNotFound,
               nsRange.location >= 0,

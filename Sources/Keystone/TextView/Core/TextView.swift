@@ -31,6 +31,15 @@ open class TextView: UIScrollView {
     /// The editor's backing storage, without copying it into a Swift `String`.
     /// Valid only until the next edit; use for synchronous, read-only scans.
     public var backingString: NSString { textInputView.string }
+
+    /// Number of lines in the document. O(1).
+    public var lineCount: Int { textInputView.lineManager.lineCount }
+
+    /// Length of the line at `row` (0-based) excluding its line break, in UTF-16 units.
+    public func lengthOfLine(atRow row: Int) -> Int {
+        guard row >= 0 && row < textInputView.lineManager.lineCount else { return 0 }
+        return textInputView.lineManager.line(atRow: row).data.length
+    }
     public var text: String {
         get {
             textInputView.string as String
@@ -1445,6 +1454,10 @@ extension TextView: TextInputViewDelegate {
         }
     }
 
+    func textInputView(_ view: TextInputView, didReplaceTextIn range: NSRange, replacementLength: Int) {
+        editorDelegate?.textView(self, didReplaceTextIn: range, replacementLength: replacementLength)
+    }
+
     func textInputViewDidChangeGutterWidth(_ view: TextInputView) {
         editorDelegate?.textViewDidChangeGutterWidth(self)
     }
@@ -1606,8 +1619,18 @@ open class TextView: NSScrollView {
     /// Valid only until the next edit; use for synchronous, read-only scans.
     public var backingString: NSString { textInputView.string }
 
+    /// Number of lines in the document. O(1).
+    public var lineCount: Int { textInputView.lineManager.lineCount }
+
+    /// Length of the line at `row` (0-based) excluding its line break, in UTF-16 units.
+    public func lengthOfLine(atRow row: Int) -> Int {
+        guard row >= 0 && row < textInputView.lineManager.lineCount else { return 0 }
+        return textInputView.lineManager.line(atRow: row).data.length
+    }
+
     #if DEBUG
     func debugCaptureSignature() -> [String] { textInputView.debugCaptureSignature() }
+    var debugIsParsingIdle: Bool { textInputView.debugIsParsingIdle }
     #endif
 
     public var text: String {
@@ -1955,6 +1978,21 @@ open class TextView: NSScrollView {
         return nil
     }
 
+    /// Returns the character location at the specified row and column.
+    /// - Parameter textLocation: The row and column in the text.
+    /// - Returns: The location if the input row and column could be found in the text, otherwise nil.
+    public func location(at textLocation: TextLocation) -> Int? {
+        let lineIndex = textLocation.lineNumber
+        guard lineIndex >= 0 && lineIndex < textInputView.lineManager.lineCount else {
+            return nil
+        }
+        let line = textInputView.lineManager.line(atRow: lineIndex)
+        guard textLocation.column >= 0 && textLocation.column <= line.data.totalLength else {
+            return nil
+        }
+        return line.location + textLocation.column
+    }
+
     /// Sets the language mode on a background thread.
     public func setLanguageMode(_ languageMode: LanguageMode, completion: ((Bool) -> Void)? = nil) {
         textInputView.setLanguageMode(languageMode, completion: completion)
@@ -2110,6 +2148,10 @@ extension TextView: TextInputViewMacDelegate {
             )
             contentView.scroll(to: newOrigin)
         }
+    }
+
+    func textInputView(_ view: TextInputViewMac, didReplaceTextIn range: NSRange, replacementLength: Int) {
+        editorDelegate?.textView(self, didReplaceTextIn: range, replacementLength: replacementLength)
     }
 
     func textInputViewDidChangeGutterWidth(_ view: TextInputViewMac) {

@@ -9,6 +9,7 @@ protocol TextInputViewDelegate: AnyObject {
     func textInputViewDidEndEditing(_ view: TextInputView)
     func textInputViewDidCancelBeginEditing(_ view: TextInputView)
     func textInputViewDidChange(_ view: TextInputView)
+    func textInputView(_ view: TextInputView, didReplaceTextIn range: NSRange, replacementLength: Int)
     func textInputViewDidChangeSelection(_ view: TextInputView)
     func textInputView(_ view: TextInputView, shouldChangeTextIn range: NSRange, replacementText text: String) -> Bool
     func textInputViewDidInvalidateContentSize(_ view: TextInputView)
@@ -467,6 +468,7 @@ final class TextInputView: UIView, UITextInput {
             if newValue != stringView.string {
                 stringView.string = newValue
                 languageMode.parse(newValue)
+                startDeferredParseIfNeeded()
                 lineManager.rebuild()
                 if let oldSelectedRange = selectedRange {
                     inputDelegate?.selectionWillChange(self)
@@ -593,6 +595,7 @@ final class TextInputView: UIView, UITextInput {
                 if let treeSitterLanguageMode = languageMode as? TreeSitterInternalLanguageMode {
                     treeSitterLanguageMode.delegate = self
                 }
+                startDeferredParseIfNeeded()
             }
         }
     }
@@ -1346,6 +1349,7 @@ extension TextInputView {
         lineChangeSet.union(with: languageModeLineChangeSet)
         applyLineChangesToLayoutManager(lineChangeSet)
         let updatedTextEditResult = TextEditResult(textChange: textChange, lineChangeSet: lineChangeSet)
+        delegate?.textInputView(self, didReplaceTextIn: range, replacementLength: nsNewString.length)
         delegate?.textInputViewDidChange(self)
         if updatedTextEditResult.didAddOrRemoveLines {
             delegate?.textInputViewDidInvalidateContentSize(self)
@@ -1688,6 +1692,26 @@ extension TextInputView: TreeSitterLanguageModeDelegate {
     func treeSitterLanguageModeDidTimeout(_ languageMode: TreeSitterInternalLanguageMode) {
         // Notify delegate that parsing timed out - they should switch to plaintext
         delegate?.textViewDidTimeoutParsing(self)
+    }
+
+    func treeSitterLanguageMode(_ languageMode: TreeSitterInternalLanguageMode, didReparseLines lines: Set<DocumentLineNode>) {
+        guard languageMode === self.languageMode as AnyObject, !lines.isEmpty else { return }
+        layoutManager.redisplayLines(withIDs: Set(lines.map(\.id)))
+        layoutManager.setNeedsLayout()
+        layoutManager.layoutIfNeeded()
+    }
+
+    /// Big documents skip the synchronous parse on load; run it in the background and
+    /// highlight once it lands. Until then the text renders plain.
+    private func startDeferredParseIfNeeded() {
+        guard let treeSitterMode = languageMode as? TreeSitterInternalLanguageMode, treeSitterMode.needsDeferredParse else { return }
+        let parsingMode = treeSitterMode
+        treeSitterMode.parse(string) { [weak self] finished in
+            guard let self = self, self.languageMode === parsingMode, finished else { return }
+            self.invalidateLines()
+            self.layoutManager.setNeedsLayout()
+            self.layoutManager.layoutIfNeeded()
+        }
     }
 }
 

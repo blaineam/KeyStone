@@ -31,55 +31,6 @@ enum LargeFileFixtures {
     }
 }
 
-// MARK: - Binding sync (the "edits jump around and mix with old text" bug)
-
-final class EditorTextSyncTests: XCTestCase {
-    func testStaleBindingWhileWritePendingIsNotAnExternalChange() {
-        // The editor holds newer text than the binding because the write is debounced.
-        let isExternal = EditorTextSync.isExternalChange(
-            binding: "old",
-            lastSynced: "newer typing",
-            bindingWritePending: true,
-            isUpdatingText: false,
-            editorText: { "newer typing" }
-        )
-        XCTAssertFalse(isExternal, "A stale binding must never be written back over the editor")
-    }
-
-    func testEditorTextIsNotReadWhileWritePending() {
-        var reads = 0
-        _ = EditorTextSync.isExternalChange(
-            binding: "old", lastSynced: "new", bindingWritePending: true, isUpdatingText: false,
-            editorText: { reads += 1; return "new" }
-        )
-        XCTAssertEqual(reads, 0)
-    }
-
-    func testBindingMatchingLastSyncedNeverCopiesEditorText() {
-        var reads = 0
-        let isExternal = EditorTextSync.isExternalChange(
-            binding: "same", lastSynced: "same", bindingWritePending: false, isUpdatingText: false,
-            editorText: { reads += 1; return "same" }
-        )
-        XCTAssertFalse(isExternal)
-        XCTAssertEqual(reads, 0)
-    }
-
-    func testGenuineExternalChangeIsApplied() {
-        XCTAssertTrue(EditorTextSync.isExternalChange(
-            binding: "loaded from disk", lastSynced: "typed", bindingWritePending: false, isUpdatingText: false,
-            editorText: { "typed" }
-        ))
-    }
-
-    func testIgnoredWhileCoordinatorIsUpdating() {
-        XCTAssertFalse(EditorTextSync.isExternalChange(
-            binding: "a", lastSynced: "b", bindingWritePending: false, isUpdatingText: true,
-            editorText: { "c" }
-        ))
-    }
-}
-
 // MARK: - Code folding on huge, minified input
 
 @MainActor
@@ -284,6 +235,115 @@ final class LargeFileTextViewTests: XCTestCase {
         }
         print("LARGE-FILE regular-line keystroke worst: \(worst)s")
         XCTAssertLessThan(worst, 0.5)
+    }
+}
+#endif
+
+#if canImport(AppKit)
+// MARK: - Background parsing
+
+@MainActor
+final class BackgroundParsingTests: XCTestCase {
+    private var savedThreshold = 0
+
+    override func setUp() {
+        super.setUp()
+        savedThreshold = TreeSitterInternalLanguageMode.backgroundParseThreshold
+        TreeSitterInternalLanguageMode.backgroundParseThreshold = 1_000
+    }
+
+    override func tearDown() {
+        TreeSitterInternalLanguageMode.backgroundParseThreshold = savedThreshold
+        super.tearDown()
+    }
+
+    private func makeTextView(text: String, language: KeystoneLanguage) -> TextView {
+        let textView = TextView(frame: CGRect(x: 0, y: 0, width: 1000, height: 800))
+        let state = TextViewState(
+            text: text,
+            theme: DefaultTheme(),
+            language: language.treeSitterLanguage!,
+            languageProvider: KeystoneLanguageProvider.shared
+        )
+        textView.setState(state)
+        textView.layoutSubtreeIfNeeded()
+        return textView
+    }
+
+    private func waitUntilIdle(_ textView: TextView, timeout: TimeInterval = 20) {
+        let deadline = Date().addingTimeInterval(timeout)
+        while !textView.debugIsParsingIdle && Date() < deadline {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.02))
+        }
+        XCTAssertTrue(textView.debugIsParsingIdle, "parser never went idle")
+    }
+
+    /// A fresh, synchronous parse of `text` for comparison.
+    private func freshSignature(_ text: String, language: KeystoneLanguage) -> [String] {
+        let saved = TreeSitterInternalLanguageMode.backgroundParseThreshold
+        TreeSitterInternalLanguageMode.backgroundParseThreshold = Int.max
+        defer { TreeSitterInternalLanguageMode.backgroundParseThreshold = saved }
+        return makeTextView(text: text, language: language).debugCaptureSignature()
+    }
+
+    func testLoadParsesInBackgroundAndMatchesFreshParse() {
+        let html = LargeFileFixtures.inlinedHTML(megabytes: 0.15)
+        let textView = makeTextView(text: html, language: .html)
+        waitUntilIdle(textView)
+        XCTAssertEqual(textView.debugCaptureSignature(), freshSignature(html, language: .html))
+        XCTAssertFalse(textView.debugCaptureSignature().isEmpty)
+    }
+
+    func testEditsDuringBackgroundParsesConverge() {
+        let html = LargeFileFixtures.inlinedHTML(megabytes: 0.15)
+        let textView = makeTextView(text: html, language: .html)
+        // Type while the initial parse is still running, then keep typing across several reparses.
+        let ns = html as NSString
+        let scriptStart = ns.range(of: "<script>").location
+        let edits: [(NSRange, String)] = [
+            (NSRange(location: scriptStart + 5_000, length: 0), "var added=1;"),
+            (NSRange(location: ns.range(of: "Paragraph 200").location, length: 3), "Edited"),
+            (NSRange(location: scriptStart + 1, length: 0), "// leading comment\n"),
+            (NSRange(location: scriptStart + 5, length: 4), ""),
+            (NSRange(location: ns.range(of: "<style>").location + 3_000, length: 0), ".added{color:red}"),
+        ].sorted { $0.0.location > $1.0.location }
+        for (range, text) in edits {
+            textView.replace(range, withText: text)
+            RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+        }
+        waitUntilIdle(textView)
+        XCTAssertEqual(textView.debugCaptureSignature(), freshSignature(textView.text, language: .html))
+    }
+
+    func testBreakingAndRestoringScriptTagConvergesInBackground() {
+        let html = LargeFileFixtures.inlinedHTML(megabytes: 0.15)
+        let textView = makeTextView(text: html, language: .html)
+        waitUntilIdle(textView)
+        let tag = (html as NSString).range(of: "<script>")
+        textView.replace(NSRange(location: tag.location, length: 1), withText: "")
+        waitUntilIdle(textView)
+        XCTAssertEqual(textView.debugCaptureSignature(), freshSignature(textView.text, language: .html))
+        textView.replace(NSRange(location: tag.location, length: 0), withText: "<")
+        waitUntilIdle(textView)
+        XCTAssertEqual(textView.debugCaptureSignature(), freshSignature(html, language: .html))
+    }
+
+    func testFlatSwiftFileTypingStaysOffMainThread() {
+        let swift = String(repeating: "let value = 42 // padding padding padding\n", count: 20_000)
+        let textView = makeTextView(text: swift, language: .swift)
+        waitUntilIdle(textView)
+        var worst: TimeInterval = 0
+        for i in 0..<10 {
+            let start = Date()
+            textView.replace(NSRange(location: 100 + i, length: 0), withText: "x")
+            textView.layoutSubtreeIfNeeded()
+            worst = max(worst, Date().timeIntervalSince(start))
+            RunLoop.main.run(until: Date().addingTimeInterval(0.005))
+        }
+        print("FLAT-SWIFT keystroke worst: \(worst)s")
+        XCTAssertLessThan(worst, 0.05)
+        waitUntilIdle(textView)
+        XCTAssertEqual(textView.debugCaptureSignature(), freshSignature(textView.text, language: .swift))
     }
 }
 #endif

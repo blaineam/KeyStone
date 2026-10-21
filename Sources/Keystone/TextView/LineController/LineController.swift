@@ -17,6 +17,9 @@ protocol LineControllerDelegate: AnyObject {
 final class LineController {
     /// Lines longer than this (UTF-16 units) are not syntax highlighted.
     nonisolated(unsafe) static var maximumHighlightedLineLength = 20_000
+    /// The attributed string from before the last edit, applied over the unchanged
+    /// prefix and suffix of the new one until asynchronous highlighting replaces it.
+    private var previousAttributedString: NSAttributedString?
 
     private enum TypesetAmount {
         case inRect(CGRect)
@@ -234,6 +237,14 @@ private extension LineController {
     private func updateStringIfNecessary() {
         if isStringInvalid {
             let range = NSRange(location: line.location, length: line.data.totalLength)
+            // Keep the old attributes around: when highlighting is asynchronous the new
+            // string shows them on the unchanged text until fresh captures land, instead
+            // of flashing to plain text on every keystroke.
+            if let old = attributedString, syntaxHighlighter?.canHighlight == true, line.data.totalLength <= LineController.maximumHighlightedLineLength {
+                previousAttributedString = old
+            } else {
+                previousAttributedString = nil
+            }
             if let string = stringView.substring(in: range) {
                 attributedString = NSMutableAttributedString(string: string)
             } else {
@@ -256,7 +267,11 @@ private extension LineController {
                     tabWidth: tabWidth
                 )
                 defaultStringAttributes.apply(to: input.attributedString)
+                if let previous = previousAttributedString {
+                    LineController.carryOverAttributes(from: previous, to: input.attributedString)
+                }
             }
+            previousAttributedString = nil
             isDefaultAttributesInvalid = false
             isSyntaxHighlightingInvalid = true
             isTypesetterInvalid = true
@@ -502,5 +517,39 @@ extension LineController: LineFragmentControllerDelegate {
         let lineFragment = controller.lineFragment
         let range = NSRange(location: line.location + lineFragment.visibleRange.location, length: lineFragment.visibleRange.length)
         return stringView.substring(in: range)
+    }
+}
+
+extension LineController {
+    /// Copies `previous`'s attribute runs onto `target` over their common prefix and
+    /// suffix, so a single edit keeps the rest of the line's highlighting.
+    static func carryOverAttributes(from previous: NSAttributedString, to target: NSMutableAttributedString) {
+        let old = previous.string as NSString
+        let new = target.string as NSString
+        let oldLength = old.length
+        let newLength = new.length
+        let maxCommon = min(oldLength, newLength)
+        guard maxCommon > 0 else { return }
+        var prefix = 0
+        while prefix < maxCommon && old.character(at: prefix) == new.character(at: prefix) {
+            prefix += 1
+        }
+        var suffix = 0
+        while suffix < maxCommon - prefix && old.character(at: oldLength - 1 - suffix) == new.character(at: newLength - 1 - suffix) {
+            suffix += 1
+        }
+        target.beginEditing()
+        if prefix > 0 {
+            previous.enumerateAttributes(in: NSRange(location: 0, length: prefix), options: []) { attributes, range, _ in
+                target.setAttributes(attributes, range: range)
+            }
+        }
+        if suffix > 0 {
+            let shift = newLength - oldLength
+            previous.enumerateAttributes(in: NSRange(location: oldLength - suffix, length: suffix), options: []) { attributes, range, _ in
+                target.setAttributes(attributes, range: NSRange(location: range.location + shift, length: range.length))
+            }
+        }
+        target.endEditing()
     }
 }

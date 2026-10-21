@@ -29,12 +29,12 @@ public class UndoController: ObservableObject {
     var checkUndoState: (() -> (canUndo: Bool, canRedo: Bool))?
 
     /// Closure to replace text at a range (set by KeystoneTextView's coordinator).
-    /// Parameters: (range: NSRange, replacementText: String) -> new text content
-    var replaceTextAction: ((NSRange, String) -> String?)?
+    /// Parameters: (range: NSRange, replacementText: String) -> whether the replacement happened
+    var replaceTextAction: ((NSRange, String) -> Bool)?
 
     /// Closure to replace all text (set by KeystoneTextView's coordinator).
-    /// Parameters: (newText: String) -> new text content
-    var replaceAllAction: ((String) -> String?)?
+    /// Parameters: (newText: String) -> whether the replacement happened
+    var replaceAllAction: ((String) -> Bool)?
 
     /// Closure to begin an undo grouping (for batching multiple changes).
     var beginUndoGroupingAction: (() -> Void)?
@@ -73,9 +73,10 @@ public class UndoController: ObservableObject {
     /// - Parameters:
     ///   - range: The NSRange to replace.
     ///   - text: The replacement text.
-    /// - Returns: The new full text content, or nil if replacement failed.
-    public func replaceText(in range: NSRange, with text: String) -> String? {
-        let result = replaceTextAction?(range, text)
+    /// - Returns: Whether the replacement happened. Read the new text from the document, not from here.
+    @discardableResult
+    public func replaceText(in range: NSRange, with text: String) -> Bool {
+        let result = replaceTextAction?(range, text) ?? false
         updateState()
         return result
     }
@@ -83,9 +84,10 @@ public class UndoController: ObservableObject {
     /// Replaces all text with proper undo/redo support.
     /// Use this for Replace All operations.
     /// - Parameter text: The new text content.
-    /// - Returns: The new text content, or nil if replacement failed.
-    public func replaceAll(with text: String) -> String? {
-        let result = replaceAllAction?(text)
+    /// - Returns: Whether the replacement happened.
+    @discardableResult
+    public func replaceAll(with text: String) -> Bool {
+        let result = replaceAllAction?(text) ?? false
         updateState()
         return result
     }

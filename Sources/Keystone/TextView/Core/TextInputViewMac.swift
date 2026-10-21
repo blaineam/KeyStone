@@ -17,6 +17,7 @@ protocol TextInputViewMacDelegate: AnyObject {
     func textInputViewDidEndEditing(_ view: TextInputViewMac)
     func textInputViewDidCancelBeginEditing(_ view: TextInputViewMac)
     func textInputViewDidChange(_ view: TextInputViewMac)
+    func textInputView(_ view: TextInputViewMac, didReplaceTextIn range: NSRange, replacementLength: Int)
     func textInputViewDidChangeSelection(_ view: TextInputViewMac)
     func textInputView(_ view: TextInputViewMac, shouldChangeTextIn range: NSRange, replacementText text: String) -> Bool
     func textInputViewDidInvalidateContentSize(_ view: TextInputViewMac)
@@ -59,6 +60,7 @@ final class TextInputViewMac: NSView, NSTextInputClient {
             if newValue != stringView.string {
                 stringView.string = newValue
                 languageMode.parse(newValue)
+                startDeferredParseIfNeeded()
                 lineManager.rebuild()
                 if let oldSelectedRange = selection {
                     selection = safeSelectionRange(from: oldSelectedRange)
@@ -363,6 +365,7 @@ final class TextInputViewMac: NSView, NSTextInputClient {
                 if let treeSitterLanguageMode = languageMode as? TreeSitterInternalLanguageMode {
                     treeSitterLanguageMode.delegate = self
                 }
+                startDeferredParseIfNeeded()
             }
         }
     }
@@ -1203,6 +1206,7 @@ final class TextInputViewMac: NSView, NSTextInputClient {
         let newTextLength = stringView.string.length
         let safeLocation = min(newRange.upperBound, newTextLength)
         _selectedRange = NSRange(location: safeLocation, length: 0)
+        delegate?.textInputView(self, didReplaceTextIn: range, replacementLength: (text as NSString).length)
         delegate?.textInputViewDidChange(self)
         delegate?.textInputViewDidChangeSelection(self)
         if textEditResult.didAddOrRemoveLines {
@@ -1279,6 +1283,7 @@ final class TextInputViewMac: NSView, NSTextInputClient {
         lineChangeSet.union(with: languageModeLineChangeSet)
         applyLineChangesToLayoutManager(lineChangeSet)
 
+        delegate?.textInputView(self, didReplaceTextIn: range, replacementLength: nsNewString.length)
         delegate?.textInputViewDidChange(self)
         if textEditResult.didAddOrRemoveLines {
             delegate?.textInputViewDidInvalidateContentSize(self)
@@ -1414,6 +1419,26 @@ extension TextInputViewMac: TreeSitterLanguageModeDelegate {
     func treeSitterLanguageModeDidTimeout(_ languageMode: TreeSitterInternalLanguageMode) {
         delegate?.textInputViewDidTimeoutParsing(self)
     }
+
+    func treeSitterLanguageMode(_ languageMode: TreeSitterInternalLanguageMode, didReparseLines lines: Set<DocumentLineNode>) {
+        guard languageMode === self.languageMode as AnyObject, !lines.isEmpty else { return }
+        layoutManager.redisplayLines(withIDs: Set(lines.map(\.id)))
+        layoutManager.setNeedsLayout()
+        layoutManager.layoutIfNeeded()
+    }
+
+    /// Big documents skip the synchronous parse on load; run it in the background and
+    /// highlight once it lands. Until then the text renders plain.
+    private func startDeferredParseIfNeeded() {
+        guard let treeSitterMode = languageMode as? TreeSitterInternalLanguageMode, treeSitterMode.needsDeferredParse else { return }
+        let parsingMode = treeSitterMode
+        treeSitterMode.parse(string) { [weak self] finished in
+            guard let self = self, self.languageMode === parsingMode, finished else { return }
+            self.invalidateLines()
+            self.layoutManager.setNeedsLayout()
+            self.layoutManager.layoutIfNeeded()
+        }
+    }
 }
 
 // MARK: - LineControllerStorageDelegate
@@ -1471,6 +1496,10 @@ extension TextInputViewMac: IndentControllerDelegate {
 #if DEBUG
 extension TextInputViewMac {
     /// Every highlight capture in the document, for tests comparing incremental and fresh parses.
+    var debugIsParsingIdle: Bool {
+        (languageMode as? TreeSitterInternalLanguageMode)?.debugIsParsingIdle ?? true
+    }
+
     func debugCaptureSignature() -> [String] {
         guard let mode = languageMode as? TreeSitterInternalLanguageMode else { return [] }
         let range = ByteRange(location: ByteCount(0), length: ByteCount(string.length * 2))

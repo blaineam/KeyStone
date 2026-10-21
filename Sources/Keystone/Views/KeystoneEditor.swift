@@ -25,8 +25,20 @@ import SwiftUI
 public struct KeystoneEditor: View {
     // MARK: - Properties
 
-    /// The text content being edited.
-    @Binding public var text: String
+    /// The document given by the host, or nil when this editor was created with a `text` binding.
+    private var externalDocument: KeystoneDocument?
+    /// The document this editor owns when created with a `text` binding.
+    @StateObject private var ownedDocument: KeystoneDocument
+    /// The document being edited.
+    public var document: KeystoneDocument { externalDocument ?? ownedDocument }
+
+    /// The `text` binding of the legacy initializers, kept in step with ``document``.
+    private var legacyText: Binding<String>?
+    /// The last value pushed into `legacyText`, so SwiftUI echoing it back is not taken for a host change.
+    @State private var lastPushedLegacyText: String?
+    @State private var legacyPushWorkItem: DispatchWorkItem?
+    /// UTF-16 length above which the legacy binding is written only once typing pauses.
+    private static let legacyPushDebounceThreshold = 1_500_000
 
     /// External language binding (optional - for two-way sync with parent)
     private var externalLanguage: Binding<KeystoneLanguage>?
@@ -51,8 +63,11 @@ public struct KeystoneEditor: View {
     /// Callback when the scroll position changes.
     public var onScrollChange: ((CGFloat) -> Void)?
 
-    /// Callback when text changes.
+    /// Callback when text changes (legacy `text:` initializers). Receives the full text; prefer ``onChange``.
     public var onTextChange: ((String) -> Void)?
+
+    /// Callback after every edit, with no text attached. Read ``document`` for what you need.
+    public var onChange: ((KeystoneDocument.Change) -> Void)?
 
     /// Optional external cursor position binding. When provided, allows external control of cursor position.
     /// Useful for features like "scroll to end" in tail follow mode.
@@ -150,7 +165,9 @@ public struct KeystoneEditor: View {
         onConvertIndentation: ((IndentationSettings) -> Void)? = nil,
         onAutoLanguageChange: ((KeystoneLanguage, String) -> Void)? = nil
     ) {
-        self._text = text
+        self.legacyText = text
+        self.externalDocument = nil
+        self._ownedDocument = StateObject(wrappedValue: KeystoneDocument(text: text.wrappedValue))
         self.externalLanguage = language
         self._internalLanguage = State(initialValue: language.wrappedValue)
         self.configuration = configuration
@@ -187,7 +204,9 @@ public struct KeystoneEditor: View {
         onConvertIndentation: ((IndentationSettings) -> Void)? = nil,
         onAutoLanguageChange: ((KeystoneLanguage, String) -> Void)? = nil
     ) {
-        self._text = text
+        self.legacyText = text
+        self.externalDocument = nil
+        self._ownedDocument = StateObject(wrappedValue: KeystoneDocument(text: text.wrappedValue))
         self.externalLanguage = nil
         self._internalLanguage = State(initialValue: language)
         self.configuration = configuration
@@ -199,6 +218,87 @@ public struct KeystoneEditor: View {
         self.onCursorChange = onCursorChange
         self.onScrollChange = onScrollChange
         self.onTextChange = onTextChange
+        self.onToggleTailFollow = onToggleTailFollow
+        self.onConvertLineEndings = onConvertLineEndings
+        self.onConvertIndentation = onConvertIndentation
+        self.onAutoLanguageChange = onAutoLanguageChange
+    }
+
+    /// Creates a code editor for a host-owned document. This is the fast path for
+    /// large files: no text is copied per keystroke.
+    /// - Parameters:
+    ///   - document: The document to edit. Load text with `document.replaceAll(with:markSaved:)`, save with `document.text` then `document.markSaved()`.
+    ///   - language: Binding to the language, for two-way sync with the host.
+    ///   - onChange: Called after every edit with a ``KeystoneDocument/Change``.
+    public init(
+        document: KeystoneDocument,
+        language: Binding<KeystoneLanguage>,
+        configuration: KeystoneConfiguration,
+        findReplaceManager: FindReplaceManager,
+        cursorPosition: Binding<CursorPosition>? = nil,
+        scrollToCursor: Binding<Bool>? = nil,
+        showGoToLine: Binding<Bool>? = nil,
+        isTailFollowEnabled: Binding<Bool>? = nil,
+        onCursorChange: ((CursorPosition) -> Void)? = nil,
+        onScrollChange: ((CGFloat) -> Void)? = nil,
+        onChange: ((KeystoneDocument.Change) -> Void)? = nil,
+        onToggleTailFollow: (() -> Void)? = nil,
+        onConvertLineEndings: ((LineEnding) -> Void)? = nil,
+        onConvertIndentation: ((IndentationSettings) -> Void)? = nil,
+        onAutoLanguageChange: ((KeystoneLanguage, String) -> Void)? = nil
+    ) {
+        self.legacyText = nil
+        self.externalDocument = document
+        self._ownedDocument = StateObject(wrappedValue: KeystoneDocument())
+        self.externalLanguage = language
+        self._internalLanguage = State(initialValue: language.wrappedValue)
+        self.configuration = configuration
+        self.findReplaceManager = findReplaceManager
+        self.externalCursorPosition = cursorPosition
+        self.externalScrollToCursor = scrollToCursor
+        self.externalShowGoToLine = showGoToLine
+        self.isTailFollowEnabled = isTailFollowEnabled
+        self.onCursorChange = onCursorChange
+        self.onScrollChange = onScrollChange
+        self.onChange = onChange
+        self.onToggleTailFollow = onToggleTailFollow
+        self.onConvertLineEndings = onConvertLineEndings
+        self.onConvertIndentation = onConvertIndentation
+        self.onAutoLanguageChange = onAutoLanguageChange
+    }
+
+    /// Creates a code editor for a host-owned document with an initial language value.
+    public init(
+        document: KeystoneDocument,
+        language: KeystoneLanguage = .plainText,
+        configuration: KeystoneConfiguration,
+        findReplaceManager: FindReplaceManager,
+        cursorPosition: Binding<CursorPosition>? = nil,
+        scrollToCursor: Binding<Bool>? = nil,
+        showGoToLine: Binding<Bool>? = nil,
+        isTailFollowEnabled: Binding<Bool>? = nil,
+        onCursorChange: ((CursorPosition) -> Void)? = nil,
+        onScrollChange: ((CGFloat) -> Void)? = nil,
+        onChange: ((KeystoneDocument.Change) -> Void)? = nil,
+        onToggleTailFollow: (() -> Void)? = nil,
+        onConvertLineEndings: ((LineEnding) -> Void)? = nil,
+        onConvertIndentation: ((IndentationSettings) -> Void)? = nil,
+        onAutoLanguageChange: ((KeystoneLanguage, String) -> Void)? = nil
+    ) {
+        self.legacyText = nil
+        self.externalDocument = document
+        self._ownedDocument = StateObject(wrappedValue: KeystoneDocument())
+        self.externalLanguage = nil
+        self._internalLanguage = State(initialValue: language)
+        self.configuration = configuration
+        self.findReplaceManager = findReplaceManager
+        self.externalCursorPosition = cursorPosition
+        self.externalScrollToCursor = scrollToCursor
+        self.externalShowGoToLine = showGoToLine
+        self.isTailFollowEnabled = isTailFollowEnabled
+        self.onCursorChange = onCursorChange
+        self.onScrollChange = onScrollChange
+        self.onChange = onChange
         self.onToggleTailFollow = onToggleTailFollow
         self.onConvertLineEndings = onConvertLineEndings
         self.onConvertIndentation = onConvertIndentation
@@ -245,7 +345,7 @@ public struct KeystoneEditor: View {
             #if os(iOS)
             KeystoneFindReplaceBar(
                 manager: findReplaceManager,
-                text: $text,
+                document: document,
                 undoController: undoController,
                 isLargeFile: configuration.isLargeFileMode,
                 isSearchFieldFocused: $isSearchFieldFocused,
@@ -254,7 +354,7 @@ public struct KeystoneEditor: View {
             #else
             KeystoneFindReplaceBar(
                 manager: findReplaceManager,
-                text: $text,
+                document: document,
                 undoController: undoController,
                 isLargeFile: configuration.isLargeFileMode,
                 onNavigateToMatch: navigateToMatch
@@ -266,7 +366,7 @@ public struct KeystoneEditor: View {
     @ViewBuilder
     private var mainEditorView: some View {
         KeystoneTextView(
-            text: $text,
+            document: document,
             language: internalLanguage,
             configuration: configuration,
             cursorPosition: cursorPosition,
@@ -318,11 +418,11 @@ public struct KeystoneEditor: View {
             configuration: configuration,
             isPresented: $showSettings,
             onConvertLineEndings: { newEnding in
-                text = LineEnding.convert(text, to: newEnding)
+                document.replaceAll(with: LineEnding.convert(document.text, to: newEnding), preservingUndo: true)
                 onConvertLineEndings?(newEnding)
             },
             onConvertIndentation: { newIndentation in
-                text = IndentationSettings.convert(text, to: newIndentation)
+                document.replaceAll(with: IndentationSettings.convert(document.text, to: newIndentation), preservingUndo: true)
                 onConvertIndentation?(newIndentation)
             }
         )
@@ -345,28 +445,29 @@ public struct KeystoneEditor: View {
                 internalLanguage = newValue
             }
         }
-        .onChange(of: text) { _, newValue in
-            updateLineCount(from: newValue)
-            if findReplaceManager.isVisible && !findReplaceManager.searchQuery.isEmpty {
-                findReplaceManager.search(in: newValue)
-            }
-            updateMatchingBracket()
-            onTextChange?(newValue)
+        .onReceive(document.didChange) { change in
+            handleDocumentChange(change)
+        }
+        .onReceive(document.$lineCount) { count in
+            if count != lineCount { lineCount = count }
+        }
+        .onChange(of: legacyText?.wrappedValue) { _, newValue in
+            handleLegacyTextChange(newValue)
         }
         .onChange(of: cursorPosition.wrappedValue) { _, newPosition in
             onCursorChange?(newPosition)
-            updateMatchingBracket()
         }
         .onChange(of: matchingBracket) { _, _ in }
         .onChange(of: scrollOffset) { _, newOffset in
             onScrollChange?(newOffset)
         }
         .onAppear {
-            updateLineCount(from: text)
+            lineCount = document.lineCount
+            let document = self.document
             undoController.onUndoRedo = { [weak findReplaceManager] in
                 guard let manager = findReplaceManager, manager.isVisible else { return }
                 Task { @MainActor in
-                    manager.search(in: self.text)
+                    manager.search(in: document.text)
                 }
             }
         }
@@ -453,35 +554,52 @@ public struct KeystoneEditor: View {
 
     // MARK: - Private Methods
 
-    private func updateLineCount(from text: String) {
-        lineCount = text.filter { $0 == "\n" }.count + 1
+    private func handleDocumentChange(_ change: KeystoneDocument.Change) {
+        if findReplaceManager.isVisible && !findReplaceManager.searchQuery.isEmpty && !configuration.isLargeFileMode {
+            findReplaceManager.search(in: document.text)
+        }
+        onChange?(change)
+        if legacyText != nil {
+            scheduleLegacyPush()
+        }
     }
 
-    private func updateMatchingBracket() {
-        guard configuration.highlightMatchingBrackets else {
-            matchingBracket = nil
-            return
+    /// The legacy `text` binding gets a snapshot right away for ordinary files and
+    /// once typing pauses for big ones; copying the buffer per keystroke is what
+    /// made those files unusable.
+    private func scheduleLegacyPush() {
+        legacyPushWorkItem?.cancel()
+        legacyPushWorkItem = nil
+        if document.utf16Length < Self.legacyPushDebounceThreshold {
+            pushLegacyText()
+        } else {
+            let work = DispatchWorkItem { pushLegacyText() }
+            legacyPushWorkItem = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: work)
         }
+    }
 
-        let offset = cursorPosition.wrappedValue.offset
+    private func pushLegacyText() {
+        guard let binding = legacyText else { return }
+        let snapshot = document.text
+        lastPushedLegacyText = snapshot
+        binding.wrappedValue = snapshot
+        onTextChange?(snapshot)
+    }
 
-        // Check character at cursor position first (cursor is at the start of a bracket)
-        if offset < text.count {
-            if let match = BracketMatcher.findMatch(in: text, at: offset) {
-                matchingBracket = match
-                return
-            }
-        }
-
-        // Then check character before cursor (cursor is after a bracket)
-        if offset > 0 {
-            if let match = BracketMatcher.findMatch(in: text, at: offset - 1) {
-                matchingBracket = match
-                return
-            }
-        }
-
-        matchingBracket = nil
+    /// A host wrote the legacy binding (file load, revert). Our own pushes come
+    /// back through here too and are ignored.
+    private func handleLegacyTextChange(_ newValue: String?) {
+        guard let newValue, legacyText != nil else { return }
+        if let last = lastPushedLegacyText, last == newValue { return }
+        legacyPushWorkItem?.cancel()
+        legacyPushWorkItem = nil
+        lastPushedLegacyText = newValue
+        // Match the old heuristic: a wholesale change (file load) resets undo, a small one keeps it.
+        let currentLength = document.utf16Length
+        let newLength = newValue.utf16.count
+        let isSignificant = currentLength == 0 || newLength == 0 || abs(currentLength - newLength) > newLength / 2
+        document.replaceAll(with: newValue, preservingUndo: !isSignificant)
     }
 
     private func insertSymbol(_ symbol: String) {
@@ -502,13 +620,12 @@ public struct KeystoneEditor: View {
         var cursorAdjustment = symbol.count
 
         if symbol.count == 1, let char = symbol.first {
-            let nsText = text as NSString
+            let nsText = document.backingString
 
             // Check if we should skip over an existing closing character
             if configuration.shouldSkipClosingPair(for: char, in: nsText, at: offset) {
                 // Just move cursor past the existing character
-                let newOffset = offset + 1
-                cursorPosition.wrappedValue = CursorPosition.from(offset: newOffset, in: text, selectionLength: 0)
+                cursorPosition.wrappedValue = document.position(atOffset: offset + 1)
                 return
             }
 
@@ -519,18 +636,10 @@ public struct KeystoneEditor: View {
             }
         }
 
-        // Try to use undoController for proper undo registration
-        if let newText = undoController.replaceText(in: insertRange, with: textToInsert) {
-            text = newText
-        } else {
-            // Fallback: direct insertion (no undo support)
-            let index = text.index(text.startIndex, offsetBy: min(offset, text.count))
-            text.insert(contentsOf: textToInsert, at: index)
-        }
+        guard undoController.replaceText(in: insertRange, with: textToInsert) else { return }
 
         // Update cursor position
-        let newOffset = offset + cursorAdjustment
-        cursorPosition.wrappedValue = CursorPosition.from(offset: newOffset, in: text, selectionLength: 0)
+        cursorPosition.wrappedValue = document.position(atOffset: offset + cursorAdjustment)
     }
 
     /// Toggles comments on the current line or selection.
@@ -538,36 +647,23 @@ public struct KeystoneEditor: View {
         let cursor = cursorPosition.wrappedValue
         let selectedRange = NSRange(location: cursor.offset, length: cursor.selectionLength)
 
-        // Use the version that also returns the new cursor position
-        guard let (newText, newSelection) = CommentToggle.toggleComment(
-            text: text,
+        // One snapshot of the text; the result carries the range to replace and the new cursor.
+        guard let result = CommentToggle.toggleCommentWithRange(
+            text: document.text,
             selectedRange: selectedRange,
             language: internalLanguage
         ) else {
             return // Language doesn't support comments
         }
 
-        // Calculate the replacement range for undo support
-        // We need to use the range-based API for proper undo registration
-        if let result = CommentToggle.toggleCommentWithRange(
-            text: text,
-            selectedRange: selectedRange,
-            language: internalLanguage
-        ) {
-            // Use undo controller for proper undo support
-            _ = undoController.replaceText(in: result.replacedRange, with: result.replacementText)
-        }
+        guard undoController.replaceText(in: result.replacedRange, with: result.replacementText) else { return }
 
-        // Update the text binding
-        text = newText
-
-        // Update cursor position to the computed new position
-        // This prevents the scroll from jumping to an incorrect position
-        let clampedOffset = min(newSelection.location, newText.count)
-        cursorPosition.wrappedValue = CursorPosition.from(
-            offset: clampedOffset,
-            in: newText,
-            selectionLength: newSelection.length
+        // Keep a multi-line selection covering the same lines: it grows or shrinks by the length delta.
+        let delta = (result.replacementText as NSString).length - result.replacedRange.length
+        let newSelectionLength = cursor.selectionLength > 0 ? max(0, cursor.selectionLength + delta) : 0
+        cursorPosition.wrappedValue = document.position(
+            atOffset: newSelectionLength > 0 ? result.replacedRange.location : result.newCursorOffset,
+            selectionLength: newSelectionLength
         )
     }
 
@@ -582,7 +678,7 @@ public struct KeystoneEditor: View {
         }
 
         guard let result = Base64Toggle.toggleBase64WithRange(
-            text: text,
+            text: document.text,
             selectedRange: selectedRange
         ) else {
             return
@@ -597,24 +693,19 @@ public struct KeystoneEditor: View {
         // Capture what we need for the closure - undoController is a class so it stays valid
         let undoCtrl = undoController
         let cursorBinding = cursorPosition
+        let document = self.document
         let replacedRange = result.replacedRange
         let replacementText = result.replacementText
 
         // Helper to apply the text change
         let applyChange: () -> Void = {
             // Use undoController to properly register in undo/redo history
-            if let newText = undoCtrl.replaceText(in: replacedRange, with: replacementText) {
-                // Calculate safe cursor position for the new text
-                let safeOffset: Int = min(replacedRange.location, newText.count)
-                let safeLength: Int = min(replacementText.count, max(0, newText.count - safeOffset))
-
-                // Update cursor position to select the replacement text
-                cursorBinding.wrappedValue = CursorPosition.from(
-                    offset: safeOffset,
-                    in: newText,
-                    selectionLength: safeLength
-                )
-            }
+            guard undoCtrl.replaceText(in: replacedRange, with: replacementText) else { return }
+            let length = document.utf16Length
+            let safeOffset = min(replacedRange.location, length)
+            let safeLength = min((replacementText as NSString).length, max(0, length - safeOffset))
+            // Select the replacement text
+            cursorBinding.wrappedValue = document.position(atOffset: safeOffset, selectionLength: safeLength)
         }
 
         if needsLanguageSwitch {
@@ -653,57 +744,12 @@ public struct KeystoneEditor: View {
 
     private func goToLine(_ lineNumber: Int, column: Int = 1) {
         // Clamp line number to valid range (1 to lineCount, minimum 1)
-        let maxLine = max(1, lineCount)
+        let maxLine = max(1, document.lineCount)
         let targetLine = min(max(1, lineNumber), maxLine)
-
-        // Use NSString for efficient character access
-        let nsText = text as NSString
-        let textLength = nsText.length
-
-        var lineStartOffset = 0
-        var lineEndOffset = textLength
-        var currentLine = 1
-
-        // Find the start of the target line by counting newlines
-        for i in 0..<textLength {
-            if currentLine == targetLine {
-                lineStartOffset = i
-                // Find end of this line
-                for j in i..<textLength {
-                    if nsText.character(at: j) == 0x0A { // '\n'
-                        lineEndOffset = j
-                        break
-                    }
-                }
-                break
-            }
-            if nsText.character(at: i) == 0x0A { // '\n'
-                currentLine += 1
-            }
-        }
-
-        // Handle case where target line is the last line or beyond
-        if currentLine < targetLine {
-            // Didn't reach target line, go to end of file
-            lineStartOffset = textLength
-            lineEndOffset = textLength
-        }
-
-        // Calculate final offset with column (clamped to line length)
-        let lineLength = lineEndOffset - lineStartOffset
-        let columnOffset = min(max(0, column - 1), lineLength)
-        let finalOffset = min(lineStartOffset + columnOffset, textLength)
-
-        // Create the new cursor position
-        let newPosition = CursorPosition(
-            line: targetLine,
-            column: min(column, lineLength + 1),
-            selectionLength: 0,
-            offset: finalOffset
-        )
+        guard let offset = document.offset(line: targetLine, column: column) else { return }
 
         // Set cursor position and scroll (no delay needed - alert dismisses synchronously)
-        cursorPosition.wrappedValue = newPosition
+        cursorPosition.wrappedValue = document.position(atOffset: offset)
         scrollToCursor.wrappedValue = true
         isEditorFocused = true
     }
@@ -711,15 +757,10 @@ public struct KeystoneEditor: View {
     private func navigateToMatch(_ match: SearchMatch) {
         // The match may be stale if the document was edited after the search —
         // resolve against the current text rather than trusting its indices.
-        guard let range = match.resolvedRange(in: text) else { return }
+        guard let range = match.resolvedNSRange(inBacking: document.backingString) else { return }
         // Request scroll to cursor when navigating to a search match
         scrollToCursor.wrappedValue = true
-        // Navigate to the match location
-        cursorPosition.wrappedValue = CursorPosition.from(
-            offset: text.distance(from: text.startIndex, to: range.lowerBound),
-            in: text,
-            selectionLength: match.matchedText.count
-        )
+        cursorPosition.wrappedValue = document.position(atOffset: range.location, selectionLength: range.length)
     }
 }
 
@@ -727,7 +768,7 @@ public struct KeystoneEditor: View {
 
 struct KeystoneFindReplaceBar: View {
     @ObservedObject var manager: FindReplaceManager
-    @Binding var text: String
+    let document: KeystoneDocument
     var undoController: UndoController?
     var isLargeFile: Bool = false
     #if os(iOS)
@@ -776,7 +817,7 @@ struct KeystoneFindReplaceBar: View {
                     ) {
                         manager.options.caseSensitive.toggle()
                         // Only auto-search for small files
-                        if !isLargeFile { manager.search(in: text) }
+                        if !isLargeFile { manager.search(in: document.text) }
                     }
 
                     toggleButtonWithLabel(
@@ -785,7 +826,7 @@ struct KeystoneFindReplaceBar: View {
                         isActive: manager.options.wholeWord
                     ) {
                         manager.options.wholeWord.toggle()
-                        if !isLargeFile { manager.search(in: text) }
+                        if !isLargeFile { manager.search(in: document.text) }
                     }
 
                     toggleButtonWithLabel(
@@ -794,7 +835,7 @@ struct KeystoneFindReplaceBar: View {
                         isActive: manager.options.useRegex
                     ) {
                         manager.options.useRegex.toggle()
-                        if !isLargeFile { manager.search(in: text) }
+                        if !isLargeFile { manager.search(in: document.text) }
                     }
                 }
 
@@ -863,7 +904,7 @@ struct KeystoneFindReplaceBar: View {
                         if !manager.matches.isEmpty {
                             manager.findNext()
                         } else {
-                            manager.search(in: text)
+                            manager.search(in: document.text)
                         }
                         if let match = manager.currentMatch {
                             onNavigateToMatch?(match)
@@ -946,8 +987,8 @@ struct KeystoneFindReplaceBar: View {
             // For large files: NO auto-search, only on Enter key
             // For small files: auto-search with 2s debounce after 3+ characters
             if !isLargeFile && newValue.count >= FindReplaceManager.minimumSearchLength {
-                let task = DispatchWorkItem { [manager, text] in
-                    manager.search(in: text)
+                let task = DispatchWorkItem { [manager, document] in
+                    manager.search(in: document.text)
                 }
                 searchDebounceTask = task
                 DispatchQueue.main.asyncAfter(deadline: .now() + Self.autoSearchDelay, execute: task)
@@ -982,26 +1023,21 @@ struct KeystoneFindReplaceBar: View {
         // The match is only valid for the text that was searched. If the
         // document changed since (edit while the find bar is open), refresh
         // the search instead of replacing whatever now sits at stale offsets.
-        guard let swiftRange = match.resolvedRange(in: text) else {
-            manager.search(in: text)
+        guard let nsRange = match.resolvedNSRange(inBacking: document.backingString) else {
+            manager.search(in: document.text)
             return
         }
-        let nsRange = NSRange(swiftRange, in: text)
         let replaceText = manager.replaceText
 
-        // Try to use undoController for proper undo support
-        if let undoController = undoController,
-           let newText = undoController.replaceText(in: nsRange, with: replaceText) {
-            text = newText
+        if let undoController = undoController, undoController.replaceText(in: nsRange, with: replaceText) {
             // Defer search to next run loop to allow UI to update first
+            let document = self.document
             Task { @MainActor in
-                manager.search(in: self.text)
+                manager.search(in: document.text)
             }
-        } else {
-            // Fallback: direct replacement (no undo support)
-            if let newText = manager.replaceCurrent(in: text) {
-                text = newText
-            }
+        } else if let newText = manager.replaceCurrent(in: document.text) {
+            // Fallback: whole-document replacement (no undo support)
+            document.replaceAll(with: newText, preservingUndo: true)
         }
     }
 
@@ -1013,28 +1049,21 @@ struct KeystoneFindReplaceBar: View {
         let replacementText = manager.replaceText
 
         // Compute the final text with all replacements in memory (fast)
-        let finalText = manager.replaceAll(in: text)
+        let finalText = manager.replaceAll(in: document.text)
 
-        // Try to use undoController for proper undo support
-        if let undoController = undoController {
-            // Use replaceAll for full document replacement with proper undo/redo
-            if let newText = undoController.replaceAll(with: finalText) {
-                text = newText
-            } else {
-                text = finalText
-            }
-
-            // Only re-search if the replacement text contains the search query
-            // (meaning new matches might have been created by the replacement)
-            // Defer to next run loop to allow UI to update first
-            if replacementText.localizedCaseInsensitiveContains(searchQuery) {
-                Task { @MainActor in
-                    manager.search(in: self.text)
-                }
-            }
+        if let undoController = undoController, undoController.replaceAll(with: finalText) {
+            // Replaced through the text view, with undo.
         } else {
-            // Fallback: direct replacement (no undo support)
-            text = finalText
+            document.replaceAll(with: finalText, preservingUndo: true)
+        }
+
+        // Only re-search if the replacement text contains the search query
+        // (meaning new matches might have been created by the replacement)
+        if replacementText.localizedCaseInsensitiveContains(searchQuery) {
+            let document = self.document
+            Task { @MainActor in
+                manager.search(in: document.text)
+            }
         }
     }
 }
@@ -1438,13 +1467,13 @@ struct KeystoneEditorToolbarBar: View {
 
 #Preview("Keystone Editor") {
     struct PreviewWrapper: View {
-        @State private var text = "func hello() {\n    print(\"Hello, World!\")\n}\n\nhello()"
+        @StateObject private var document = KeystoneDocument(text: "func hello() {\n    print(\"Hello, World!\")\n}\n\nhello()")
         @StateObject private var config = KeystoneConfiguration()
         @StateObject private var findReplace = FindReplaceManager()
 
         var body: some View {
             KeystoneEditor(
-                text: $text,
+                document: document,
                 language: .swift,  // Uses constant, but language can still be changed via dropdown
                 configuration: config,
                 findReplaceManager: findReplace

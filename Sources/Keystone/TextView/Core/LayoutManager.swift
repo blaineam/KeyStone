@@ -243,7 +243,7 @@ final class LayoutManager {
                 if visibleLineIDs.contains(lineID) {
                     let lineYPosition = lineController.line.yPosition
                     let lineLocalViewport = CGRect(x: 0, y: lineYPosition, width: insetViewport.width, height: insetViewport.maxY - lineYPosition)
-                    lineController.prepareToDisplayString(in: lineLocalViewport, syntaxHighlightAsynchronously: false)
+                    lineController.prepareToDisplayString(in: lineLocalViewport, syntaxHighlightAsynchronously: languageMode.prefersAsynchronousHighlighting)
                 }
             }
         }
