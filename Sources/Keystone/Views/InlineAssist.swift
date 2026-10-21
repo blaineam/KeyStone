@@ -22,6 +22,16 @@ public struct InlineAssistRequest: Sendable {
     public let contextAfter: String
     /// UTF-16 length of the whole document.
     public let documentLength: Int
+
+    public init(instruction: String, selectedText: String, selectionRange: NSRange, language: KeystoneLanguage, contextBefore: String, contextAfter: String, documentLength: Int) {
+        self.instruction = instruction
+        self.selectedText = selectedText
+        self.selectionRange = selectionRange
+        self.language = language
+        self.contextBefore = contextBefore
+        self.contextAfter = contextAfter
+        self.documentLength = documentLength
+    }
 }
 
 /// Returns the replacement for `request.selectedText`. Throw to show an error.

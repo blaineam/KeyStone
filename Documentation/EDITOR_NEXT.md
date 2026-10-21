@@ -16,26 +16,32 @@ change and bump `Package.resolved` once this branch is on `main`).
 | Background tree-sitter parsing ≥ 200 KB | `TreeSitterInternalLanguageMode`, `TreeSitterLanguageLayer` | flat 60k-line Swift: 410 ms → 1.6 ms per keystroke; open no longer blocks on the parse; old highlights kept on the edited line |
 | Edit-local injection updates (HTML/Markdown) | `TreeSitterLanguageLayer.updateChildLayersNearEdit` | no whole-tree injections query per keystroke > 200 KB |
 | Resume typesetting after the edit in long lines | `LineController`, `LineTypesetter` | 1 MB wrapped line: 115 → ~40 ms |
-| Fold regions from the syntax tree | `TreeSitterFoldRegions.swift`, `CodeFoldingManager.applySyntaxTreeRegions` | accurate folds for all tree-sitter languages incl. injections; computed in the parse op |
+| Fold regions from the syntax tree | `TreeSitterFoldRegions.swift`, `CodeFoldingManager.applySyntaxTreeRegions` | accurate folds for all tree-sitter languages incl. injections; computed in the parse op; iterative walk |
 | Search as you type at any size | `KeystoneEditor` find bar | 150 ms / 400 ms debounce, off main |
 | Budgets | `PerformanceBudgetTests` | open < 1 s, keystroke < 50 ms (100 ms inside a minified line), find hand-off < 50 ms |
-| Enter Space host on the document API | `CodeEditorView`, `EditorBufferStore` | version-based dirty flag, lazy snapshots |
+| macOS keyboard parity | `TextInputViewMac` navigation extension, `TextNavigation.swift` | word/line/document movement, ⇧-extension, delete word/line, Tab/⇧Tab indent, Select Word/Line, ⇧-click |
+| Multiple cursors (macOS) | same | ⌥-click, ⌘D, ⌘⇧L, ⌘⌥↑/↓, Esc; typing/delete/paste/copy/undo across carets; `TextView.selectedRanges` |
+| Go to Symbol, breadcrumbs, command palette | `DocumentSymbols.swift`, `FuzzyPicker.swift`, `EditorCommands.swift` | symbols from the tree for every language; ⌘⇧O / ⌘⇧P; host commands via `.commands(_:)` |
+| Gutter change markers | `LineDiff.swift`, `KeystoneDocument.changeMarkers`, `GutterBackgroundView` | Myers over line hashes, 0.4 s debounce, reset by `markSaved()` |
+| Indent guides, bracket-pair colours, matching-bracket highlight | `LayoutManager`, `LineFragmentRenderer`, `TreeSitterSyntaxHighlighter` | settings toggles + palette commands |
+| Format: prettify / minify | `CodeFormatter.swift` | JSON (+JSONC), CSS, HTML/XML; token-based |
+| Inline Assist (⌘I) | `InlineAssist.swift`, `KeystoneEditor` | host supplies the model; proposal is one undo step, Accept/Reject/Try Again |
+| Enter Space host | `CodeEditorView`, `EditorBufferStore`, `EditorAssistService`, `EditorAssistSettingsSection` | document API, lazy snapshots, Ari local API (macOS) / Apple on-device model, remote files opt-in, Save/Preview/Version History in the palette |
 
-Known residual: typing deep inside a > 1 MB single line with wrapping still costs
-~25–40 ms because the whole line's attributed string and `CTTypesetter` are
-rebuilt; only chunked lines would remove that.
+Known residuals:
+- Typing deep inside a > 1 MB single line with wrapping still costs ~25–40 ms
+  (whole-line attributed string + `CTTypesetter` rebuild); only chunked lines
+  would remove that.
+- JavaScript/TypeScript prettify/minify need js-beautify + terser in
+  JavaScriptCore (a download the user has to approve).
+- Multiple cursors are macOS only (UIKit's `UITextInput` holds one range).
+- Symbols refresh automatically up to 500 KB; above that, opening Go to Symbol
+  computes them on demand.
 
-## Next
+## Ship list
 
-1. macOS keyboard parity: word/line/document movement, shift-extend, delete word,
-   page up/down (the Mac view only handled arrows and delete).
-2. Multi-cursor: ⌥-click, ⌘D next occurrence, ⌘⇧L all occurrences, ⌥⇧↑/↓, Esc.
-3. Outline / go-to-symbol (⌘⇧O) and breadcrumbs from the syntax tree.
-4. Command palette (⌘⇧P).
-5. Gutter diff markers vs. saved text; indent guides; bracket-pair colours and a
-   rendered matching-bracket highlight.
-6. Format: prettify / minify (native JSON/XML/CSS; js-beautify + terser in
-   JavaScriptCore for JS) with a diff preview.
-7. Inline assist (select → instruction → diff → accept/reject) via Ari's local
-   API on macOS (`127.0.0.1:8765`, OpenAI-compatible) and Apple Foundation
-   Models elsewhere; opt-in per remote in Enter Space.
+1. Push Keystone `feat/editor-next` → merge to `main` (2.7.0).
+2. Enter Space: drop the local-package pbxproj override, bump the KeyStone pin
+   in `Package.resolved`, merge `feat/editor-next-host` to `main`, release notes.
+3. Manual QA: 2 MB inlined HTML on the Mac (typing, ⌘D, folds, markers), Ari
+   local API round trip, Apple model on iOS.
