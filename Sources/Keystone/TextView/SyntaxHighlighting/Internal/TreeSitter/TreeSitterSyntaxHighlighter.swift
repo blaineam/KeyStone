@@ -160,7 +160,7 @@ private extension TreeSitterSyntaxHighlighter {
         let range = NSRange(byteRange)
         var textColor = theme.textColor(for: capture.name)
         if theme.colorizesBracketPairs, capture.name.hasPrefix("punctuation.bracket"),
-           let color = theme.bracketPairColor(depth: Self.bracketDepth(of: capture.node)) {
+           let color = theme.bracketPairColor(depth: capture.bracketDepth ?? 0) {
             textColor = color
         }
         let shadow = theme.shadow(for: capture.name)

@@ -44,7 +44,9 @@ final class TreeSitterQueryCursor {
                 let node = TreeSitterNode(node: capture.node)
                 let captureName = query.captureName(forId: capture.index)
                 let predicates = query.predicates(forPatternIndex: UInt32(match.pattern_index))
-                return TreeSitterCapture(node: node, index: capture.index, name: captureName, predicates: predicates)
+                // The node is valid only while the tree is: read what the highlighter needs from it now.
+                let bracketDepth = captureName.hasPrefix("punctuation.bracket") ? TreeSitterSyntaxHighlighter.bracketDepth(of: node) : nil
+                return TreeSitterCapture(node: node, index: capture.index, name: captureName, predicates: predicates, bracketDepth: bracketDepth)
             }
             let match = TreeSitterQueryMatch(captures: captures)
             let evaluator = TreeSitterTextPredicatesEvaluator(match: match, stringView: stringView)

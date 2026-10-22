@@ -2,6 +2,13 @@
 
 All notable changes to KeyStone are documented here. This project adheres to [Semantic Versioning](https://semver.org/). Releases before 2.6.0 are described by their tags and commit history.
 
+## [2.8.3] - 2026-10-22
+
+### Fixed
+
+- **Crash when typing at several carets (Enter Space 7.3.0 on the Mac).** The syntax highlighter collected its captures on a background queue and then, on the main queue, walked each bracket capture's node up the syntax tree to colour it by depth (`bracketDepth`). By then a reparse had replaced and freed the tree the nodes pointed into: a heap-use-after-free in `ts_node_parent`, which segfaulted whenever the timing lined up, which multi-caret typing (several edits, several reparses per keystroke) made likely. The depth is now read while the tree is still held (`TreeSitterCapture.bracketDepth`, computed under the tree lock when the capture is built) and the highlighter never touches a capture's node afterwards.
+- `MultiCaretHighlightRaceTests` reproduce it end to end (JavaScript and HTML with embedded languages, with and without the background parse path); the use-after-free is deterministic under `swift test --sanitize=address`.
+
 ## [2.8.2] - 2026-10-21
 
 ### CI
