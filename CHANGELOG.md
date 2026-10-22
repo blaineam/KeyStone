@@ -2,7 +2,7 @@
 
 All notable changes to KeyStone are documented here. This project adheres to [Semantic Versioning](https://semver.org/). Releases before 2.6.0 are described by their tags and commit history.
 
-## [Unreleased]
+## [2.9.0] - 2026-10-22
 
 ### Added
 
