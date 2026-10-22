@@ -5,7 +5,11 @@
 //  Prettify and minify for JSON, CSS and HTML/XML. Token-based: only whitespace
 //  (and, when minifying, comments) changes, so output is semantically the input.
 //  JavaScript/TypeScript go through js-beautify and terser in JavaScriptCore
-//  (see JavaScriptFormatter.swift); minify is JavaScript-only.
+//  (see JavaScriptFormatter.swift); minify is JavaScript-only. In HTML, the
+//  contents of <style> and JavaScript <script> elements go through the CSS and
+//  JavaScript formatters. Prettier's ignore comments are honoured: a region
+//  marked `prettier-ignore` (next node / rule / declaration / statement) or
+//  `prettier-ignore-start` … `prettier-ignore-end` (HTML) is left byte for byte.
 //
 
 import Foundation
@@ -41,6 +45,34 @@ public enum CodeFormatter {
         case "typescript", "ts", "mts", "cts", "tsx": return .javascript(isTypeScript: true)
         default: return nil
         }
+    }
+}
+
+// MARK: - prettier-ignore
+
+enum PrettierIgnore {
+    /// Whether `comment` (with its delimiters, e.g. "<!-- prettier-ignore -->" or "/* prettier-ignore */") is the given directive.
+    static func isDirective(_ comment: String, _ directive: String) -> Bool {
+        var body = Substring(comment)
+        for (open, close) in [("<!--", "-->"), ("/*", "*/"), ("//", "")] where body.hasPrefix(open) {
+            body = body.dropFirst(open.count)
+            if !close.isEmpty, body.hasSuffix(close) { body = body.dropLast(close.count) }
+            break
+        }
+        return body.trimmingCharacters(in: .whitespacesAndNewlines) == directive
+    }
+
+    /// `region` without a leading whitespace-only first line and without the whitespace after its last line break:
+    /// the lines between two markers, verbatim, ready to be emitted as lines of their own.
+    static func innerLines(of region: String) -> String {
+        var text = Substring(region)
+        if let newline = text.firstIndex(where: { $0 == "\n" || $0 == "\r\n" }), text[..<newline].allSatisfy({ $0 == " " || $0 == "\t" }) {
+            text = text[text.index(after: newline)...]
+        }
+        if let newline = text.lastIndex(where: { $0 == "\n" || $0 == "\r\n" }), text[text.index(after: newline)...].allSatisfy({ $0 == " " || $0 == "\t" }) {
+            text = text[..<newline]
+        }
+        return String(text)
     }
 }
 
@@ -170,15 +202,42 @@ enum JSONReformatter {
 enum CSSReformatter {
     enum Token { case open, close, semicolon, text(String), comment(String) }
 
-    static func tokenize(_ text: String) -> [Token] {
+    /// The tokens of `text` with, for each, its range in `text` (a `.text` token's range covers its trimmed source).
+    struct Tokens {
+        var tokens: [Token] = []
+        var ranges: [NSRange] = []
+        var count: Int { tokens.count }
+        subscript(index: Int) -> Token { tokens[index] }
+        func token(at index: Int) -> Token? { index < tokens.count ? tokens[index] : nil }
+    }
+
+    static func tokenize(_ text: String) -> [Token] { tokenizeWithRanges(text).tokens }
+
+    static func tokenizeWithRanges(_ text: String) -> Tokens {
         let s = text as NSString
         let n = s.length
-        var tokens: [Token] = []
+        var result = Tokens()
         var buffer = ""
+        var bufferStart = NSNotFound
+        var bufferEnd = 0
+        func append(_ piece: String, from start: Int, to end: Int) {
+            buffer += piece
+            if bufferStart == NSNotFound { bufferStart = start }
+            bufferEnd = end
+        }
         func flush() {
             let trimmed = collapseWhitespace(buffer)
-            if !trimmed.isEmpty { tokens.append(.text(trimmed)) }
+            if !trimmed.isEmpty {
+                result.tokens.append(.text(trimmed))
+                result.ranges.append(NSRange(location: bufferStart, length: bufferEnd - bufferStart))
+            }
             buffer = ""
+            bufferStart = NSNotFound
+        }
+        func single(_ token: Token, at index: Int) {
+            flush()
+            result.tokens.append(token)
+            result.ranges.append(NSRange(location: index, length: 1))
         }
         var i = 0
         while i < n {
@@ -187,7 +246,8 @@ enum CSSReformatter {
                 flush()
                 let close = s.range(of: "*/", options: [], range: NSRange(location: i + 2, length: n - i - 2))
                 let end = close.location == NSNotFound ? n : close.upperBound
-                tokens.append(.comment(s.substring(with: NSRange(location: i, length: end - i))))
+                result.tokens.append(.comment(s.substring(with: NSRange(location: i, length: end - i))))
+                result.ranges.append(NSRange(location: i, length: end - i))
                 i = end
                 continue
             }
@@ -200,27 +260,54 @@ enum CSSReformatter {
                     j += 1
                 }
                 let end = min(j + 1, n)
-                buffer += s.substring(with: NSRange(location: i, length: end - i))
+                append(s.substring(with: NSRange(location: i, length: end - i)), from: i, to: end)
                 i = end
                 continue
             }
             if c == 0x28 { // url(...) and friends: verbatim up to the matching paren
                 let close = s.range(of: ")", options: [], range: NSRange(location: i, length: n - i))
                 let end = close.location == NSNotFound ? n : close.upperBound
-                buffer += s.substring(with: NSRange(location: i, length: end - i))
+                append(s.substring(with: NSRange(location: i, length: end - i)), from: i, to: end)
                 i = end
                 continue
             }
             switch c {
-            case 0x7B: flush(); tokens.append(.open)
-            case 0x7D: flush(); tokens.append(.close)
-            case 0x3B: flush(); tokens.append(.semicolon)
-            default: buffer.append(Character(UnicodeScalar(c) ?? " "))
+            case 0x7B: single(.open, at: i)
+            case 0x7D: single(.close, at: i)
+            case 0x3B: single(.semicolon, at: i)
+            case 0x20, 0x09, 0x0A, 0x0D: buffer.append(Character(UnicodeScalar(c)!))
+            default: append(String(Character(UnicodeScalar(c) ?? " ")), from: i, to: i + 1)
             }
             i += 1
         }
         flush()
-        return tokens
+        return result
+    }
+
+    /// The source of the rule or declaration that follows the `/* prettier-ignore */` at `commentIndex`,
+    /// verbatim, with the index of the first token after it; nil when nothing ignorable follows.
+    static func ignoredRegion(after commentIndex: Int, in tokens: Tokens, source: NSString) -> (text: String, next: Int, isRule: Bool)? {
+        let start = commentIndex + 1
+        guard case .text? = tokens.token(at: start) else { return nil }
+        let from = tokens.ranges[start].location
+        switch tokens.token(at: start + 1) {
+        case .open?:
+            var depth = 0
+            var index = start + 1
+            while index < tokens.count {
+                if case .open = tokens[index] { depth += 1 }
+                if case .close = tokens[index] { depth -= 1; if depth == 0 { break } }
+                index += 1
+            }
+            let end = index < tokens.count ? tokens.ranges[index].upperBound : source.length
+            return (source.substring(with: NSRange(location: from, length: end - from)), min(index + 1, tokens.count), true)
+        case .semicolon?:
+            let end = tokens.ranges[start + 1].upperBound
+            return (source.substring(with: NSRange(location: from, length: end - from)), start + 2, false)
+        default:
+            let end = tokens.ranges[start].upperBound
+            return (source.substring(with: NSRange(location: from, length: end - from)), start + 1, false)
+        }
     }
 
     static func collapseWhitespace(_ text: String) -> String {
@@ -228,7 +315,8 @@ enum CSSReformatter {
     }
 
     static func prettify(_ text: String, indent: String) -> String {
-        let tokens = tokenize(text)
+        let tokens = tokenizeWithRanges(text)
+        let source = text as NSString
         var out = ""
         var depth = 0
         func pad() { out.append(String(repeating: indent, count: depth)) }
@@ -236,7 +324,7 @@ enum CSSReformatter {
         while index < tokens.count {
             switch tokens[index] {
             case .text(let value):
-                let next = index + 1 < tokens.count ? tokens[index + 1] : nil
+                let next = tokens.token(at: index + 1)
                 pad()
                 if case .open? = next {
                     // Selector or at-rule prelude: one selector per line after top-level commas.
@@ -262,6 +350,13 @@ enum CSSReformatter {
                 break
             case .comment(let value):
                 pad(); out.append(value); out.append("\n")
+                if PrettierIgnore.isDirective(value, "prettier-ignore"),
+                   let region = ignoredRegion(after: index, in: tokens, source: source) {
+                    pad(); out.append(region.text); out.append("\n")
+                    if region.isRule && depth == 0 { out.append("\n") }
+                    index = region.next
+                    continue
+                }
             }
             index += 1
         }
@@ -297,9 +392,13 @@ enum CSSReformatter {
 
     static func minify(_ text: String) -> String {
         var out = ""
-        let tokens = tokenize(text)
+        let tokens = tokenizeWithRanges(text)
+        let source = text as NSString
         var index = 0
+        var lastWasIgnored = false
         while index < tokens.count {
+            let wasIgnored = lastWasIgnored
+            lastWasIgnored = false
             switch tokens[index] {
             case .text(let value):
                 var piece = value
@@ -309,12 +408,19 @@ enum CSSReformatter {
                 out.append(piece)
             case .open: out.append("{")
             case .close:
-                if out.hasSuffix(";") { out.removeLast() }
+                if out.hasSuffix(";") && !wasIgnored { out.removeLast() }
                 out.append("}")
             case .semicolon:
-                let next = index + 1 < tokens.count ? tokens[index + 1] : nil
-                if case .close? = next {} else { out.append(";") }
-            case .comment: break
+                if case .close? = tokens.token(at: index + 1) {} else { out.append(";") }
+            case .comment(let value):
+                if PrettierIgnore.isDirective(value, "prettier-ignore"),
+                   let region = ignoredRegion(after: index, in: tokens, source: source) {
+                    out.append(value)
+                    out.append(region.text)
+                    lastWasIgnored = true
+                    index = region.next
+                    continue
+                }
             }
             index += 1
         }
@@ -337,17 +443,28 @@ enum MarkupReformatter {
     static let rawTextElements: Set<String> = ["script", "style", "textarea", "pre"]
     static let inlineElements: Set<String> = ["a", "abbr", "b", "bdi", "bdo", "cite", "code", "data", "dfn", "em", "i", "kbd", "mark", "q", "s", "samp", "small", "span", "strong", "sub", "sup", "time", "u", "var", "img", "br", "wbr", "label", "button", "input", "select", "textarea"]
 
-    static func tokenize(_ text: String, isHTML: Bool) -> [Node] {
+    /// The nodes of `text` with, for each, its range in `text`.
+    struct Nodes {
+        var nodes: [Node] = []
+        var ranges: [NSRange] = []
+        var count: Int { nodes.count }
+        subscript(index: Int) -> Node { nodes[index] }
+        mutating func append(_ node: Node, _ range: NSRange) { nodes.append(node); ranges.append(range) }
+    }
+
+    static func tokenize(_ text: String, isHTML: Bool) -> [Node] { tokenizeWithRanges(text, isHTML: isHTML).nodes }
+
+    static func tokenizeWithRanges(_ text: String, isHTML: Bool) -> Nodes {
         let s = text as NSString
         let n = s.length
-        var nodes: [Node] = []
+        var nodes = Nodes()
         var i = 0
         var rawUntil: String?
         while i < n {
             if let raw = rawUntil {
                 let closeTag = s.range(of: "</\(raw)", options: [.caseInsensitive], range: NSRange(location: i, length: n - i))
                 let end = closeTag.location == NSNotFound ? n : closeTag.location
-                if end > i { nodes.append(.text(s.substring(with: NSRange(location: i, length: end - i)))) }
+                if end > i { nodes.append(.text(s.substring(with: NSRange(location: i, length: end - i))), NSRange(location: i, length: end - i)) }
                 i = end
                 rawUntil = nil
                 continue
@@ -357,21 +474,21 @@ enum MarkupReformatter {
                 if s.substring(with: NSRange(location: i, length: min(4, n - i))) == "<!--" {
                     let close = s.range(of: "-->", options: [], range: NSRange(location: i + 4, length: n - i - 4))
                     let end = close.location == NSNotFound ? n : close.upperBound
-                    nodes.append(.comment(s.substring(with: NSRange(location: i, length: end - i))))
+                    nodes.append(.comment(s.substring(with: NSRange(location: i, length: end - i))), NSRange(location: i, length: end - i))
                     i = end
                     continue
                 }
                 if s.substring(with: NSRange(location: i, length: min(9, n - i))) == "<![CDATA[" {
                     let close = s.range(of: "]]>", options: [], range: NSRange(location: i + 9, length: n - i - 9))
                     let end = close.location == NSNotFound ? n : close.upperBound
-                    nodes.append(.declaration(s.substring(with: NSRange(location: i, length: end - i))))
+                    nodes.append(.declaration(s.substring(with: NSRange(location: i, length: end - i))), NSRange(location: i, length: end - i))
                     i = end
                     continue
                 }
                 if i + 1 < n, s.character(at: i + 1) == 0x21 || s.character(at: i + 1) == 0x3F { // <! or <?
                     let close = s.range(of: ">", options: [], range: rest)
                     let end = close.location == NSNotFound ? n : close.upperBound
-                    nodes.append(.declaration(s.substring(with: NSRange(location: i, length: end - i))))
+                    nodes.append(.declaration(s.substring(with: NSRange(location: i, length: end - i))), NSRange(location: i, length: end - i))
                     i = end
                     continue
                 }
@@ -389,22 +506,92 @@ enum MarkupReformatter {
                 let raw = s.substring(with: NSRange(location: i, length: end - i))
                 let inner = raw.dropFirst().dropLast()
                 if inner.hasPrefix("/") {
-                    nodes.append(.close(name: tagName(String(inner.dropFirst()))))
+                    nodes.append(.close(name: tagName(String(inner.dropFirst()))), NSRange(location: i, length: end - i))
                 } else {
                     let name = tagName(String(inner))
                     let selfClosing = inner.hasSuffix("/") || (isHTML && voidElements.contains(name))
-                    nodes.append(.open(name: name, raw: raw, selfClosing: selfClosing))
+                    nodes.append(.open(name: name, raw: raw, selfClosing: selfClosing), NSRange(location: i, length: end - i))
                     if isHTML && rawTextElements.contains(name) && !selfClosing { rawUntil = name }
                 }
                 i = end
             } else {
                 var j = i
                 while j < n, s.character(at: j) != 0x3C { j += 1 }
-                nodes.append(.text(s.substring(with: NSRange(location: i, length: j - i))))
+                nodes.append(.text(s.substring(with: NSRange(location: i, length: j - i))), NSRange(location: i, length: j - i))
                 i = j
             }
         }
         return nodes
+    }
+
+    // MARK: prettier-ignore
+
+    /// The verbatim source of the node that follows the `<!-- prettier-ignore -->` at `commentIndex`
+    /// (an element with everything up to its closing tag, or a single node), with the index of the
+    /// first node after it; nil when only whitespace follows.
+    static func ignoredNode(after commentIndex: Int, in nodes: Nodes, source: NSString) -> (text: String, next: Int)? {
+        var start = commentIndex + 1
+        while start < nodes.count, case .text(let value) = nodes[start], value.allSatisfy(\.isWhitespace) { start += 1 }
+        guard start < nodes.count else { return nil }
+        switch nodes[start] {
+        case .open(let name, _, let selfClosing) where !selfClosing:
+            var nesting = 0
+            var index = start + 1
+            while index < nodes.count {
+                if case .open(let other, _, let selfClosingChild) = nodes[index], other == name, !selfClosingChild { nesting += 1 }
+                if case .close(let other) = nodes[index], other == name {
+                    if nesting == 0 { break }
+                    nesting -= 1
+                }
+                index += 1
+            }
+            let from = nodes.ranges[start].location
+            let end = index < nodes.count ? nodes.ranges[index].upperBound : source.length
+            return (source.substring(with: NSRange(location: from, length: end - from)), min(index + 1, nodes.count))
+        case .text(let value):
+            return (value.trimmingCharacters(in: .whitespacesAndNewlines), start + 1)
+        default:
+            return (source.substring(with: nodes.ranges[start]), start + 1)
+        }
+    }
+
+    /// The verbatim source between the `<!-- prettier-ignore-start -->` at `startIndex` and the matching
+    /// end comment, with that end comment's index; nil when there is no end comment.
+    static func ignoredRange(from startIndex: Int, in nodes: Nodes, source: NSString) -> (text: String, endIndex: Int)? {
+        var index = startIndex + 1
+        while index < nodes.count {
+            if case .comment(let value) = nodes[index], PrettierIgnore.isDirective(value, "prettier-ignore-end") {
+                let from = nodes.ranges[startIndex].upperBound
+                let end = nodes.ranges[index].location
+                return (source.substring(with: NSRange(location: from, length: end - from)), index)
+            }
+            index += 1
+        }
+        return nil
+    }
+
+    // MARK: Embedded CSS / JavaScript
+
+    /// Whether a `<script>` tag holds JavaScript (no `type`, a JavaScript MIME type, or `module`).
+    static func isJavaScriptTag(_ raw: String) -> Bool {
+        guard let match = raw.range(of: #"\btype\s*=\s*["']?([^"'\s>]*)"#, options: [.regularExpression, .caseInsensitive]) else { return true }
+        var type = String(raw[match]).drop { $0 != "=" }.dropFirst().trimmingCharacters(in: .whitespaces).lowercased()
+        type = type.trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
+        return type.isEmpty || type == "module" || type.hasSuffix("javascript") || type.hasSuffix("ecmascript") || type == "text/jsx"
+    }
+
+    /// `content` of a `<style>` or JavaScript `<script>` run through the CSS / JavaScript formatter;
+    /// nil for other raw elements, empty content, or JavaScript the formatter cannot parse.
+    static func formatEmbedded(_ content: String, element: String, tag: String, operation: CodeFormatter.Operation, indent: String, isHTML: Bool) -> String? {
+        guard isHTML, !content.allSatisfy(\.isWhitespace) else { return nil }
+        switch element {
+        case "style":
+            return operation == .prettify ? CSSReformatter.prettify(content, indent: indent) : CSSReformatter.minify(content)
+        case "script" where isJavaScriptTag(tag):
+            return operation == .prettify ? JavaScriptFormatter.prettify(content, indent: indent) : JavaScriptFormatter.minify(content)
+        default:
+            return nil
+        }
     }
 
     private static func tagName(_ inner: String) -> String {
@@ -416,7 +603,8 @@ enum MarkupReformatter {
     }
 
     static func prettify(_ text: String, indent: String, isHTML: Bool) -> String {
-        let nodes = tokenize(text, isHTML: isHTML)
+        let nodes = tokenizeWithRanges(text, isHTML: isHTML)
+        let source = text as NSString
         var lines: [String] = []
         var depth = 0
         var flow = ""          // current inline run (text + inline elements)
@@ -428,14 +616,17 @@ enum MarkupReformatter {
         }
         var index = 0
         var rawElement: String?
+        var rawTag = ""
         while index < nodes.count {
             let node = nodes[index]
             switch node {
             case .text(let value):
-                if rawElement != nil {
-                    // Raw content (script/style/pre): lines kept as they are, re-indented to the element.
+                if let element = rawElement {
+                    // Raw content: <style> and JavaScript <script> are formatted; otherwise (pre, textarea,
+                    // templates, unparsable scripts) lines are kept as they are. Either way re-indented to the element.
                     flushFlow()
-                    lines.append(contentsOf: reindent(value, to: String(repeating: indent, count: depth)))
+                    let content = formatEmbedded(value, element: element, tag: rawTag, operation: .prettify, indent: indent, isHTML: isHTML) ?? value
+                    lines.append(contentsOf: reindent(content, to: String(repeating: indent, count: depth)))
                 } else {
                     let collapsed = collapse(value)
                     if !collapsed.isEmpty {
@@ -444,14 +635,32 @@ enum MarkupReformatter {
                         flow += (needsSpace ? " " : "") + collapsed + ((value.last?.isWhitespace ?? false) ? " " : "")
                     }
                 }
-            case .comment(let value), .declaration(let value):
+            case .comment(let value):
+                flushFlow()
+                lines.append(String(repeating: indent, count: depth) + value)
+                if PrettierIgnore.isDirective(value, "prettier-ignore"),
+                   let ignored = ignoredNode(after: index, in: nodes, source: source) {
+                    lines.append(String(repeating: indent, count: depth) + ignored.text)
+                    index = ignored.next
+                    continue
+                }
+                if PrettierIgnore.isDirective(value, "prettier-ignore-start"),
+                   let ignored = ignoredRange(from: index, in: nodes, source: source) {
+                    let inner = PrettierIgnore.innerLines(of: ignored.text)
+                    if !inner.allSatisfy(\.isWhitespace) { lines.append(inner) }
+                    guard case .comment(let endComment) = nodes[ignored.endIndex] else { break }
+                    lines.append(String(repeating: indent, count: depth) + endComment)
+                    index = ignored.endIndex + 1
+                    continue
+                }
+            case .declaration(let value):
                 flushFlow()
                 lines.append(String(repeating: indent, count: depth) + value)
             case .open(let name, let raw, let selfClosing):
                 let isInline = isHTML && inlineElements.contains(name)
                 // "<p>short text <b>with</b> inline tags</p>" stays on one line.
                 if !selfClosing, !isInline, !(isHTML && rawTextElements.contains(name)),
-                   let (content, endIndex) = inlineContent(of: name, startingAfter: index, in: nodes, isHTML: isHTML),
+                   let (content, endIndex) = inlineContent(of: name, startingAfter: index, in: nodes.nodes, isHTML: isHTML),
                    content.count + raw.count < 100 {
                     flushFlow()
                     lines.append(String(repeating: indent, count: depth) + raw + content + "</\(name)>")
@@ -466,7 +675,7 @@ enum MarkupReformatter {
                     lines.append(String(repeating: indent, count: depth) + raw)
                     if !selfClosing {
                         depth += 1
-                        if isHTML && rawTextElements.contains(name) { rawElement = name }
+                        if isHTML && rawTextElements.contains(name) { rawElement = name; rawTag = raw }
                     }
                 }
             case .close(let name):
@@ -534,15 +743,21 @@ enum MarkupReformatter {
     }
 
     static func minify(_ text: String, isHTML: Bool) -> String {
-        let nodes = tokenize(text, isHTML: isHTML)
+        let nodes = tokenizeWithRanges(text, isHTML: isHTML)
+        let source = text as NSString
         var out = ""
         var rawElement: String?
+        var rawTag = ""
         var lastWasBlockBoundary = true
-        for (index, node) in nodes.enumerated() {
+        var index = 0
+        while index < nodes.count {
+            let node = nodes[index]
+            defer { index += 1 }
             switch node {
             case .text(let value):
-                if rawElement != nil {
-                    out.append(value.trimmingCharacters(in: .whitespacesAndNewlines))
+                if let element = rawElement {
+                    out.append(formatEmbedded(value, element: element, tag: rawTag, operation: .minify, indent: "", isHTML: isHTML)
+                               ?? value.trimmingCharacters(in: .whitespacesAndNewlines))
                 } else {
                     var collapsed = collapse(value)
                     if collapsed.isEmpty {
@@ -557,6 +772,22 @@ enum MarkupReformatter {
                 }
             case .comment(let value):
                 if value.hasPrefix("<!--[if") || value.hasPrefix("<!--<![") { out.append(value) }   // conditional comments
+                if PrettierIgnore.isDirective(value, "prettier-ignore"),
+                   let ignored = ignoredNode(after: index, in: nodes, source: source) {
+                    out.append(value)
+                    out.append(ignored.text)
+                    lastWasBlockBoundary = true
+                    index = ignored.next - 1
+                }
+                if PrettierIgnore.isDirective(value, "prettier-ignore-start"),
+                   let ignored = ignoredRange(from: index, in: nodes, source: source),
+                   case .comment(let endComment) = nodes[ignored.endIndex] {
+                    out.append(value)
+                    out.append(ignored.text)
+                    out.append(endComment)
+                    lastWasBlockBoundary = true
+                    index = ignored.endIndex
+                }
             case .declaration(let value):
                 out.append(value)
                 lastWasBlockBoundary = true
@@ -564,7 +795,7 @@ enum MarkupReformatter {
                 out.append(collapse(raw))
                 let isInline = isHTML && inlineElements.contains(name)
                 lastWasBlockBoundary = !isInline
-                if !selfClosing && isHTML && rawTextElements.contains(name) { rawElement = name }
+                if !selfClosing && isHTML && rawTextElements.contains(name) { rawElement = name; rawTag = raw }
             case .close(let name):
                 out.append("</\(name)>")
                 lastWasBlockBoundary = !(isHTML && inlineElements.contains(name))

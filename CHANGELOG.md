@@ -2,6 +2,13 @@
 
 All notable changes to KeyStone are documented here. This project adheres to [Semantic Versioning](https://semver.org/). Releases before 2.6.0 are described by their tags and commit history.
 
+## [Unreleased]
+
+### Added
+
+- **Format: inline CSS and JavaScript in HTML.** Prettifying an HTML document now runs the contents of every `<style>` element through the CSS formatter and the contents of every JavaScript `<script>` element (no `type`, a JavaScript/ECMAScript MIME type, or `module`) through js-beautify, indented relative to the tag; the tags and their attributes are untouched. Minify does the same with the CSS minifier and terser. Other raw elements (`<pre>`, `<textarea>`, `<script type="text/template">`) and scripts terser cannot parse are only re-indented or trimmed as before. (`MarkupReformatter.formatEmbedded`)
+- **Format honours Prettier's ignore comments.** A region the user marks is left byte for byte, by both Prettify and Minify (which also keeps the marker comments): `<!-- prettier-ignore -->` protects the next node in HTML (an element with everything up to its closing tag, so a marked `<style>` or `<script>` keeps its body as well); `<!-- prettier-ignore-start -->` … `<!-- prettier-ignore-end -->` protects the lines between them; `/* prettier-ignore */` protects the next rule or declaration in CSS; `// prettier-ignore` / `/* prettier-ignore */` protects the next statement in JavaScript/TypeScript, where the comment and statement are swapped for a placeholder call around js-beautify/terser and pasted back afterwards. With ignores present, terser runs without compression or mangling so the placeholder stays in place and the region's references stay valid. (`PrettierIgnore`, `CSSReformatter.ignoredRegion`, `MarkupReformatter.ignoredNode` / `ignoredRange`, `JavaScriptFormatter.IgnoredRegions`)
+
 ## [2.8.3] - 2026-10-22
 
 ### Fixed

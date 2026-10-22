@@ -86,7 +86,9 @@ final class CodeFormatterTests: XCTestCase {
           <head>
             <title>T</title>
             <style>
-              body{margin:0}
+              body {
+                margin: 0;
+              }
             </style>
           </head>
           <body>
@@ -99,7 +101,9 @@ final class CodeFormatterTests: XCTestCase {
               </ul>
             </div>
             <script>
-              if(a<b){x()}
+              if (a < b) {
+                x()
+              }
             </script>
           </body>
         </html>
@@ -118,7 +122,202 @@ final class CodeFormatterTests: XCTestCase {
         </div>
         """
         let minified = CodeFormatter.format(input, language: .html, operation: .minify)!
-        XCTAssertEqual(minified, "<div><p>Hello <b>world</b> again</p><script>var a = 1;</script></div>")
+        XCTAssertEqual(minified, "<div><p>Hello <b>world</b> again</p><script>var a=1;</script></div>", "inline JavaScript goes through terser")
+    }
+
+    func testHTMLPrettifyFormatsInlineStyleAndScript() {
+        let input = "<html><head><style>body{margin:0;padding:0}.a,.b{color:red}@media (max-width:600px){.a{display:none}}</style></head><body><script type=\"module\">const a={x:1};if(a.x){console.log(a)}</script><script type=\"text/template\"><p>{{ x }}</p></script></body></html>"
+        let pretty = CodeFormatter.format(input, language: .html, operation: .prettify)!
+        XCTAssertEqual(pretty, """
+        <html>
+          <head>
+            <style>
+              body {
+                margin: 0;
+                padding: 0;
+              }
+
+              .a,
+              .b {
+                color: red;
+              }
+
+              @media (max-width:600px) {
+                .a {
+                  display: none;
+                }
+              }
+            </style>
+          </head>
+          <body>
+            <script type="module">
+              const a = {
+                x: 1
+              };
+              if (a.x) {
+                console.log(a)
+              }
+            </script>
+            <script type="text/template">
+              <p>{{ x }}</p>
+            </script>
+          </body>
+        </html>
+
+        """)
+        XCTAssertEqual(CodeFormatter.format(pretty, language: .html, operation: .prettify), pretty, "idempotent")
+        let minified = CodeFormatter.format(pretty, language: .html, operation: .minify)!
+        XCTAssertFalse(minified.contains("\n"), minified)
+        XCTAssertTrue(minified.contains("<style>body{margin:0;padding:0}.a,.b{color:red}@media (max-width:600px){.a{display:none}}</style>"), minified)
+        XCTAssertTrue(minified.contains("<script type=\"text/template\"><p>{{ x }}</p></script>"), "non-JavaScript script bodies are only trimmed")
+        XCTAssertTrue(minified.contains("console.log(a)"), minified)
+    }
+
+    func testHTMLInlineScriptWithSyntaxErrorIsKeptWhenMinifying() {
+        // js-beautify tokenises rather than parses, so prettify still reflows the fragment;
+        // terser refuses it, and minify falls back to the trimmed script body.
+        let input = "<div><script>\n  function (\n</script></div>"
+        let pretty = CodeFormatter.format(input, language: .html, operation: .prettify)!
+        XCTAssertEqual(pretty, "<div>\n  <script>\n    function(\n  </script>\n</div>\n")
+        XCTAssertEqual(CodeFormatter.format(input, language: .html, operation: .minify), "<div><script>function (</script></div>")
+    }
+
+    // MARK: prettier-ignore
+
+    func testHTMLPrettierIgnoreKeepsNextElementVerbatim() {
+        let input = """
+        <div>
+        <!-- prettier-ignore -->
+        <table><tr><td>a</td>   <td>b</td></tr>
+          <tr><td>c</td></tr></table>
+        <p>after</p>
+        </div>
+        """
+        let pretty = CodeFormatter.format(input, language: .html, operation: .prettify)!
+        XCTAssertEqual(pretty, """
+        <div>
+          <!-- prettier-ignore -->
+          <table><tr><td>a</td>   <td>b</td></tr>
+          <tr><td>c</td></tr></table>
+          <p>after</p>
+        </div>
+
+        """)
+        XCTAssertEqual(CodeFormatter.format(pretty, language: .html, operation: .prettify), pretty, "idempotent")
+        let minified = CodeFormatter.format(input, language: .html, operation: .minify)!
+        XCTAssertEqual(minified, "<div><!-- prettier-ignore --><table><tr><td>a</td>   <td>b</td></tr>\n  <tr><td>c</td></tr></table><p>after</p></div>")
+    }
+
+    func testHTMLPrettierIgnoreProtectsStyleAndScriptContents() {
+        let input = "<head><!-- prettier-ignore --><style>a{color:red}</style><!-- prettier-ignore --><script>if(a){b()}</script></head>"
+        let pretty = CodeFormatter.format(input, language: .html, operation: .prettify)!
+        XCTAssertEqual(pretty, """
+        <head>
+          <!-- prettier-ignore -->
+          <style>a{color:red}</style>
+          <!-- prettier-ignore -->
+          <script>if(a){b()}</script>
+        </head>
+
+        """)
+        XCTAssertEqual(CodeFormatter.format(input, language: .html, operation: .minify), input)
+    }
+
+    func testHTMLPrettierIgnoreRange() {
+        let input = """
+        <body>
+          <!-- prettier-ignore-start -->
+          <ul>
+          <li>one</li>   <li>two</li>
+            </ul>
+          <!-- prettier-ignore-end -->
+          <ul><li>three</li></ul>
+        </body>
+        """
+        let pretty = CodeFormatter.format(input, language: .html, operation: .prettify)!
+        XCTAssertEqual(pretty, """
+        <body>
+          <!-- prettier-ignore-start -->
+          <ul>
+          <li>one</li>   <li>two</li>
+            </ul>
+          <!-- prettier-ignore-end -->
+          <ul>
+            <li>three</li>
+          </ul>
+        </body>
+
+        """)
+        XCTAssertEqual(CodeFormatter.format(pretty, language: .html, operation: .prettify), pretty, "idempotent")
+        let minified = CodeFormatter.format(input, language: .html, operation: .minify)!
+        XCTAssertEqual(minified, "<body><!-- prettier-ignore-start -->\n  <ul>\n  <li>one</li>   <li>two</li>\n    </ul>\n  <!-- prettier-ignore-end --><ul><li>three</li></ul></body>")
+    }
+
+    func testCSSPrettierIgnoreKeepsRuleAndDeclaration() {
+        let input = """
+        /* prettier-ignore */
+        .grid{grid-template-areas:"a b"
+                                  "c d";}
+        a{
+          /* prettier-ignore */
+          margin:0   auto;
+          color:red}
+        """
+        let pretty = CodeFormatter.format(input, language: .css, operation: .prettify)!
+        XCTAssertEqual(pretty, """
+        /* prettier-ignore */
+        .grid{grid-template-areas:"a b"
+                                  "c d";}
+
+        a {
+          /* prettier-ignore */
+          margin:0   auto;
+          color: red;
+        }
+
+        """)
+        XCTAssertEqual(CodeFormatter.format(pretty, language: .css, operation: .prettify), pretty, "idempotent")
+        let minified = CodeFormatter.format(input, language: .css, operation: .minify)!
+        XCTAssertEqual(minified, "/* prettier-ignore */.grid{grid-template-areas:\"a b\"\n                          \"c d\";}a{/* prettier-ignore */margin:0   auto;color:red}")
+    }
+
+    func testJavaScriptPrettierIgnoreKeepsNextStatement() {
+        let input = """
+        const a=1;
+        // prettier-ignore
+        const matrix = [
+          1,0,0,
+          0,1,0,
+          0,0,1 ];
+        /* prettier-ignore */
+        if(a){  b( ) }
+        const c=2;
+        """
+        let pretty = CodeFormatter.format(input, language: .javascript, operation: .prettify)!
+        XCTAssertEqual(pretty, """
+        const a = 1;
+        // prettier-ignore
+        const matrix = [
+          1,0,0,
+          0,1,0,
+          0,0,1 ];
+        /* prettier-ignore */
+        if(a){  b( ) }
+        const c = 2;
+
+        """)
+        XCTAssertEqual(CodeFormatter.format(pretty, language: .javascript, operation: .prettify), pretty, "idempotent")
+        let minified = CodeFormatter.format(input, language: .javascript, operation: .minify)!
+        XCTAssertTrue(minified.contains("const matrix = [\n  1,0,0,\n  0,1,0,\n  0,0,1 ];"), minified)
+        XCTAssertTrue(minified.contains("if(a){  b( ) }"), minified)
+        XCTAssertTrue(minified.contains("const a=1"), minified)
+        XCTAssertTrue(minified.contains("const c=2"), minified)
+    }
+
+    func testJavaScriptPrettierIgnoreInsideFunctionBody() {
+        let input = "function f(){\n  // prettier-ignore\n  const m = [1,0,\n             0,1];\n  return m}"
+        let pretty = CodeFormatter.format(input, language: .javascript, operation: .prettify)!
+        XCTAssertEqual(pretty, "function f() {\n  // prettier-ignore\n  const m = [1,0,\n             0,1];\n  return m\n}\n")
     }
 
     func testXMLPrettify() {
