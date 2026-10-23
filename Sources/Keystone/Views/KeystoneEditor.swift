@@ -444,11 +444,11 @@ public struct KeystoneEditor: View {
             configuration: configuration,
             isPresented: $showSettings,
             onConvertLineEndings: { newEnding in
-                document.replaceAll(with: LineEnding.convert(document.text, to: newEnding), preservingUndo: true)
+                document.replaceAll(with: LineEnding.convert(document.text, to: newEnding), undo: .register)
                 onConvertLineEndings?(newEnding)
             },
             onConvertIndentation: { newIndentation in
-                document.replaceAll(with: IndentationSettings.convert(document.text, to: newIndentation), preservingUndo: true)
+                document.replaceAll(with: IndentationSettings.convert(document.text, to: newIndentation), undo: .register)
                 onConvertIndentation?(newIndentation)
             }
         )
@@ -623,7 +623,7 @@ public struct KeystoneEditor: View {
             commands.append(EditorCommand(id: "lineEnding.\(ending.rawValue)", title: String(localized: "Convert Line Endings to \(ending.rawValue.uppercased())", bundle: .module), systemImage: "return") {
                 configuration.lineEnding = ending
                 configuration.saveToUserDefaults()
-                document.replaceAll(with: LineEnding.convert(document.text, to: ending), preservingUndo: true)
+                document.replaceAll(with: LineEnding.convert(document.text, to: ending), undo: .register)
                 onConvertLineEndings?(ending)
             })
         }
@@ -633,7 +633,7 @@ public struct KeystoneEditor: View {
             commands.append(EditorCommand(id: "indent.\(choice.type.rawValue).\(choice.width)", title: String(localized: "Convert Indentation to \(label)", bundle: .module), systemImage: "increase.indent") {
                 configuration.indentation = choice
                 configuration.saveToUserDefaults()
-                document.replaceAll(with: IndentationSettings.convert(document.text, to: choice), preservingUndo: true)
+                document.replaceAll(with: IndentationSettings.convert(document.text, to: choice), undo: .register)
                 onConvertIndentation?(choice)
             })
         }
@@ -654,7 +654,9 @@ public struct KeystoneEditor: View {
         guard let formatted = CodeFormatter.format(current, language: internalLanguage, operation: operation, indent: configuration.indentation.indentString),
               formatted != current else { return }
         let caretOffset = cursorPosition.wrappedValue.offset
-        document.replaceAll(with: formatted, preservingUndo: true)
+        // One undoable step, like any other edit: a formatting pass the user cannot
+        // take back is the worst kind of "helpful".
+        document.replaceAll(with: formatted, undo: .register)
         cursorPosition.wrappedValue = document.position(atOffset: min(caretOffset, document.utf16Length))
     }
 
@@ -1323,8 +1325,8 @@ struct KeystoneFindReplaceBar: View {
                 manager.search(in: document.text)
             }
         } else if let newText = manager.replaceCurrent(in: document.text) {
-            // Fallback: whole-document replacement (no undo support)
-            document.replaceAll(with: newText, preservingUndo: true)
+            // Fallback: whole-document replacement, still one undoable step.
+            document.replaceAll(with: newText, undo: .register)
         }
     }
 
@@ -1341,7 +1343,7 @@ struct KeystoneFindReplaceBar: View {
         if let undoController = undoController, undoController.replaceAll(with: finalText) {
             // Replaced through the text view, with undo.
         } else {
-            document.replaceAll(with: finalText, preservingUndo: true)
+            document.replaceAll(with: finalText, undo: .register)
         }
 
         // Only re-search if the replacement text contains the search query

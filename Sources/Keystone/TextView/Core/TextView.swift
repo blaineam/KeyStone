@@ -55,6 +55,12 @@ open class TextView: UIScrollView {
         textInputView.setTextPreservingUndo(newText as NSString)
         contentSize = preferredContentSize
     }
+
+    /// Replaces the whole text as one undoable step, closing any typing group first.
+    public func replaceAll(with newText: String) {
+        textInputView.setStringWithUndoAction(newText as NSString)
+        contentSize = preferredContentSize
+    }
     /// A Boolean value that indicates whether the text view is editable.
     public var isEditable = true {
         didSet {

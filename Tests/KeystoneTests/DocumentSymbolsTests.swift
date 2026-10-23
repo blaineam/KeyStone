@@ -97,7 +97,7 @@ final class DocumentSymbolsTests: XCTestCase {
         textView.editorDelegate = coordinator
         textView.setState(TextViewState(text: doc.text, theme: DefaultTheme(), language: KeystoneLanguage.swift.treeSitterLanguage!, languageProvider: KeystoneLanguageProvider.shared))
         coordinator.textView = textView
-        doc.attach(textView) { [weak coordinator] t, p in coordinator?.applyText(t, preservingUndo: p) }
+        doc.attach(textView) { [weak coordinator] t, u in coordinator?.applyText(t, undo: u) }
         XCTAssertEqual(doc.symbols.map(\.name), ["a"])
         textView.replace(NSRange(location: 12, length: 0), withText: "func b() {}\n")
         XCTAssertEqual(doc.symbols.map(\.name), ["a", "b"])

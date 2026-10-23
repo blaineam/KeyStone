@@ -77,8 +77,19 @@ public final class KeystoneDocument: ObservableObject {
 
     private var storedText: NSString
     private weak var attachedView: TextView?
+    /// How a whole-document replacement treats the undo stack.
+    public enum UndoBehavior: Sendable {
+        /// Clear the stack: the text is a different document now (file load, revert).
+        case clear
+        /// Keep the stack but do not record this replacement (external sync, draft restore).
+        case preserve
+        /// Record the replacement as one undoable step, as any edit the user made would be
+        /// (formatting, line-ending and indentation conversion, whole-document replace).
+        case register
+    }
+
     /// Set by the view coordinator; applies a whole-document replacement to the attached view.
-    private var applyToView: ((String, _ preservingUndo: Bool) -> Void)?
+    private var applyToView: ((String, UndoBehavior) -> Void)?
 
     public init(text: String = "") {
         storedText = text as NSString
@@ -135,10 +146,15 @@ public final class KeystoneDocument: ObservableObject {
     /// - Parameters:
     ///   - newText: The new contents.
     ///   - markSaved: Treat the new contents as the saved state (file load). Default `false`.
-    ///   - preservingUndo: Keep the undo stack (draft restore, line-ending conversion). Default `false`: the stack is cleared.
-    public func replaceAll(with newText: String, markSaved: Bool = false, preservingUndo: Bool = false) {
+    ///   - preservingUndo: Keep the undo stack without recording this replacement (draft restore,
+    ///     external sync). Default `false`: the stack is cleared. Ignored when `undo` is given.
+    ///   - undo: How the undo stack treats this replacement; see ``UndoBehavior``. A change the
+    ///     user asked for (a formatting command, a conversion) must use ``UndoBehavior/register``,
+    ///     or it is the one edit they cannot take back.
+    public func replaceAll(with newText: String, markSaved: Bool = false, preservingUndo: Bool = false, undo: UndoBehavior? = nil) {
+        let behavior = undo ?? (preservingUndo ? .preserve : .clear)
         if let apply = applyToView, attachedView != nil {
-            apply(newText, preservingUndo)
+            apply(newText, behavior)
         } else {
             storedText = newText as NSString
         }
@@ -225,7 +241,7 @@ public final class KeystoneDocument: ObservableObject {
 
     // MARK: - View attachment (internal)
 
-    func attach(_ view: TextView, apply: @escaping (String, Bool) -> Void) {
+    func attach(_ view: TextView, apply: @escaping (String, UndoBehavior) -> Void) {
         attachedView = view
         applyToView = apply
         view.onDocumentSymbolsChange = { [weak self] symbols in self?.setSymbols(symbols) }

@@ -2,6 +2,12 @@
 
 All notable changes to KeyStone are documented here. This project adheres to [Semantic Versioning](https://semver.org/). Releases before 2.6.0 are described by their tags and commit history.
 
+## [2.9.1] - 2026-10-22
+
+### Fixed
+
+- **Formatting commands, line-ending and indentation conversions, and whole-document replace are now undoable.** They went through the undo-preserving whole-text setter, which keeps the existing stack but records nothing for the replacement itself, so the one edit that touched the whole file was the one edit that could not be taken back. `KeystoneDocument.replaceAll(with:undo:)` gains `UndoBehavior` (`.clear` for a file load, `.preserve` for an external sync, `.register` for an edit the user asked for); both coordinators route `.register` through the text views' `replaceAll(with:)`, which registers one undo action and closes the open typing group first, so undo restores the text from just before the command and redo reapplies it. iOS `TextView` gains the public `replaceAll(with:)` the Mac one already had. `KeystoneDocumentTests.testReplaceAllRegisteringUndoIsOneUndoableStep` pins it.
+
 ## [2.9.0] - 2026-10-22
 
 ### Added

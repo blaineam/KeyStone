@@ -70,8 +70,8 @@ final class KeystoneDocumentTests: XCTestCase {
         textView.editorDelegate = coordinator
         textView.setState(TextViewState(text: text, theme: DefaultTheme(), language: language.treeSitterLanguage!, languageProvider: KeystoneLanguageProvider.shared))
         coordinator.textView = textView
-        doc.attach(textView) { [weak coordinator] newText, preservingUndo in
-            coordinator?.applyText(newText, preservingUndo: preservingUndo)
+        doc.attach(textView) { [weak coordinator] newText, undo in
+            coordinator?.applyText(newText, undo: undo)
         }
         textView.layoutSubtreeIfNeeded()
         return (doc, textView, coordinator)
@@ -121,6 +121,42 @@ final class KeystoneDocumentTests: XCTestCase {
         doc.replaceAll(with: "loaded from disk!", preservingUndo: true)
         XCTAssertEqual(textView.text, "loaded from disk!")
         XCTAssertTrue(doc.isModified)
+    }
+
+    /// A formatting command, a line-ending or indentation conversion, a whole-document
+    /// replace: every one of those is an edit the user asked for, so it must be one step in
+    /// the undo history. They used to go through the undo-preserving setter, which keeps the
+    /// stack but records nothing, so the one edit that touched the whole file was the one
+    /// edit that could not be taken back.
+    func testReplaceAllRegisteringUndoIsOneUndoableStep() {
+        let (doc, textView, coordinator) = makeAttached("a")
+        defer { withExtendedLifetime(coordinator) {} }
+        textView.replace(NSRange(location: 1, length: 0), withText: "b")
+        XCTAssertEqual(textView.text, "ab")
+
+        doc.replaceAll(with: "formatted", undo: .register)
+        XCTAssertEqual(textView.text, "formatted")
+        XCTAssertTrue(doc.isModified)
+        XCTAssertTrue(textView.textUndoManager.canUndo, "the replacement is an undoable step")
+
+        textView.textUndoManager.undo()
+        XCTAssertEqual(textView.text, "ab", "undo restores the text from before the replacement, not before the typing")
+        XCTAssertTrue(textView.textUndoManager.canRedo)
+        textView.textUndoManager.redo()
+        XCTAssertEqual(textView.text, "formatted", "redo reapplies the replacement")
+
+        textView.textUndoManager.undo()
+        textView.textUndoManager.undo()
+        XCTAssertEqual(textView.text, "a", "the typing before it is still its own step")
+    }
+
+    func testReplaceAllPreservingUndoRecordsNothing() {
+        let (doc, textView, coordinator) = makeAttached("a")
+        defer { withExtendedLifetime(coordinator) {} }
+        XCTAssertFalse(textView.textUndoManager.canUndo)
+        doc.replaceAll(with: "synced from elsewhere", preservingUndo: true)
+        XCTAssertEqual(textView.text, "synced from elsewhere")
+        XCTAssertFalse(textView.textUndoManager.canUndo, "an external sync is not the user's edit to undo")
     }
 
     func testAttachedPositionMatchesDetachedScan() {

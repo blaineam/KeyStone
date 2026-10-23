@@ -1403,7 +1403,7 @@ extension TextInputView {
         stringView.substring(in: range)
     }
 
-    private func setStringWithUndoAction(_ newString: NSString) {
+    func setStringWithUndoAction(_ newString: NSString) {
         guard newString != string else {
             return
         }

@@ -102,8 +102,8 @@ public struct KeystoneTextView: UIViewRepresentable {
         setupActions(textView: textView, context: context)
 
         context.coordinator.textView = textView
-        document.attach(textView) { [weak coordinator = context.coordinator] newText, preservingUndo in
-            coordinator?.applyText(newText, preservingUndo: preservingUndo)
+        document.attach(textView) { [weak coordinator = context.coordinator] newText, undo in
+            coordinator?.applyText(newText, undo: undo)
         }
         context.coordinator.observeChangeMarkers(of: document, on: textView)
 
@@ -386,7 +386,7 @@ public struct KeystoneTextView: UIViewRepresentable {
         }
 
         /// Replaces the whole text on behalf of the document (file load, revert, conversion).
-        func applyText(_ newText: String, preservingUndo: Bool) {
+        func applyText(_ newText: String, undo: KeystoneDocument.UndoBehavior) {
             guard let textView = textView, textView.text != newText else { return }
             isUpdatingText = true
             // Keep the tokenizer from querying line boundaries mid-replacement.
@@ -395,9 +395,18 @@ public struct KeystoneTextView: UIViewRepresentable {
                 textView.isUpdatingText = false
                 isUpdatingText = false
             }
-            if preservingUndo {
+            switch undo {
+            case .register:
+                textView.replaceAll(with: newText)
+            case .preserve:
                 textView.setTextPreservingUndo(newText)
-            } else if let language = parent.language.treeSitterLanguage {
+            case .clear:
+                replaceClearingUndo(newText, in: textView)
+            }
+        }
+
+        private func replaceClearingUndo(_ newText: String, in textView: TextView) {
+            if let language = parent.language.treeSitterLanguage {
                 let state = TextViewState(
                     text: newText,
                     theme: KeystoneRunestoneTheme(configuration: parent.configuration),
@@ -831,8 +840,8 @@ public struct KeystoneTextView: NSViewRepresentable {
         setupActions(textView: textView, context: context)
 
         context.coordinator.textView = textView
-        document.attach(textView) { [weak coordinator = context.coordinator] newText, preservingUndo in
-            coordinator?.applyText(newText, preservingUndo: preservingUndo)
+        document.attach(textView) { [weak coordinator = context.coordinator] newText, undo in
+            coordinator?.applyText(newText, undo: undo)
         }
         context.coordinator.observeChangeMarkers(of: document, on: textView)
 
@@ -1110,13 +1119,22 @@ public struct KeystoneTextView: NSViewRepresentable {
         }
 
         /// Replaces the whole text on behalf of the document (file load, revert, conversion).
-        func applyText(_ newText: String, preservingUndo: Bool) {
+        func applyText(_ newText: String, undo: KeystoneDocument.UndoBehavior) {
             guard let textView = textView, textView.text != newText else { return }
             isUpdatingText = true
             defer { isUpdatingText = false }
-            if preservingUndo {
+            switch undo {
+            case .register:
+                textView.replaceAll(with: newText)
+            case .preserve:
                 textView.setTextPreservingUndo(newText)
-            } else if let language = parent.language.treeSitterLanguage {
+            case .clear:
+                replaceClearingUndo(newText, in: textView)
+            }
+        }
+
+        private func replaceClearingUndo(_ newText: String, in textView: TextView) {
+            if let language = parent.language.treeSitterLanguage {
                 let state = TextViewState(
                     text: newText,
                     theme: KeystoneRunestoneThemeMac(configuration: parent.configuration),
